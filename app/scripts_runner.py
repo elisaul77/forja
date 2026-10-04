@@ -267,6 +267,23 @@ def _error_de_salida(codigo_salida: int, stderr: str) -> ScriptError:
     return _extraer_error(stderr)
 
 
+def _con_perfil(variables: dict[str, Any] | None) -> dict[str, Any]:
+    """fdm-A: every job gets the printer profile as the ``PERFIL`` global
+    (the active one, a named one if ``PERFIL`` is a string, or the caller's
+    own dict). Best effort: a broken profile store never fails a script."""
+    variables = dict(variables or {})
+    try:
+        import perfiles
+
+        variables["PERFIL"] = perfiles.resolver_para_script(variables.get("PERFIL"))
+    except Exception:  # noqa: BLE001
+        import perfil_fdm
+
+        if not isinstance(variables.get("PERFIL"), dict):
+            variables["PERFIL"] = dict(perfil_fdm.SEMILLA)
+    return variables
+
+
 def ejecutar_script(
     codigo: str, timeout: float = DEFAULT_TIMEOUT, variables: dict[str, Any] | None = None
 ) -> tuple[Path, list[str] | None]:
@@ -288,6 +305,7 @@ def ejecutar_script(
     unreachable sandbox, and ``ScriptTimeoutError`` if it exceeds
     ``timeout`` seconds.
     """
+    variables = _con_perfil(variables)
     id_trabajo, trabajo = _preparar_trabajo(codigo, timeout, variables)
     tmp_dir: Path | None = None
     try:

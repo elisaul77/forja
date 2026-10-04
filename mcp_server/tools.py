@@ -109,6 +109,17 @@ def ejecutar_script(
     `codigo_linea` (numero y texto de la linea del script que fallo) solo
     estan presentes cuando el error viene de una excepcion dentro del
     script mismo, nunca un traceback completo.
+
+    Perfil de impresora (FDM): todo script recibe el perfil de tolerancias
+    activo como global `PERFIL` (dict; `variables={"PERFIL": "<nombre>"}`
+    elige otro perfil guardado) y estas funciones, que devuelven la medida
+    A MODELAR ya compensada para que la pieza impresa mida lo nominal:
+    `agujero(d)` (agujero vertical; `agujero(d, horizontal=True)` para uno
+    horizontal), `eje(d)` (pin/eje), `ranura(w)` (ancho de ranura) y
+    `ajuste(nombre, d=None)` con `"M3_pasante"`, `"M3_roscado"` (tambien M2,
+    M2.5, M4, M5), y `"eje_deslizante"`/`"eje_presion"` (con `d` = diametro
+    del eje devuelve el agujero a modelar; sin `d`, la holgura en mm). Ej.:
+    `Cylinder(agujero(3) / 2, 10)`. Perfiles: `GET /perfiles`.
     """
     return client.ejecutar_script(
         codigo=codigo,

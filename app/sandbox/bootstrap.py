@@ -209,6 +209,32 @@ def _reportar_error_script(exc: BaseException, codigo: str) -> None:
     print("__FORJA_ERROR__" + json.dumps(detalle), file=sys.stderr)
 
 
+def _inyectar_perfil(namespace: dict) -> None:
+    """fdm-A: bind ``agujero(d)``, ``eje(d)``, ``ranura(w)`` and
+    ``ajuste(nombre, d=None)`` to the injected ``PERFIL`` (seed if absent).
+    Names the caller already passed as variables are left alone."""
+    import functools
+
+    import perfil_fdm
+
+    perfil = namespace.get("PERFIL")
+    if not isinstance(perfil, dict):
+        perfil = dict(perfil_fdm.SEMILLA)
+        namespace["PERFIL"] = perfil
+
+    def agujero(d, horizontal=False):
+        return perfil_fdm.agujero(d, perfil, horizontal=horizontal)
+
+    funciones = {
+        "agujero": agujero,
+        "eje": functools.partial(perfil_fdm.eje, perfil=perfil),
+        "ranura": functools.partial(perfil_fdm.ranura, perfil=perfil),
+        "ajuste": lambda nombre, d=None: perfil_fdm.ajuste(nombre, d, perfil),
+    }
+    for nombre, funcion in funciones.items():
+        namespace.setdefault(nombre, funcion)
+
+
 def ejecutar(trabajo: Path) -> int:
     peticion = json.loads((trabajo / protocolo.PETICION).read_text())
     codigo = peticion["codigo"]
@@ -219,6 +245,7 @@ def ejecutar(trabajo: Path) -> int:
     sys.argv = [NOMBRE_SCRIPT, str(trabajo / protocolo.PETICION), str(salida)]
 
     namespace = dict(variables)
+    _inyectar_perfil(namespace)
     try:
         exec(compile(codigo, NOMBRE_SCRIPT, "exec"), namespace)
     except Exception as exc:  # noqa: BLE001 - reported compactly to the server
