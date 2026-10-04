@@ -397,6 +397,33 @@ def fijar_rama_activa(doc_id: str, nombre: str) -> None:
     os.replace(temporal, destino)
 
 
+_ARCHIVO_DIVERGENTE = "forja-script-divergente"
+
+
+def leer_script_divergente(doc_id: str) -> dict[str, str] | None:
+    """``{ruta, sha256}`` recorded by a branch switch whose ``_fuente``
+    script differs from the file at ``ruta`` (G2 fix-review), or ``None``."""
+    try:
+        datos = json.loads((ruta_repo(doc_id) / _ARCHIVO_DIVERGENTE).read_text())
+    except (OSError, ValueError):
+        return None
+    if isinstance(datos, dict) and isinstance(datos.get("ruta"), str) and isinstance(datos.get("sha256"), str):
+        return {"ruta": datos["ruta"], "sha256": datos["sha256"]}
+    return None
+
+
+def fijar_script_divergente(doc_id: str, ruta: str | None, sha256: str | None) -> None:
+    """Record (both given) or clear (either ``None``) the divergence marker."""
+    destino = ruta_repo(doc_id) / _ARCHIVO_DIVERGENTE
+    if ruta is None or sha256 is None:
+        destino.unlink(missing_ok=True)
+        return
+    destino = inicializar(doc_id) / _ARCHIVO_DIVERGENTE
+    temporal = destino.with_name(destino.name + ".tmp")
+    temporal.write_text(json.dumps({"ruta": ruta, "sha256": sha256}))
+    os.replace(temporal, destino)
+
+
 def resolver(doc_id: str, referencia: str) -> str:
     """Branch name, full sha or abbreviated sha (7+ hex) -> full commit sha.
     Raises ``ValueError`` for anything else (never passes free text to git

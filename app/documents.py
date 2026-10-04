@@ -8,6 +8,7 @@ never raw vertices (ADR-0001 kernel boundary).
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ import auth
 import materiales
 import eventos
 import export as export_solidos
+import git_store
 import naming
 import notes
 import parametros
@@ -639,6 +641,8 @@ def crear_documento_desde_script(body: _ScriptBody) -> dict[str, Any]:
             valores=valores,
         )
         ignorados[:] = materiales.aplicar_declaracion(doc_id_, declarados, _nombres_piezas(doc_id_))
+        # An explicit run re-establishes which script the document follows.
+        git_store.fijar_script_divergente(doc_id_, None, None)
 
     if body.documento_id is not None:
         # Validated *before* the lock (Phase 6.3): `parametros.bloqueo`
@@ -755,11 +759,36 @@ def obtener_parametros(doc_id: str) -> dict[str, Any]:
     if doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
     datos = parametros.cargar(doc_id)
-    return {"esquema": datos["parametros"], "valores": datos["valores"]}
+    respuesta: dict[str, Any] = {"esquema": datos["parametros"], "valores": datos["valores"]}
+    aviso = aviso_script_divergente(doc_id, datos["script"])
+    if aviso:
+        respuesta["avisos"] = [aviso]
+    return respuesta
+
+
+def aviso_script_divergente(doc_id: str, script: Any) -> str | None:
+    """G2 fix-review: ``script_divergente: ...`` when a branch switch left
+    this document following a ``ruta`` whose file on disk is not the text
+    that branch recorded (Forja never writes outside its data), else
+    ``None``. A file brought back to that text clears the mark."""
+    marca = git_store.leer_script_divergente(doc_id)
+    if not marca or not isinstance(script, dict) or script.get("ruta") != marca["ruta"]:
+        return None
+    try:
+        actual = hashlib.sha256(_validar_ruta_permitida(marca["ruta"]).read_bytes()).hexdigest()
+    except (HTTPException, OSError):
+        actual = None
+    if actual == marca["sha256"]:
+        git_store.fijar_script_divergente(doc_id, None, None)
+        return None
+    return (f"script_divergente: el archivo {marca['ruta']} no coincide con el script guardado en "
+            "esta rama; Forja no lo sobrescribe. Restaura ese archivo o regenera con "
+            "confirmar_script=true para usar el archivo tal como esta.")
 
 
 class _ParametrosBody(BaseModel):
     valores: dict[str, Any]
+    confirmar_script: bool = False
 
 
 @router.post("/documentos/{doc_id}/parametros", dependencies=[Depends(auth.requiere_token)])
@@ -787,6 +816,12 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
                 status_code=400, detail="documento sin script parametrico (crearlo con ejecutar_script)"
             )
         if "ruta" in script:
+            aviso = aviso_script_divergente(doc_id, script)
+            if aviso and not body.confirmar_script:
+                raise HTTPException(
+                    status_code=409,
+                    detail="no se regenera: " + aviso.split(": ", 1)[1],
+                )
             origen = _validar_ruta_permitida(script["ruta"])
             try:
                 codigo = origen.read_text()
@@ -812,6 +847,8 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
             ms = round((time.perf_counter() - inicio) * 1000)
             parametros.guardar_valores(doc_id, esquema, valores)
             materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
+            if "ruta" in script:  # confirmed (or matching) file: mark resolved
+                git_store.fijar_script_divergente(doc_id, None, None)
             confirmar_revision(doc_id)
     return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
 

@@ -77,8 +77,49 @@ commit *posterior* al cambio y una caché por hash de árbol: G2/G3.
   petición mutante con estado < 400 (lo que `crear_snapshot` anotó).
 - Cambiar de rama guarda antes lo no registrado en la rama que se deja y
   una instantánea G1 «antes de cambiar a la rama X»; escribe los archivos
-  de forma atómica bajo el candado del documento y emite el evento SSE.
+  bajo el candado del documento y emite el evento SSE. Garantía real:
+  **todo o nada a nivel de documento, no atomicidad del sistema de
+  archivos**. Primero se escriben todos los destinos como temporales
+  (`*.rama.tmp`; un disco lleno falla ahí sin tocar nada) y luego se
+  renombran uno a uno (cada `os.replace` es atómico, el conjunto no). Si
+  algo falla entre el primer renombrado y `confirmar_revision` (incluidos
+  `restore_files` del ensamble y el análisis), se reescriben los archivos
+  del paso recién registrado en la rama que se deja, y se restablecen rama
+  activa, registro, revisión y marca de script; luego se relanza. Una
+  caída del proceso a mitad de los renombrados sí puede dejar archivos
+  mezclados (el paso previo y la instantánea G1 permiten recuperarlos).
+  Si el fallo ocurre, la instantánea G1 ya creada queda en el historial
+  (contiene el mismo estado que el documento, es inocua).
+- Si la rama destino no tiene `meta.json`, el actual se restablece a solo
+  `{nombre}` (el nombre visible no es dato de rama); igual que los demás
+  sidecars ausentes, que se borran.
+- **Scripts por `ruta`**: el texto queda en `_fuente/script.py` de cada
+  paso, pero el archivo de `ruta` está fuera de los datos de Forja y
+  cambiar de rama **nunca lo escribe**. Si el texto de la rama destino
+  difiere del archivo en disco, el cambio responde
+  `avisos: ["script_divergente: ..."]` (REST, MCP `rama cambiar`, visor) y
+  deja una marca `forja-script-divergente` (`{ruta, sha256}` del texto de
+  la rama) en el repo. Con esa marca, `POST /parametros` responde 409
+  («no se regenera: ...») en vez de regenerar con el script equivocado,
+  salvo `confirmar_script: true` (usa el archivo tal como está). La marca
+  se borra sola si el archivo vuelve a tener el texto de la rama, al
+  confirmar, al ejecutar de nuevo el script (`ejecutar_script`) o al
+  cambiar a una rama cuyo texto coincide. Los scripts guardados como
+  texto (`codigo`) nunca divergen. `GET /parametros` incluye `avisos`
+  mientras dure. Limitación: Forja no puede restaurar el archivo por el
+  usuario; si se acepta el archivo actual, la geometría sale de él y no
+  de lo que la rama recordaba.
 - Nombres de rama: `[A-Za-z0-9][A-Za-z0-9_-]{0,47}`; shas de fuera: 40 hex
   o abreviados de 7+ hex, nunca expresiones de revisión; `--end-of-options`.
 - Comparar aplica la regla de G0 sobre `solidos.json` (caras solo si lo
-  demás coincide, con caché por contenido) sin tomar el candado.
+  demás coincide, con caché por contenido) sin tomar el candado. Si solo
+  un lado tiene `solidos.json` no hay nombres comunes: ambos caen a la
+  entrada única `documento` (igual/cambiada por revisión), sin marcar
+  piezas añadidas o quitadas; volumen y bbox salen del lado que los tiene.
+- Escritura perezosa en GET: el primer `GET` de `ramas`, `pasos` o
+  `comparar` de un documento sin ramas crea `main` desde el estado actual
+  sin token. Es aceptable porque solo escribe dentro del repo del
+  documento (nunca el documento ni nada fuera de los datos), no cambia
+  ningún contenido visible ni la revisión, es idempotente (bajo el
+  candado y solo si no hay ramas) y registra lo que ya hay en disco, que
+  cualquier petición con token habría registrado igual.

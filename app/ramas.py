@@ -246,12 +246,6 @@ def borrar(doc_id: str, nombre: str) -> dict[str, Any]:
     return {"borrada": nombre, "sha": sha}
 
 
-def _escribir_atomico(destino: Path, contenido: bytes) -> None:
-    temporal = destino.with_name(destino.name + ".rama.tmp")
-    temporal.write_bytes(contenido)
-    os.replace(temporal, destino)
-
-
 def _snapshot_actual(doc_id: str, ruta: Path) -> dict[str, bytes]:
     actuales: dict[str, bytes] = {ruta.name: ruta.read_bytes()}
     for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)),
@@ -262,29 +256,99 @@ def _snapshot_actual(doc_id: str, ruta: Path) -> dict[str, bytes]:
     return documents._con_ensamble_snapshot(actuales, doc_id)
 
 
+def _meta_sin_rama(doc_id: str) -> bytes | None:
+    """``meta.json`` for a state that recorded none: only today's display
+    name survives (it is not branch data); ``None`` = no meta at all."""
+    try:
+        actual = json.loads(documents._ruta_meta(doc_id).read_bytes())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if isinstance(actual, dict) and isinstance(actual.get("nombre"), str):
+        return json.dumps({"nombre": actual["nombre"]}).encode()
+    return None
+
+
 def _materializar(doc_id: str, ruta: Path, archivos: dict[str, bytes]) -> None:
-    _escribir_atomico(ruta, archivos[ruta.name])
-    if "meta.json" in archivos:
-        _escribir_atomico(documents._ruta_meta(doc_id), archivos["meta.json"])
+    """Write a stored state over the document. Phase 1 writes every target
+    as a temporary next to it (a full disk fails here, before touching
+    anything); phase 2 renames them in and removes the sidecars the state
+    lacks. A failure in phase 2 is undone by `cambiar`."""
+    meta = archivos.get("meta.json")
+    if meta is None:
+        meta = _meta_sin_rama(doc_id)
+    destinos: list[tuple[Path, bytes | None]] = [(ruta, archivos[ruta.name]),
+                                                 (documents._ruta_meta(doc_id), meta)]
     for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)),
                            ("solidos.json", solids.ruta_solidos(doc_id)),
                            (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id))):
-        if nombre in archivos:
-            _escribir_atomico(camino, archivos[nombre])
+        destinos.append((camino, archivos.get(nombre)))
+    preparados: list[tuple[Path, Path | None]] = []
+    try:
+        for destino, contenido in destinos:
+            if contenido is None:
+                preparados.append((destino, None))
+                continue
+            temporal = destino.with_name(destino.name + ".rama.tmp")
+            temporal.write_bytes(contenido)
+            preparados.append((destino, temporal))
+    except BaseException:
+        for _destino, temporal in preparados:
+            if temporal is not None:
+                temporal.unlink(missing_ok=True)
+        raise
+    for destino, temporal in preparados:
+        if temporal is None:
+            destino.unlink(missing_ok=True)
         else:
-            camino.unlink(missing_ok=True)
+            os.replace(temporal, destino)
     ensamble = {k: archivos[k] for k in (assemblies.STATE_KEY, assemblies.BASE_KEY) if k in archivos}
     assemblies.restore_files(doc_id, ensamble)
     if ensamble:
         # `restore_files` re-serialises state.json: put back the exact bytes.
-        _escribir_atomico(assemblies._directory(doc_id) / "state.json", ensamble[assemblies.STATE_KEY])
+        estado = assemblies._directory(doc_id) / "state.json"
+        temporal = estado.with_name("state.json.rama.tmp")
+        temporal.write_bytes(ensamble[assemblies.STATE_KEY])
+        os.replace(temporal, estado)
+
+
+def _sha256(contenido: bytes) -> str:
+    return hashlib.sha256(contenido).hexdigest()
+
+
+def _revisar_script(doc_id: str, rama: str, sha: str, archivos: dict[str, bytes]) -> list[str]:
+    """Scripts remembered by ``ruta`` live OUTSIDE Forja's data and are
+    never written by a switch. When the branch's recorded text differs from
+    that file, mark the document (regenerating then needs confirmation, see
+    `documents.aplicar_parametros`) and return the warning."""
+    meta = _json(archivos, "meta.json")
+    script = meta.get("script") if isinstance(meta, dict) else None
+    texto = git_store.leer_fuente(doc_id, sha).get("script.py")
+    if not (isinstance(script, dict) and isinstance(script.get("ruta"), str)) or texto is None:
+        git_store.fijar_script_divergente(doc_id, None, None)
+        return []
+    try:
+        en_disco = documents._validar_ruta_permitida(script["ruta"]).read_bytes()
+    except (HTTPException, OSError):
+        en_disco = None
+    if en_disco == texto:
+        git_store.fijar_script_divergente(doc_id, None, None)
+        return []
+    git_store.fijar_script_divergente(doc_id, script["ruta"], _sha256(texto))
+    return [f"script_divergente: el script guardado en la rama {rama} no coincide con el archivo "
+            f"{script['ruta']}; Forja no escribe fuera de sus datos. Regenerar parametros queda "
+            "bloqueado hasta que restaures ese archivo o confirmes usarlo (confirmar_script=true)."]
 
 
 def cambiar(doc_id: str, nombre: str) -> dict[str, Any]:
     """Materialise branch ``nombre`` into the document. Caller holds
     `parametros.bloqueo(doc_id)`. The current state is first saved on the
     branch being left (if it had unrecorded changes) and as a G1 snapshot,
-    so switching never loses anything and is undoable with `restaurar`."""
+    so switching never loses anything and is undoable with `restaurar`.
+
+    All-or-nothing: any failure from the first file written to the new
+    revision being confirmed puts back the files of the step just recorded
+    (the state before the switch), the active branch, the registry entry,
+    the revision and the script mark, then re-raises."""
     git_store.validar_rama(nombre)
     ruta = documents._files.get(doc_id)
     if ruta is None or not ruta.exists():
@@ -295,28 +359,50 @@ def cambiar(doc_id: str, nombre: str) -> dict[str, Any]:
     if destino is None:
         raise LookupError(f"rama {nombre!r} no encontrada")
     if nombre == activa:
+        aviso = documents.aviso_script_divergente(doc_id, parametros.cargar(doc_id)["script"])
         return {**documents._registry[doc_id], "revision": documents._revisiones.get(doc_id),
-                "rama": nombre, "sha_corto": destino[:10]}
-    registrar(doc_id, "estado sin registrar", solo_si_cambia=True)
+                "rama": nombre, "sha_corto": destino[:10], "avisos": [aviso] if aviso else []}
+    previo = registrar(doc_id, "estado sin registrar", solo_si_cambia=True)
     archivos = git_store.leer(doc_id, destino)
     if ruta.name not in archivos:
         raise ValueError("la rama no contiene la geometria de este documento")
     assemblies.validate_snapshot(archivos)
     versioning.crear_snapshot(doc_id, f"antes de cambiar a la rama {nombre}",
                               _snapshot_actual(doc_id, ruta), pendiente=False)
-    _materializar(doc_id, ruta, archivos)
-    git_store.fijar_rama_activa(doc_id, nombre)
-    analisis = documents._analyze(ruta, ruta.suffix.lower())
-    nombre_doc = documents._leer_meta(doc_id, documents._registry[doc_id]["nombre"])
-    registro = {"id": doc_id, "nombre": nombre_doc, **analisis}
-    documents._registry[doc_id] = registro
-    previa = documents._revisiones.get(doc_id)
-    documents.confirmar_revision(doc_id)
-    nueva = documents._revisiones.get(doc_id)
-    if nueva == previa:
+    registro_previo = documents._registry[doc_id]
+    tenia_revision = doc_id in documents._revisiones
+    revision_previa = documents._revisiones.get(doc_id)
+    marca_previa = git_store.leer_script_divergente(doc_id)
+    try:
+        _materializar(doc_id, ruta, archivos)
+        git_store.fijar_rama_activa(doc_id, nombre)
+        avisos = _revisar_script(doc_id, nombre, destino, archivos)
+        analisis = documents._analyze(ruta, ruta.suffix.lower())
+        nombre_doc = documents._leer_meta(doc_id, registro_previo["nombre"])
+        registro = {"id": doc_id, "nombre": nombre_doc, **analisis}
+        documents._registry[doc_id] = registro
+        documents.confirmar_revision(doc_id)
+        nueva = documents._revisiones.get(doc_id)
+    except BaseException:
+        logger.exception("cambio a la rama %s fallido en %s; se restablece %s", nombre, doc_id, activa)
+        try:
+            _materializar(doc_id, ruta, git_store.leer(doc_id, previo))
+        finally:
+            git_store.fijar_rama_activa(doc_id, activa)
+            if marca_previa:
+                git_store.fijar_script_divergente(doc_id, marca_previa["ruta"], marca_previa["sha256"])
+            else:
+                git_store.fijar_script_divergente(doc_id, None, None)
+            documents._registry[doc_id] = registro_previo
+            if tenia_revision:
+                documents._revisiones[doc_id] = revision_previa
+            else:
+                documents._revisiones.pop(doc_id, None)
+        raise
+    if nueva == revision_previa:
         eventos.publicar("anotaciones_actualizadas", doc_id, nueva,
                          [c for c in CAMBIOS_RAMA if c != "geometria"])
-    return {**registro, "revision": nueva, "rama": nombre, "sha_corto": destino[:10]}
+    return {**registro, "revision": nueva, "rama": nombre, "sha_corto": destino[:10], "avisos": avisos}
 
 
 # ------------------------------------------------------------ comparar
@@ -417,6 +503,12 @@ def comparar(doc_id: str, a: str, b: str) -> dict[str, Any]:
     geo = next((n for n in arch_a if n.lower().endswith((".step", ".stp", ".stl"))), None)
     piezas_a = _piezas(_json(arch_a, "solidos.json"))
     piezas_b = _piezas(_json(arch_b, "solidos.json"))
+    totales_a, totales_b = piezas_a, piezas_b
+    if bool(piezas_a) != bool(piezas_b):
+        # Only one side names its solids: there is no common naming to diff
+        # by piece, so both fall back to the single `documento` entry
+        # (volume/bbox still come from the side that has them).
+        piezas_a, piezas_b = {}, {}
     if not rev_a or not rev_b:  # older step without trailer: recompute
         def _rev(arch: dict[str, bytes]) -> str | None:
             g = next((n for n in arch if n.lower().endswith((".step", ".stp", ".stl"))), None)
@@ -447,9 +539,9 @@ def comparar(doc_id: str, a: str, b: str) -> dict[str, Any]:
     if not piezas_a and not piezas_b:  # STL or no named solids
         estado["documento"] = "igual" if identica else "cambiada"
 
-    vol_a = sum(p["volumen"] for p in piezas_a.values())
-    vol_b = sum(p["volumen"] for p in piezas_b.values())
-    bb_a, bb_b = _bbox_total(piezas_a), _bbox_total(piezas_b)
+    vol_a = sum(p["volumen"] for p in totales_a.values())
+    vol_b = sum(p["volumen"] for p in totales_b.values())
+    bb_a, bb_b = _bbox_total(totales_a), _bbox_total(totales_b)
 
     def _valores(arch: dict[str, bytes]) -> dict[str, Any]:
         meta = _json(arch, "meta.json") or {}

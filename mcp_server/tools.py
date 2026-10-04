@@ -289,7 +289,8 @@ def percibir(
 
 
 def parametros(
-    id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None
+    id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None,
+    confirmar_script: bool = False,
 ) -> dict[str, Any]:
     """Parametros de un documento creado con un script parametrico (Fase 5C):
     iterar cambiando NUMEROS, sin volver a mandar el script.
@@ -321,8 +322,13 @@ def parametros(
     vigentes. Un script tambien puede declararlos con un dict literal
     `MATERIALES = {...}` a nivel de modulo. El 3MF descargado/abierto en
     Orca lleva el extrusor de cada pieza y su color.
+
+    Si un cambio de rama dejo el aviso `script_divergente` (el script por
+    `ruta` en disco no es el de esa rama), aplicar `valores` responde error
+    hasta restaurar el archivo o pasar `confirmar_script=true` (usa el
+    archivo tal como esta). La lectura incluye `avisos` en ese estado.
     """
-    return client.parametros(id, valores, materiales)
+    return client.parametros(id, valores, materiales, confirmar_script)
 
 
 def check_fdm(
@@ -418,7 +424,10 @@ def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = No
     - `crear`: rama `nombre` desde el estado actual o desde `desde`
       (rama o sha_corto de un paso). No cambia de rama.
     - `cambiar`: materializa la rama `nombre` en el documento (el estado
-      actual queda guardado; se deshace con `restaurar` o volviendo).
+      actual queda guardado; se deshace con `restaurar` o volviendo). Todo
+      o nada: si falla, el documento queda como estaba. `avisos` lista
+      `script_divergente: ...` si el script por `ruta` en disco no es el
+      de la rama (Forja no lo sobrescribe; ver `parametros`).
     - `renombrar`: `nombre` -> `a` (main no). `borrar`: `nombre` (ni la
       activa ni main).
     - `pasos`: `[{sha_corto, fecha, autor, mensaje, revision}]` de la rama

@@ -315,7 +315,8 @@ def percibir(
 
 
 def parametros(
-    doc_id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None
+    doc_id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None,
+    confirmar_script: bool = False,
 ) -> dict[str, Any]:
     """`None` -> read the schema + current values (token-free GET); a dict
     -> apply them (token-protected POST, re-runs the stored script).
@@ -332,13 +333,14 @@ def parametros(
         if resp.status_code >= 400:
             return {"error": True, **_detalle_estructurado(resp)}
         resultado_materiales = resp.json()["materiales"]
-    respuesta = _parametros(doc_id, valores)
+    respuesta = _parametros(doc_id, valores, confirmar_script)
     if resultado_materiales is not None and not respuesta.get("error"):
         respuesta["materiales"] = resultado_materiales
     return respuesta
 
 
-def _parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
+def _parametros(doc_id: str, valores: dict[str, Any] | None = None,
+                confirmar_script: bool = False) -> dict[str, Any]:
     with httpx.Client(
         base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT if valores is None else _TIMEOUT + _SCRIPT_TIMEOUT_MARGIN
     ) as c:
@@ -347,7 +349,7 @@ def _parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str,
         else:
             resp = c.post(
                 f"/documentos/{doc_id}/parametros",
-                json={"valores": valores},
+                json={"valores": valores, **({"confirmar_script": True} if confirmar_script else {})},
                 headers=_headers_con_token(),
             )
     if resp.status_code >= 400:
@@ -505,7 +507,7 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
         return {"error": True, "mensaje": _detalle(resp)}
     datos = resp.json()
     if accion == "cambiar":
-        return {k: datos.get(k) for k in ("rama", "sha_corto", "revision", "volumen", "solidos", "valido")}
+        return {k: datos.get(k) for k in ("rama", "sha_corto", "revision", "volumen", "solidos", "valido", "avisos")}
     return datos
 
 

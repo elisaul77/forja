@@ -7,13 +7,21 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (G2/G3 — revisión)
+
+- Cambiar de rama es todo o nada: temporales primero y renombrado después; cualquier fallo hasta `confirmar_revision` restaura los archivos del paso recién registrado, la rama activa, el registro, la revisión y la marca de script, y relanza.
+- Scripts por `ruta`: cambiar de rama nunca escribe el archivo; si difiere del texto de la rama devuelve `avisos: ["script_divergente: ..."]` (REST, MCP `rama`, visor) y `POST /parametros` responde 409 salvo `confirmar_script: true` (nuevo campo opcional; MCP `parametros(confirmar_script=...)`). `GET /parametros` incluye `avisos` mientras dure.
+- Rama sin `meta.json`: el actual se restablece a solo `{nombre}`.
+- Comparar con `solidos.json` en un solo lado usa la entrada única `documento`.
+- ADR-0014: garantía real del cambio, limitación de scripts por `ruta`, escritura perezosa de `main` en GET.
+
 ### Added (G2/G3 — ramas, pasos y comparar)
 
 - `app/ramas.py`: ramas en `refs/forja/ramas/<nombre>` con un paso (estado completo tras el cambio: geometría, `meta.json`, notas, sólidos, materiales, ensamble, `_fuente/script.py` con el texto aunque venga de `ruta`; trailers `Forja-Revision`/`Forja-Rama`) por cada petición mutante con éxito, registrado por el middleware antes de responder. `refs/heads/main` (instantáneas G1) intacto.
 - Cambiar de rama: guarda lo no registrado, deja instantánea G1 «antes de cambiar a la rama X», escribe todo de forma atómica bajo el candado, actualiza registro/revisión y emite el evento SSE. Crear (desde el estado actual o un paso), renombrar, borrar (ni `main` ni la activa), pasos.
 - Comparar (regla de G0): por pieza con nombre añadida/quitada/cambiada/igual, Δvolumen y %, Δbbox, parámetros y materiales cambiados, script cambiado; sin candado; caras solo si vol/bbox coinciden (caché por contenido). Malla FJP1 por paso para superponer (caché en `.cache/comparar`).
 - REST (`/ramas`, `/ramas/{rama}/activar|renombrar|pasos`, `DELETE /ramas/{rama}`, `/comparar`, `/comparar/malla`), token en mutaciones. MCP: herramienta `rama` (21 herramientas).
-- Visor: pestaña «Ramas» (selector de rama activa, nueva rama, cambiar, borrar, pasos con fecha/autor/mensaje, rama desde un paso; sin miniaturas aún) y modo «Comparar» superpuesto con resumen y «Volver». `ramas.js?v=1`, `viewer.js?v=13`, `tabs.js?v=20`, `app.js?v=22`, `forja-base.css?v=13`.
+- Visor: pestaña «Ramas» (selector de rama activa, nueva rama, cambiar, borrar, pasos con fecha/autor/mensaje, rama desde un paso; sin miniaturas aún) y modo «Comparar» superpuesto con resumen y «Volver». `ramas.js?v=2`, `viewer.js?v=13`, `tabs.js?v=21`, `app.js?v=23`, `forja-base.css?v=13`.
 - Seguridad (pendientes de G1): shas externos validados (`validar_sha`), `--end-of-options` en `log`/`ls-tree`/`rev-parse`/`update-ref`; nombres de rama `[A-Za-z0-9][A-Za-z0-9_-]{0,47}`; ADR-0014: el autor es una etiqueta, no prueba de identidad.
 - Pruebas: `tests/test_ramas.py` (37).
 

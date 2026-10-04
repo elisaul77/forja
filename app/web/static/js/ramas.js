@@ -37,6 +37,7 @@ export class ForjaRamasControlador {
     this.pasos = [];
     this.vista = null; // rama cuyos pasos se listan (por defecto la activa)
     this.comparando = null;
+    this.avisos = []; // p. ej. «script_divergente: ...» tras cambiar de rama
     this._alCambiar = alCambiar;
     this._alComparar = alComparar;
   }
@@ -53,6 +54,7 @@ export class ForjaRamasControlador {
 
   async cambiar(nombre) {
     const registro = await activarRama(this.docId, nombre);
+    this.avisos = Array.isArray(registro.avisos) ? registro.avisos : [];
     this.vista = nombre;
     await this.cargarInicial();
     await this._alCambiar(registro);
@@ -95,6 +97,15 @@ export function textoResumen(r) {
 export function renderizarPanelRamas(ctl) {
   panelRamas.textContent = "";
   const { activa, ramas } = ctl.datos;
+
+  for (const texto of ctl.avisos) {
+    const aviso = document.createElement("div");
+    aviso.className = "fj-ramas__aviso";
+    aviso.setAttribute("role", "alert");
+    aviso.style.cssText = "border:1px solid #c98a00;background:#3a2c00;color:#ffd97a;padding:6px 8px;margin-bottom:6px;border-radius:4px;font-size:12px";
+    aviso.textContent = `⚠ ${texto}`;
+    panelRamas.append(aviso);
+  }
 
   const cabecera = document.createElement("div");
   cabecera.className = "fj-ramas__cabecera";
