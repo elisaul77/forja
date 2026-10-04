@@ -7,6 +7,16 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (fdm-D — material/filamento por pieza con nombre)
+
+- Scripts: dict literal `MATERIALES = {"tapa": "PETG negro", "junta": {"material": "TPU", "color": "#202020", "extrusor": 2}}` a nivel de módulo, leído con `ast.literal_eval` (nunca se ejecuta en el proceso web) y validado antes de correr (texto 1–64, color `#RRGGBB`, extrusor 1..16; 422 sin crear nada). Nombres que el script no produce se descartan y se informan en `materiales_ignorados` (aditivo).
+- `app/materiales.py` + sidecar `{id}.materiales.json` (escritura atómica) con `{materiales, declarado}`: re-ejecutar con la MISMA declaración conserva las ediciones manuales; una declaración distinta las reemplaza; un script sin `MATERIALES` no toca lo guardado. Viaja en cada instantánea de geometría como `materiales.json`; `restaurar` lo repone (o lo quita si la instantánea es anterior); borrar el documento lo elimina.
+- REST: `GET /documentos/{id}/materiales` → `{materiales, piezas}`; `POST` (token) `{materiales: {pieza: material|null}, reemplazar?}` sin re-ejecutar, con instantánea previa y evento `anotaciones_actualizadas` `["materiales","historial"]`. `GET /documentos/{id}` agrega `materiales` solo si hay alguno.
+- 3MF (descarga completa, por pieza y `exportar`): `<basematerials>` del estándar (`name` + `displaycolor`) referenciado por `pid`/`pindex` de cada objeto, y `Metadata/model_settings.config` estilo Orca/Bambu con `name` y `extruder` por objeto (más `forja_material` informativo). Sin materiales el paquete es idéntico al anterior.
+- MCP (sin herramientas nuevas): `resumen_documento` muestra `materiales`; `parametros(id, materiales={...})` los cambia sin re-ejecutar.
+- Visor: piezas coloreadas con su color de material, muestra del color en la lista y formulario material/color/extrusor en el detalle de la pieza (guarda por POST). `materiales.js?v=1`, `pieces.js?v=9`, `viewer.js?v=12`, `tabs.js?v=19`, `app.js?v=21`, `forja-base.css?v=12`.
+- Pruebas: `tests/test_materiales.py` (22), `tests/web/materiales.test.mjs` (3).
+
 ### Added (fdm-C — arreglos automáticos de diseño FDM)
 
 - `app/fdm_ops.py`: `agujero_gota(d, largo, eje, centro)` (techo en punta a 45°, diámetro compensado como agujero horizontal), `chaflan_base(pieza, alto)` (aristas de la cara apoyada; si falla devuelve la pieza intacta + aviso), `puente_sacrificio(d, z, centro)` (disco de 1 altura de capa), `partir_para_cama(pieza, cama, union="pasadores"|"cola_milano", nombre)` (cortes por planos, giro 90° en Z si ahorra partes, hasta 2 pasadores por cara de corte con agujeros compensados `eje_presion`/`eje_deslizante` —gota si horizontales— y pasadores de pie al lado; cola de milano de 15° para cortes X/Y). Sin `voladizos_a_45`: no robusto en B-rep.

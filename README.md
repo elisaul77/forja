@@ -300,6 +300,13 @@ no cabe y une con pasadores compensados —gota si son horizontales— o colas
 de milano). `check_fdm` añade `sugerencias` con la función a usar. No hay
 "voladizos a 45° automático": reescribir caras arbitrarias no es robusto.
 
+### Material por pieza (fdm-D)
+
+- Declaración en el script: `MATERIALES = {"tapa": "PETG negro", "junta": {"material": "TPU", "color": "#202020", "extrusor": 2}}` (dict literal; forma corta = texto).
+- Leer/cambiar sin re-ejecutar: `GET|POST /documentos/{id}/materiales` (POST con token; `null` quita), MCP `parametros(id, materiales={...})`; `resumen_documento` los muestra. Visor: panel Piezas → detalle de la pieza.
+- Guardado en `{id}.materiales.json`; sobrevive a actualizaciones (misma declaración = se conservan las ediciones) y va en las instantáneas.
+- El 3MF lleva `basematerials` (color estándar) y `Metadata/model_settings.config` con `extruder` por objeto, que OrcaSlicer/Bambu leen como filamento asignado; otros slicers lo ignoran.
+
 ### Notas, pizarra, nombrado estable y versionado (Fase 4)
 
 En el visor web, cada pestaña tiene una barra de herramientas propia:
