@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![build123d](https://img.shields.io/badge/kernel-build123d%20%2F%20OpenCascade-f26b21.svg)](https://github.com/gumyr/build123d)
-[![MCP](https://img.shields.io/badge/MCP-19%20herramientas-6f42c1.svg)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-21%20herramientas-6f42c1.svg)](https://modelcontextprotocol.io/)
 [![Docker](https://img.shields.io/badge/runtime-Docker-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
 [![three.js](https://img.shields.io/badge/visor-three.js-000000.svg?logo=threedotjs)](https://threejs.org/)
 
@@ -21,7 +21,7 @@
 
 ## ✨ Qué puedes hacer
 
-- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (20 herramientas, respuestas compactas para gastar pocos tokens).
+- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (21 herramientas, respuestas compactas para gastar pocos tokens).
 - 👀 **Ver el diseño en vivo** — cuando el agente cambia un documento, el visor se actualiza solo, sin recargar y sin mover tu cámara.
 - 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
@@ -29,6 +29,8 @@
 - 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
 - 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable, con grafo de ramas, miniatura por paso, historial por pieza y «restaurar solo esta pieza»; las notas siguen a sus caras entre reconstrucciones.
 - 🛡️ **Ejecución aislada** — los scripts corren en un contenedor sandbox sin red, sin secretos y sin acceso a tus documentos.
+- 🌿 **Git para diseño** — cada documento es un repo git: ramas de diseño, comparar versiones pieza por pieza en 3D (verde añadida, rojo quitada, ámbar cambiada), fusión verificada con detección de choques, «traer pieza» desde otra rama e hitos.
+- 🧩 **Incorporar piezas** — mete la geometría de un documento dentro de otro en su sitio (por ejemplo, un soporte diseñado aparte dentro del modelo de un carro), con paso restaurable en el historial.
 - 📐 **Perfil de tolerancias de tu impresora** — imprime una probeta, anota tus medidas y los diseños compensan solos (`agujero(3)`, `ajuste("M3_pasante")`).
 - 🧪 **Cupones de prueba** — imprime en minutos solo la zona donde encajan las piezas antes de la impresión larga.
 - 🛠️ **Arreglos FDM automáticos** — agujeros en gota sin soporte, chaflán contra pata de elefante, puentes de sacrificio y partir piezas para la cama con pasadores o cola de milano.
@@ -277,6 +279,10 @@ Fusión (ADR-0015): datos a 3 vías con el ancestro común, script con `git merg
 y reconstrucción; después validez + colisiones contra las dos ramas. Choques nuevos →
 `conflicto_geometrico` (no se confirma salvo `forzar`). Traer una pieza a un documento
 con script lo marca `geometria_editada`.
+
+### Incorporar un documento en otro
+
+`POST /documentos/{id}/incorporar` (token) con `{desde, piezas?}` mete en su sitio la geometría del documento `desde` dentro de `id`: destino STL → mallas concatenadas; destino STEP → sólidos con nombre añadidos sin pisar nombres. Deja instantánea restaurable y paso en el historial; el origen no cambia. Por MCP: `rama(id, accion="incorporar", desde=..., piezas=[...])`.
 
 ### MCP
 
