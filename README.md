@@ -97,6 +97,69 @@ flowchart LR
 
 Stack: Python 3.12, build123d, cadquery-ocp (OpenCascade), manifold3d, python-fcl, trimesh, FastAPI, three.js (vendorizado), MCP. Decisiones de diseño en [`docs/decisions/`](docs/decisions/).
 
+## 🔁 Flujo: del pedido a la impresora
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Tú
+    participant C as Claude (agente)
+    participant F as Forja (API + MCP)
+    participant S as Sandbox (sin red)
+    participant V as Visor (navegador)
+    participant O as OrcaSlicer
+
+    U->>C: "Hazme una caja con tapa para este circuito"
+    C->>F: ejecutar_script(codigo, nombre)
+    F->>S: corre el script build123d aislado
+    S-->>F: STEP + sólidos con nombre
+    F->>F: valida, versiona y calcula la revisión
+    F-->>V: evento SSE documento_actualizado
+    V->>F: GET /malla (caché por revisión)
+    F-->>V: malla nueva (la cámara no se mueve)
+    F-->>C: {id, volumen, bbox, sólidos} (respuesta compacta)
+    C->>F: check_fdm / check_colisiones / percibir
+    F-->>C: solo los problemas, con números
+    U->>V: dibuja una indicación sobre un plano con corte
+    C->>F: leer_notas
+    C->>F: ejecutar_script(documento_id) — corrige en el mismo documento
+    F-->>V: el visor se actualiza solo
+    U->>V: selecciona una pieza → "Abrir en Orca"
+    V->>O: orcaslicer://open?file=…/descarga/pieza/x.3mf
+    O->>F: descarga el 3MF (solo esa pieza)
+```
+
+## 🔬 Estado del arte (referencias)
+
+Forja se diseñó después de revisar la investigación reciente sobre LLM → CAD. La conclusión que más pesó: **las mejoras grandes vienen del bucle de verificación (números del kernel + vistas), no de un modelo más grande**; y preguntar antes de dibujar reduce mucho los errores. Por eso Forja prioriza respuestas medibles (`percibir`, checks) y el canal de notas/pizarra.
+
+| # | Trabajo | Año | DOI |
+|---:|---|:---:|---|
+| 1 | Query2CAD: Generating CAD models using natural language queries | 2024 | [10.48550/arXiv.2406.00144](https://doi.org/10.48550/arXiv.2406.00144) |
+| 2 | Text2CAD: Generating Sequential CAD Models from Beginner-to-Expert Level Text Prompts (NeurIPS 2024) | 2024 | [10.48550/arXiv.2409.17106](https://doi.org/10.48550/arXiv.2409.17106) |
+| 3 | Generating CAD Code with Vision-Language Models for 3D Designs — CADCodeVerify (ICLR 2025) | 2024 | [10.48550/arXiv.2410.05340](https://doi.org/10.48550/arXiv.2410.05340) |
+| 4 | CAD-Recode: Reverse Engineering CAD Code from Point Clouds (ICCV 2025) | 2024 | [10.48550/arXiv.2412.14042](https://doi.org/10.48550/arXiv.2412.14042) |
+| 5 | BlenderLLM: Training Large Language Models for Computer-Aided Design with Self-improvement | 2024 | [10.48550/arXiv.2412.14203](https://doi.org/10.48550/arXiv.2412.14203) |
+| 6 | CAD-Coder: Text-to-CAD Generation with Chain-of-Thought and Geometric Reward | 2025 | [10.48550/arXiv.2505.19713](https://doi.org/10.48550/arXiv.2505.19713) |
+| 7 | CADmium: Fine-Tuning Code Language Models for Text-Driven Sequential CAD Design | 2025 | [10.48550/arXiv.2507.09792](https://doi.org/10.48550/arXiv.2507.09792) |
+| 8 | CADDesigner: Conceptual CAD Model Generation with a General-Purpose Agent | 2025 | [10.48550/arXiv.2508.01031](https://doi.org/10.48550/arXiv.2508.01031) |
+| 9 | EvoCAD: Evolutionary CAD Code Generation with Vision Language Models | 2025 | [10.48550/arXiv.2510.11631](https://doi.org/10.48550/arXiv.2510.11631) |
+| 10 | Clarify Before You Draw: Proactive Agents for Robust Text-to-CAD Generation (ProCAD) | 2026 | [10.48550/arXiv.2602.03045](https://doi.org/10.48550/arXiv.2602.03045) |
+| 11 | CADSmith: Multi-Agent CAD Generation with Programmatic Geometric Validation | 2026 | [10.48550/arXiv.2603.26512](https://doi.org/10.48550/arXiv.2603.26512) |
+| 12 | Agent-Aided Design for Dynamic CAD Models (AADvark) | 2026 | [10.48550/arXiv.2604.15184](https://doi.org/10.48550/arXiv.2604.15184) |
+| 13 | Zero-to-CAD: Agentic Synthesis of Interpretable CAD Programs at Million-Scale Without Real Data | 2026 | [10.48550/arXiv.2604.24479](https://doi.org/10.48550/arXiv.2604.24479) |
+| 14 | Self-Improving CAD Generation Agents with Finite Element Analysis as Feedback | 2026 | [10.48550/arXiv.2605.17448](https://doi.org/10.48550/arXiv.2605.17448) |
+| 15 | Text2CAD-Bench: A Benchmark for LLM-based Text-to-Parametric CAD Generation | 2026 | [10.48550/arXiv.2605.18430](https://doi.org/10.48550/arXiv.2605.18430) |
+| 16 | Embodied CAD: Solver-Grounded LLM Agents for Parametric B-Rep Assembly Modeling | 2026 | [10.48550/arXiv.2606.31252](https://doi.org/10.48550/arXiv.2606.31252) |
+| 17 | MultiView-Bench: A Diagnostic Benchmark for World-Centric Multi-View Integration in VLMs | 2026 | [10.48550/arXiv.2607.08970](https://doi.org/10.48550/arXiv.2607.08970) |
+| 18 | CADENA: Stepwise CAD Reverse Engineering | 2026 | [10.48550/arXiv.2608.00799](https://doi.org/10.48550/arXiv.2608.00799) |
+| 19 | RA-CAD: Learning Post-Execution Critique for State-Aware Text-to-CAD Generation | 2026 | [10.48550/arXiv.2608.05714](https://doi.org/10.48550/arXiv.2608.05714) |
+| 20 | Procedura: Agentic 3D Modeling with Procedural Control | 2026 | [10.48550/arXiv.2608.26238](https://doi.org/10.48550/arXiv.2608.26238) |
+| 21 | MIRAGE-CAD: Construction-Mediated Multimodal Generation of Executable CAD Programs | 2026 | [10.48550/arXiv.2608.28669](https://doi.org/10.48550/arXiv.2608.28669) |
+| 22 | Vision2CAD: A Visual Agent Harness for Explicit Geometry Referencing and Localization in Parametric CAD | 2026 | [10.48550/arXiv.2609.22688](https://doi.org/10.48550/arXiv.2609.22688) |
+
+Productos revisados: Zoo / KittyCAD (Text-to-CAD, KCL), Adam / CADAM, Onshape, Autodesk Fusion, SolidWorks, Shapr3D, nTop, build123d-mcp y los MCP de OpenSCAD, FreeCAD y Blender.
+
 ## ❤️ Apoya el proyecto
 
 Si Forja te sirve, puedes apoyar su desarrollo:
