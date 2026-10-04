@@ -29,7 +29,7 @@ from mcp_server import tools
 
 
 def crear_servidor() -> MCPServer:
-    """Build a new `MCPServer` with Forja's metadata and all 19 tools
+    """Build a new `MCPServer` with Forja's metadata and all 20 tools
     registered. Called once per process for stdio (module-level `mcp`) and
     once per FastAPI lifespan for HTTP (a `StreamableHTTPSessionManager`
     can only `run()` once, so each lifespan needs its own instance)."""
@@ -43,7 +43,7 @@ def crear_servidor() -> MCPServer:
             "-> percibir (contactos) -> cortes solo si hace falta ver una forma "
             "-> check_colisiones para el detalle -> parametros(id, valores) para "
             "iterar cambiando numeros sin reenviar el script -> check_fdm antes "
-            "de laminar -> exportar (3mf: un objeto con nombre por solido). "
+            "de laminar -> cupon (imprimir solo las zonas de encaje) -> exportar (3mf: un objeto con nombre por solido). "
             "'captura' (imagen) "
             "solo para estetica o para mostrarle algo al usuario -- 'percibir' "
             "da numeros exactos (que toca a que, a cuanto) por una fraccion de "
@@ -72,6 +72,7 @@ def crear_servidor() -> MCPServer:
     servidor.tool(name="captura", structured_output=False)(tools.captura)
     servidor.tool(name="check_colisiones")(tools.check_colisiones)
     servidor.tool(name="percibir")(tools.percibir)
+    servidor.tool(name="cupon")(tools.cupon)
     servidor.tool(name="parametros")(tools.parametros)
     servidor.tool(name="check_fdm")(tools.check_fdm)
     servidor.tool(name="leer_notas")(tools.leer_notas)

@@ -687,6 +687,36 @@ def _crear_documento_desde_script(
     return {**registro, "revision": _revisiones.get(doc_id)}
 
 
+def crear_documento_desde_formas(nombrados: dict[str, Any], nombre_pedido: str) -> dict[str, Any]:
+    """New STEP document straight from in-process build123d shapes
+    (``{nombre: Shape}``, names validated here) — fdm-B test coupons. Same
+    bookkeeping as a script-created document, minus the stored script."""
+    solids.validar_nombres(nombrados.keys())
+    doc_id = uuid.uuid4().hex
+    nombre = nombre_pedido if nombre_pedido.lower().endswith((".step", ".stp")) else f"{nombre_pedido}.step"
+    destino = DOCUMENTOS_DIR / f"{doc_id}.step"
+    with _construyendo(doc_id):
+        try:
+            b123d_kernel.export_to_step(b123d_kernel.combinar_nombrados(dict(nombrados)), destino)
+            analisis, entradas = _analizar_con_solidos(destino, ".step", list(nombrados.keys()))
+        except Exception as exc:  # noqa: BLE001
+            destino.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail=f"geometria invalida: {exc}") from exc
+        registro = {"id": doc_id, "nombre": nombre, **analisis}
+        _registry[doc_id] = registro
+        _files[doc_id] = destino
+        _guardar_meta(doc_id, nombre)
+        if entradas is not None:
+            solids.guardar(doc_id, entradas)
+        versioning.crear_snapshot(
+            doc_id,
+            "documento creado (cupon)",
+            _con_solidos_snapshot({destino.name: destino.read_bytes()}, doc_id, entradas),
+        )
+        confirmar_revision(doc_id, "documento_creado")
+    return {**registro, "revision": _revisiones.get(doc_id)}
+
+
 @router.get("/documentos/{doc_id}/parametros")
 def obtener_parametros(doc_id: str) -> dict[str, Any]:
     """Read-only, token-free (Phase 5C): ``{esquema, valores}`` of the

@@ -21,7 +21,7 @@
 
 ## ✨ Qué puedes hacer
 
-- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (19 herramientas, respuestas compactas para gastar pocos tokens).
+- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (20 herramientas, respuestas compactas para gastar pocos tokens).
 - 👀 **Ver el diseño en vivo** — cuando el agente cambia un documento, el visor se actualiza solo, sin recargar y sin mover tu cámara.
 - 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.

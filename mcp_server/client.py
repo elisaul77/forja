@@ -263,6 +263,27 @@ def check_colisiones(doc_id: str, tolerancia_mm3: float = 0.5) -> dict[str, Any]
 
 
 @_heavy_operation
+def cupon(
+    doc_id: str,
+    pieza: str | None = None,
+    holgura_max: float | None = None,
+    margen: float | None = None,
+    caja: dict[str, list[float]] | None = None,
+) -> dict[str, Any]:
+    cuerpo = {k: v for k, v in (
+        ("pieza", pieza), ("holgura_max", holgura_max), ("margen", margen), ("caja", caja),
+    ) if v is not None}
+    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+        resp = c.post(f"/documentos/{doc_id}/cupon", json=cuerpo, headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    resultado = resp.json()
+    if isinstance(resultado, dict):
+        resultado.update(_enlace_orca(resultado.get("descarga")))
+    return resultado
+
+
+@_heavy_operation
 def percibir(
     doc_id: str,
     capas: str = "contactos",

@@ -14,6 +14,7 @@ from starlette.routing import Route
 
 import assembly_routes
 import bridges
+import cupon
 import documents
 import eventos
 import notes
@@ -42,6 +43,7 @@ app.include_router(notes.router)
 app.include_router(assembly_routes.router)
 app.include_router(bridges.router)
 app.include_router(perfiles.router)
+app.include_router(cupon.router)
 
 
 @app.get("/eventos")

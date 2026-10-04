@@ -225,17 +225,17 @@ def test_sin_llamadas_de_red_extra(monkeypatch):
     assert llamadas == ["client", "get"]
 
 
-NOMBRES_19 = {
+NOMBRES_20 = {  # fdm-B: + cupon
     "estado", "listar_documentos", "abrir_archivo", "resumen_documento", "ejecutar_script",
     "exportar", "captura", "check_colisiones", "percibir", "parametros", "check_fdm",
     "leer_notas", "crear_nota", "borrar_nota", "leer_historial", "restaurar", "ensamble",
-    "suspension", "puentes",
+    "suspension", "puentes", "cupon",
 }
 
 
 def test_inventario_de_herramientas_no_cambia():
     registradas = {t.name for t in crear_servidor()._tool_manager.list_tools()}  # noqa: SLF001
-    assert registradas == NOMBRES_19 and len(registradas) == 19
+    assert registradas == NOMBRES_20 and len(registradas) == 20
 
 
 def test_docstring_documenta_los_campos():

@@ -184,6 +184,31 @@ def check_colisiones(id: str, tolerancia_mm3: float = 0.5) -> dict[str, Any]:
     return client.check_colisiones(id, tolerancia_mm3=tolerancia_mm3)
 
 
+def cupon(
+    id: str,
+    pieza: str | None = None,
+    holgura_max: float | None = None,
+    margen: float | None = None,
+    caja: dict[str, list[float]] | None = None,
+) -> dict[str, Any]:
+    """Cupon de prueba FDM: crea un documento NUEVO «Cupón — <nombre>» con
+    solo las zonas donde las piezas encajan, para imprimirlas en minutos
+    antes de la pieza larga. El documento original no se toca.
+
+    Sin `caja`: busca parejas de solidos de distinto nombre que se tocan o
+    estan a menos de `holgura_max` mm (1 por defecto; con `pieza`, solo las
+    parejas de esa pieza), recorta cada una con su caja de interes mas
+    `margen` mm (4 por defecto) y las deja sobre la cama (z=0, separadas en
+    X, orientacion original) como `cupon_<pieza>` (`_zN` si hay varias
+    zonas). Con `caja` = `{min: [x, y, z], max: [x, y, z]}` (mm) recorta
+    con esa caja todas las piezas (o solo `pieza`).
+    Devuelve `{id_nuevo, nombre, piezas: [{nombre, de, bbox}], zonas:
+    [{piezas, pares: [{a, b, dist}], caja}], descarga, url_descarga,
+    enlace_orca}`; sin zonas de encaje → `{error: true, mensaje}`.
+    """
+    return client.cupon(id, pieza=pieza, holgura_max=holgura_max, margen=margen, caja=caja)
+
+
 def percibir(
     id: str,
     capas: str = "contactos",
