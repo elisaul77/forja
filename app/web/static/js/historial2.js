@@ -6,7 +6,7 @@ import { obtenerTokenSesion } from "./api.js?v=11";
 import {
   calcularCarriles, trazoArista, filtrarNodos, predicadoFiltros, fechaRelativa, fechaAbsoluta,
   chipsDeCambios, autor, coloresDeRamas, ramasPorPrimerPadre, PALETA_RAMAS, piezasTocadas, numeroEs, tituloPaso,
-} from "./historial-grafo.js?v=3";
+} from "./historial-grafo.js?v=4";
 import { compararEstados, mallaDeEstado, crearRama, crearHito, activarRama } from "./ramas.js?v=3";
 
 const enc = encodeURIComponent;
@@ -220,8 +220,8 @@ function chip(c) {
 function pastillaRama(nombre, colorIdx, activa) {
   const p = el("span", `fj-h2-pastilla${activa ? " is-activa" : ""}`, null, { title: activa ? `Rama activa: ${nombre}` : `Rama ${nombre}` });
   p.style.setProperty("--fj-h2-color", PALETA_RAMAS[colorIdx ?? 0]);
-  p.append(el("span", "fj-h2-pastilla__punto", null, { "aria-hidden": "true" }), el("span", "", nombre));
-  if (activa) p.append(el("span", "fj-h2-pastilla__marca", "activa"));
+  p.append(el("span", "fj-h2-pastilla__punto", null, { "aria-hidden": "true" }), el("span", "fj-h2-pastilla__nombre", nombre));
+  if (activa) p.append(el("span", "fj-h2-pastilla__marca", "activa", { "data-prioridad": 2 }));
   return p;
 }
 
@@ -238,6 +238,41 @@ function miniatura(src, clase, alt) {
   return caja;
 }
 
+const desborda = e => e.scrollWidth > e.clientWidth + 1;
+
+/** Ajusta cada tarjeta a su ancho real: los chips que no caben se agrupan en
+ * «+N más» y la fila de metadatos oculta primero el sha y luego la fecha
+ * (las pastillas de rama se acortan con elipsis). Nada queda cortado. */
+function ajustarTarjetas(contenedor) {
+  for (const fila of contenedor.querySelectorAll(".fj-h2__fila")) {
+    const meta = fila.querySelector(".fj-h2__meta");
+    if (meta) {
+      const opcionales = [...meta.querySelectorAll("[data-prioridad]")].sort((a, b) => a.dataset.prioridad - b.dataset.prioridad);
+      for (const o of opcionales) o.hidden = false;
+      // Las pastillas solo se acortan como último recurso: primero se mide
+      // con ellas a tamaño completo y se ocultan los opcionales.
+      meta.classList.add("is-midiendo");
+      for (const o of opcionales) { if (!desborda(meta)) break; o.hidden = true; }
+      meta.classList.remove("is-midiendo");
+    }
+    const chips = fila.querySelector(".fj-h2__chips");
+    if (!chips) continue;
+    chips.querySelector(".fj-h2-chip--mas")?.remove();
+    const todos = [...chips.children];
+    for (const c of todos) c.hidden = false;
+    if (!desborda(chips)) continue;
+    const mas = el("span", "fj-h2-chip fj-h2-chip--mas", "");
+    chips.append(mas);
+    for (let k = todos.length - 1; k >= 0; k--) {
+      todos[k].hidden = true;
+      const ocultos = todos.slice(k);
+      mas.textContent = `+${ocultos.length} más`;
+      mas.title = ocultos.map(c => c.textContent).join(", ");
+      if (!desborda(chips)) break;
+    }
+  }
+}
+
 class Vista {
   constructor(raiz) {
     this.raiz = raiz;
@@ -250,7 +285,7 @@ class Vista {
     const titulo = el("div", "fj-h2__titulo");
     titulo.append(el("h2", "", "Historial"), (this.contador = el("span", "fj-h2__contador", "")));
     const filtros = el("div", "fj-h2__filtros", null, { role: "group", "aria-label": "Filtros del historial" });
-    this.busqueda = el("input", "fj-input fj-h2__buscar", null, { type: "search", placeholder: "Buscar mensaje o sha…", "aria-label": "Buscar en el historial" });
+    this.busqueda = el("input", "fj-input fj-h2__buscar", null, { type: "search", placeholder: "Buscar…", title: "Buscar por mensaje o sha", "aria-label": "Buscar en el historial" });
     this.busqueda.addEventListener("input", () => { this.ctl.filtros.texto = this.busqueda.value; this.pintarLista(); });
     this.segmento = el("div", "fj-h2__segmento", null, { role: "radiogroup", "aria-label": "Autor" });
     for (const [valor, texto, tit] of [["todos", "Todos", "Todos los autores"], ["agente", "🤖", "Solo el agente"], ["humano", "👤", "Solo humanos"], ["forja", "⚙", "Solo Forja"]]) {
@@ -258,7 +293,7 @@ class Vista {
       b.addEventListener("click", () => { this.ctl.filtros.autor = valor; this.pintarFiltros(); this.pintarLista(); });
       this.segmento.append(b);
     }
-    this.hitos = el("button", "fj-h2__toggle", "◆ Solo hitos", { type: "button", "aria-pressed": "false" });
+    this.hitos = el("button", "fj-h2__toggle", "◆ Hitos", { type: "button", "aria-pressed": "false", title: "Solo pasos con hito o punta de rama" });
     this.hitos.addEventListener("click", () => { this.ctl.filtros.soloHitos = !this.ctl.filtros.soloHitos; this.pintarFiltros(); this.pintarLista(); });
     this.selRama = el("select", "fj-input fj-h2__rama", null, { "aria-label": "Rama a mostrar" });
     this.selRama.addEventListener("change", () => { this.ctl.filtros.rama = this.selRama.value; this.pintarLista(); });
@@ -518,11 +553,13 @@ class Vista {
       for (const h of n.hitos || []) meta.append(pastillaHito(h));
       if (n.fusion) meta.append(el("span", "fj-h2-chip fj-h2-chip--fusion", "fusión", { title: "Paso de fusión (dos padres)" }));
       if (n.desde) meta.append(el("span", "fj-h2-chip fj-h2-chip--neutro", `desde ${n.desde.slice(0, 7)}`, { title: `Trae piezas del paso ${n.desde}` }));
-      meta.append(el("time", "fj-h2__fecha", fechaRelativa(n.fecha, ahora), { datetime: n.fecha, title: fechaAbsoluta(n.fecha) }));
-      meta.append(el("code", "fj-h2__sha", n.sha_corto.slice(0, 7), { title: n.sha_corto }));
+      // data-prioridad: lo primero que se oculta si no cabe (1 = sha,
+      // 2 = marca «activa» de la pastilla, 3 = fecha).
+      meta.append(el("time", "fj-h2__fecha", fechaRelativa(n.fecha, ahora), { datetime: n.fecha, title: fechaAbsoluta(n.fecha), "data-prioridad": 3 }));
+      meta.append(el("code", "fj-h2__sha", n.sha_corto.slice(0, 7), { title: n.sha_corto, "data-prioridad": 1 }));
       cuerpo.append(meta);
       const chips = el("div", "fj-h2__chips");
-      for (const c of chipsDeCambios(n.cambios, 5)) chips.append(chip(c));
+      for (const c of chipsDeCambios(n.cambios, Infinity)) chips.append(chip(c));
       cuerpo.append(chips);
       fila.append(cuerpo);
       fila.addEventListener("click", () => this.seleccionar(n.sha_corto));
@@ -533,6 +570,8 @@ class Vista {
       contenedor.append(el("div", "fj-h2__mas", `Se muestran los ${datos.nodos.length} pasos más recientes de ${datos.total}.`));
     }
     lista.append(contenedor);
+    ajustarTarjetas(contenedor);
+    this._observarAncho();
     lista.scrollTop = scroll;
     // Alinear el grafo con el centro REAL de cada tarjeta.
     const ys = [...contenedor.querySelectorAll(".fj-h2__fila")].map(f => f.offsetTop + f.offsetHeight / 2);
@@ -551,6 +590,21 @@ class Vista {
       });
     }
     this.pintarDetalle();
+  }
+
+  /** Reajusta chips y metadatos cuando cambia el ancho real de la lista
+   * (tirador, abrir/cerrar el detalle, ventana). */
+  _observarAncho() {
+    if (this._ro || typeof ResizeObserver === "undefined") return;
+    let ancho = 0;
+    this._ro = new ResizeObserver(([e]) => {
+      const w = Math.round(e.contentRect.width);
+      if (w === ancho) return;
+      ancho = w;
+      const c = this.lista.querySelector(".fj-h2__filas");
+      if (c) ajustarTarjetas(c);
+    });
+    this._ro.observe(this.lista);
   }
 
   _tecla(ev, nodos, i) {
@@ -582,7 +636,8 @@ class Vista {
     const idx = [...this.lista.querySelectorAll(".fj-h2__fila")].findIndex(f => f.dataset.sha === this.ctl.seleccionado);
     if (idx >= 0) this.lista.querySelectorAll(".fj-h2__nodo")[idx]?.classList.add("is-sel");
     this.pintarDetalle();
-    if (this.ctl.seleccionado && matchMedia("(max-width: 900px)").matches) this.detalle.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Detalle apilado bajo la lista (panel estrecho): llevarlo a la vista.
+    if (this.ctl.seleccionado && getComputedStyle(this.detalle.parentElement).display === "flex") this.detalle.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   pintarDetalle() {
@@ -607,7 +662,8 @@ class Vista {
     const tit = el("div", "fj-h2__det-tit");
     tit.append(el("h3", "", tituloPaso(n), { title: n.mensaje }));
     const sub = el("div", "fj-h2__det-sub");
-    sub.append(el("span", "fj-h2__det-autor", a.texto), el("time", "", `${fechaAbsoluta(n.fecha)} · ${fechaRelativa(n.fecha)}`, { datetime: n.fecha }));
+    sub.append(el("span", "fj-h2__det-autor", a.texto), el("span", "", "·", { "aria-hidden": "true" }),
+      el("time", "", fechaRelativa(n.fecha), { datetime: n.fecha, title: fechaAbsoluta(n.fecha) }));
     tit.append(sub);
     const cerrar = el("button", "fj-h2__cerrar", "×", { type: "button", "aria-label": "Cerrar el detalle" });
     cerrar.addEventListener("click", () => this.seleccionar(n.sha_corto));

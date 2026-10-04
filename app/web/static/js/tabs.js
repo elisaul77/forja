@@ -4,7 +4,7 @@
 import { ForjaViewer } from "./viewer.js?v=14";
 import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
-import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=3";
+import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
 import { crearBotonCupon } from "./cupon.js?v=2";
@@ -265,19 +265,26 @@ export class TabManager {
     viewLabel.className = "fj-view-controls__label";
     viewLabel.textContent = "VISTA 3D";
     viewControls.append(viewLabel);
-    for (const [label, direction] of [["Isométrica", [1, -1, .75]], ["Superior", [0, 0, 1]], ["Frontal", [0, -1, 0]], ["Lateral", [1, 0, 0]]]) {
+    // Etiqueta larga + corta: con poco ancho (panel abierto) la barra usa la
+    // corta para caber en una fila; el nombre completo queda en title/aria.
+    const rotular = (button, largo, corto) => {
+      const l = document.createElement("span"); l.className = "fj-view-controls__largo"; l.textContent = largo;
+      const c = document.createElement("span"); c.className = "fj-view-controls__corto"; c.textContent = corto; c.setAttribute("aria-hidden", "true");
+      button.append(l, c); button.title = largo; button.setAttribute("aria-label", largo);
+    };
+    for (const [label, corto, direction] of [["Isométrica", "Iso", [1, -1, .75]], ["Superior", "Sup", [0, 0, 1]], ["Frontal", "Fren", [0, -1, 0]], ["Lateral", "Lat", [1, 0, 0]]]) {
       const button = document.createElement("button");
-      button.type = "button"; button.className = "fj-btn"; button.textContent = label;
+      button.type = "button"; button.className = "fj-btn"; rotular(button, label, corto);
       button.addEventListener("click", () => viewer.ajustarVista(direction));
       viewControls.append(button);
     }
     const fit = document.createElement("button");
-    fit.type = "button"; fit.className = "fj-btn"; fit.textContent = "Encuadrar";
+    fit.type = "button"; fit.className = "fj-btn"; rotular(fit, "Encuadrar", "⤢");
     fit.addEventListener("click", () => viewer.ajustarVista(viewer.direccionHaciaCamara()));
     viewControls.append(fit);
-    for (const [label, initial, action] of [["Cuadrícula", true, enabled => viewer.setGridVisible(enabled)], ["Malla", false, enabled => viewer.setWireframe(enabled)]]) {
+    for (const [label, corto, initial, action] of [["Cuadrícula", "▦", true, enabled => viewer.setGridVisible(enabled)], ["Malla", "◇", false, enabled => viewer.setWireframe(enabled)]]) {
       const toggle = document.createElement("button");
-      toggle.type = "button"; toggle.className = "fj-btn"; toggle.textContent = label;
+      toggle.type = "button"; toggle.className = "fj-btn"; rotular(toggle, label, corto);
       toggle.setAttribute("aria-pressed", String(initial));
       toggle.addEventListener("click", () => {
         const enabled = toggle.getAttribute("aria-pressed") !== "true";

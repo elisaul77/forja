@@ -94,25 +94,38 @@ export function calcularCarriles(nodos) {
   return { filas, aristas, carriles: Math.max(1, maximo) };
 }
 
-/** Trazado SVG de una arista (coordenadas por fila/carril). */
+/** Trazado SVG de una arista (coordenadas por fila/carril). Siempre va del
+ * centro del hijo al centro del padre: sale por su carril con una curva
+ * suave en la primera fila, baja recta y entra con otra curva en la última.
+ * Si el padre no está en la lista (`fuera`), dibuja un tramo corto con una
+ * punta de flecha hacia abajo («sigue más abajo») en vez de un trazo libre. */
 export function trazoArista(e, { alto, ancho, margen = ancho / 2, mitad = alto / 2, ys = null }) {
   const x = c => margen + c * ancho;
   // `ys` (opcional) = centro medido de cada fila tras el render; si falta,
   // filas de altura fija.
   const y = f => (ys && ys[f] !== undefined ? ys[f] : f * alto + mitad);
-  const x1 = x(e.carrilDe), y1 = y(e.de), xv = x(e.carrilVia), x2 = x(e.carrilA), y2 = y(e.a);
-  const ab = (y2 - y1) / Math.max(1, e.a - e.de); // alto real de fila
-  alto = ab;
-  if (e.a === e.de + 1 && e.carrilVia === e.carrilA) {
-    return x1 === x2 ? `M${x1} ${y1}L${x2} ${y2}` : `M${x1} ${y1}C${x1} ${y1 + alto * 0.55} ${x2} ${y2 - alto * 0.55} ${x2} ${y2}`;
+  const x1 = x(e.carrilDe), y1 = y(e.de), xv = x(e.carrilVia);
+  const k = 0.55;
+  if (e.fuera) {
+    const h = Math.min(alto, (ys && ys[e.de + 1] !== undefined ? ys[e.de + 1] - y1 : alto)) * 0.7;
+    const yf = y1 + h;
+    let d = `M${x1} ${y1}`;
+    d += x1 === xv ? `L${xv} ${yf}` : `C${x1} ${y1 + h * k} ${xv} ${yf - h * k} ${xv} ${yf}`;
+    return d + `M${xv - 3.5} ${yf - 4}L${xv} ${yf}L${xv + 3.5} ${yf - 4}`;
   }
+  const x2 = x(e.carrilA), y2 = y(e.a);
+  const curva = (xa, ya, xb, yb) => {
+    const h = yb - ya;
+    return xa === xb ? `L${xb} ${yb}` : `C${xa} ${ya + h * k} ${xb} ${yb - h * k} ${xb} ${yb}`;
+  };
+  if (e.a - e.de <= 1 || (x1 === xv && xv === x2)) return `M${x1} ${y1}` + curva(x1, y1, x2, y2);
   let d = `M${x1} ${y1}`;
-  const yb = y1 + alto; // la curva de salida ocupa una fila
-  d += x1 === xv ? `L${xv} ${yb}` : `C${x1} ${y1 + alto * 0.55} ${xv} ${yb - alto * 0.55} ${xv} ${yb}`;
+  let yb = y1;
+  if (x1 !== xv) { yb = y(e.de + 1); d += curva(x1, y1, xv, yb); }
   if (xv === x2) return d + `L${x2} ${y2}`;
-  const ya = y2 - alto;
+  const ya = y(e.a - 1);
   if (ya > yb) d += `L${xv} ${ya}`;
-  return d + `C${xv} ${ya + alto * 0.55} ${x2} ${y2 - alto * 0.55} ${x2} ${y2}`;
+  return d + curva(xv, Math.max(ya, yb), x2, y2);
 }
 
 /** Deja los nodos que cumplen `conservar` y reescribe `padres` a los

@@ -132,3 +132,22 @@ test('trazoArista usa los centros medidos', () => {
   const d = trazoArista({ de: 0, a: 1, carrilDe: 0, carrilVia: 0, carrilA: 0 }, { alto: 80, ancho: 16, ys: [50, 150] });
   assert.equal(d, 'M8 50L8 150');
 });
+
+test('trazoArista: padre fuera de la lista = tramo corto con flecha, sin trazo libre', () => {
+  const d = trazoArista({ de: 2, a: 3, carrilDe: 0, carrilVia: 1, carrilA: 1, fuera: true }, { alto: 80, ancho: 16, ys: [40, 120, 200, 300] });
+  const ys = [...d.matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map(m => Number(m[2]));
+  assert.ok(Math.max(...ys) <= 200 + 80, 'no baja más de una fila');
+  assert.match(d, /M[\d.]+ [\d.]+L24 256L[\d.]+ [\d.]+$/, 'termina en punta de flecha');
+});
+
+test('trazoArista: arista de una fila con carril intermedio = una sola curva al centro del padre', () => {
+  const d = trazoArista({ de: 0, a: 1, carrilDe: 2, carrilVia: 1, carrilA: 0 }, { alto: 80, ancho: 16 });
+  assert.equal(d, 'M40 40C40 84 8 76 8 120');
+});
+
+test('trazoArista: rama que sale y vuelve termina en el centro del padre', () => {
+  const d = trazoArista({ de: 0, a: 4, carrilDe: 0, carrilVia: 1, carrilA: 0 }, { alto: 80, ancho: 16 });
+  assert.ok(d.startsWith('M8 40C'));
+  assert.ok(d.endsWith('8 360'));
+  assert.equal((d.match(/C/g) || []).length, 2);
+});
