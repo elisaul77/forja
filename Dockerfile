@@ -1,7 +1,8 @@
 FROM python:3.12-slim-bookworm
 
 # Shared libraries required by cadquery-ocp (OpenCascade) at import time,
-# even in headless/off-screen mode (ADR-0001).
+# even in headless/off-screen mode (ADR-0001). `git` is the history
+# backend (ADR-0014), called only through app/git_store.py.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglu1-mesa \
@@ -9,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libxext6 \
     libsm6 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

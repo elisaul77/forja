@@ -61,6 +61,10 @@ def _heavy_timeout() -> httpx.Timeout:
     return httpx.Timeout(_HEAVY_TIMEOUT, connect=10.0)
 
 
+# G1 (ADR-0014): history commits caused through the MCP are authored "agente".
+_ORIGEN = {"X-Forja-Origen": "agente"}
+
+
 def _headers_con_token() -> dict[str, str]:
     """Header for the two dangerous routes (`ejecutar_script`,
     `abrir_archivo`), reusing `app/auth.py`'s `obtener_token()` so the MCP
@@ -77,7 +81,7 @@ def _detalle(resp: httpx.Response) -> str:
 
 
 def estado() -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         salud = c.get("/salud").json()
         documentos = c.get("/documentos").json()
     return {
@@ -88,7 +92,7 @@ def estado() -> dict[str, Any]:
 
 
 def listar_documentos() -> list[dict[str, Any]]:
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.get("/documentos")
     resp.raise_for_status()
     return resp.json()
@@ -97,7 +101,7 @@ def listar_documentos() -> list[dict[str, Any]]:
 @_heavy_operation
 def abrir_archivo(ruta: str) -> dict[str, Any]:
     # Importing a large STEP (30 MB+) easily exceeds the light 30 s budget.
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.post(
             "/documentos/desde_ruta", json={"ruta": ruta}, headers=_headers_con_token()
         )
@@ -111,7 +115,7 @@ def abrir_archivo(ruta: str) -> dict[str, Any]:
 def resumen_documento(
     doc_id: str, tope_solidos: int = 30, umbral_astilla_mm3: float = 1.0
 ) -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(
             f"/documentos/{doc_id}",
             params={"tope_solidos": tope_solidos, "umbral_astilla_mm3": umbral_astilla_mm3},
@@ -151,7 +155,7 @@ def ejecutar_script(
         # Editing should keep one document (history + live view), not spawn
         # copies: reuse the single existing document with the same name.
         try:
-            with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+            with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
                 docs = c.get("/documentos").json()
             iguales = [d["id"] for d in docs if d.get("nombre") == nombre]
             if len(iguales) == 1:
@@ -170,7 +174,7 @@ def ejecutar_script(
     if documento_id is not None:
         payload["documento_id"] = documento_id
     http_timeout = timeout + _SCRIPT_TIMEOUT_MARGIN
-    with httpx.Client(base_url=BASE_URL, timeout=http_timeout) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=http_timeout) as c:
         resp = c.post("/documentos/script", json=payload, headers=_headers_con_token())
     if resp.status_code >= 400:
         return {"error": True, **_detalle_estructurado(resp)}
@@ -238,7 +242,7 @@ def _enlace_orca(descarga: Any) -> dict[str, str]:
 
 @_heavy_operation
 def exportar(doc_id: str, formato: str, por_solido: bool = False) -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(
             f"/documentos/{doc_id}/exportar",
             params={"formato": formato, "por_solido": str(por_solido).lower()},
@@ -253,7 +257,7 @@ def exportar(doc_id: str, formato: str, por_solido: bool = False) -> dict[str, A
 
 @_heavy_operation
 def check_colisiones(doc_id: str, tolerancia_mm3: float = 0.5) -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(
             f"/documentos/{doc_id}/colisiones", params={"tolerancia_mm3": tolerancia_mm3}
         )
@@ -273,7 +277,7 @@ def cupon(
     cuerpo = {k: v for k, v in (
         ("pieza", pieza), ("holgura_max", holgura_max), ("margen", margen), ("caja", caja),
     ) if v is not None}
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.post(f"/documentos/{doc_id}/cupon", json=cuerpo, headers=_headers_con_token())
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
@@ -303,7 +307,7 @@ def percibir(
         params["cortes_z"] = cortes_z
     if solidos:
         params["solidos"] = solidos
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(f"/documentos/{doc_id}/percibir", params=params)
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
@@ -319,7 +323,7 @@ def parametros(
     then carries `materiales` (and, alone, also the read of the schema)."""
     resultado_materiales: dict[str, Any] | None = None
     if materiales is not None:
-        with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+        with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
             resp = c.post(
                 f"/documentos/{doc_id}/materiales",
                 json={"materiales": materiales},
@@ -336,7 +340,7 @@ def parametros(
 
 def _parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
     with httpx.Client(
-        base_url=BASE_URL, timeout=_TIMEOUT if valores is None else _TIMEOUT + _SCRIPT_TIMEOUT_MARGIN
+        base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT if valores is None else _TIMEOUT + _SCRIPT_TIMEOUT_MARGIN
     ) as c:
         if valores is None:
             resp = c.get(f"/documentos/{doc_id}/parametros")
@@ -355,7 +359,7 @@ def _parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str,
 def check_fdm(
     doc_id: str, boquilla: float = 0.4, cama: str = "220x220x250", angulo_max: float = 45.0
 ) -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(
             f"/documentos/{doc_id}/fdm",
             params={"boquilla": boquilla, "cama": cama, "angulo_max": angulo_max},
@@ -387,7 +391,7 @@ def captura(
     }
     if solidos:
         params["solidos"] = solidos
-    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(f"/documentos/{doc_id}/captura", params=params)
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
@@ -404,7 +408,7 @@ def captura(
 
 
 def leer_notas(doc_id: str, detalle: bool = False) -> Any:
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.get(f"/documentos/{doc_id}/notas", params={"detalle": str(detalle).lower()})
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
@@ -412,7 +416,7 @@ def leer_notas(doc_id: str, detalle: bool = False) -> Any:
 
 
 def crear_nota(doc_id: str, comentario: str, referencia: dict[str, Any]) -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.post(
             f"/documentos/{doc_id}/notas",
             json={"comentario": comentario, "referencia": referencia},
@@ -423,7 +427,7 @@ def crear_nota(doc_id: str, comentario: str, referencia: dict[str, Any]) -> dict
 
 
 def borrar_nota(doc_id: str, nota_id: str) -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.delete(f"/documentos/{doc_id}/notas/{nota_id}")
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
@@ -431,7 +435,7 @@ def borrar_nota(doc_id: str, nota_id: str) -> dict[str, Any]:
 
 
 def leer_historial(doc_id: str) -> Any:
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.get(f"/documentos/{doc_id}/historial")
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
@@ -439,7 +443,7 @@ def leer_historial(doc_id: str) -> Any:
 
 
 def restaurar(doc_id: str, snapshot: str) -> dict[str, Any]:
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.post(
             f"/documentos/{doc_id}/restaurar",
             json={"snapshot": snapshot},
@@ -456,7 +460,7 @@ def eliminar_documento(doc_id: str) -> dict[str, Any]:
     create throwaway documents against the live backend (see `tests/
     test_mcp_tools.py`'s cleanup fixture) so they never pollute the real
     `documentos_data/`."""
-    with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.delete(f"/documentos/{doc_id}", headers=_headers_con_token())
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
@@ -509,7 +513,7 @@ def ensamble(
     try:
         # The pose rebuilds the document through the kernel (de/hacia STEP +
         # reimport), so it gets the heavy budget like `percibir`/`exportar`.
-        with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+        with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
             if articulaciones is not None:
                 resp = c.post(ruta, json={"articulaciones": articulaciones}, headers=_headers_con_token())
             elif valores is not None:
@@ -660,7 +664,7 @@ def suspension(
         pedido[clave] = [0.0] if numero == 0 else sorted({0.0, numero})
 
     try:
-        with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+        with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
             config = c.get("/puentes/suspension/config")
         if config.status_code >= 400:
             return {"error": True, "mensaje": _detalle(config)}
@@ -672,7 +676,7 @@ def suspension(
         except (KeyError, TypeError, ValueError):
             return {"error": True, "mensaje": _MENSAJE_CONFIG}
         start = time.perf_counter()
-        with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+        with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
             resp = c.post("/puentes/suspension/pose", json=pedido, headers=_headers_con_token())
         ms = round(1000 * (time.perf_counter() - start))
     except httpx.HTTPError as exc:
@@ -710,7 +714,7 @@ def puentes() -> dict[str, Any]:
     `false` (plus its Spanish `mensaje` when it was enabled), never an
     exception — the same answer the web panel reads."""
     try:
-        with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+        with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
             resp = c.get("/puentes")
     except httpx.HTTPError as exc:
         return _error_red("puentes", exc)

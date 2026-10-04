@@ -19,6 +19,7 @@ import documents
 import eventos
 import notes
 import perfiles
+import versioning
 from mcp_server.http_app import app_mcp_http
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -44,6 +45,33 @@ app.include_router(assembly_routes.router)
 app.include_router(bridges.router)
 app.include_router(perfiles.router)
 app.include_router(cupon.router)
+
+
+class _OrigenDelCambio:
+    """Pure ASGI middleware (G1): tags the request with who caused it, so
+    the history commit gets a neutral author. ``X-Forja-Origen: agente``
+    (sent by the MCP client) or ``humano`` wins; otherwise a browser
+    (``Sec-Fetch-Site`` present) is ``humano``; anything else ``forja``."""
+
+    def __init__(self, app_asgi) -> None:
+        self.app = app_asgi
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        cabeceras = dict(scope.get("headers") or [])
+        origen = cabeceras.get(b"x-forja-origen", b"").decode("latin-1").strip().lower()
+        if origen not in ("agente", "humano"):
+            origen = "humano" if b"sec-fetch-site" in cabeceras else "forja"
+        marca = versioning.autor_actual.set(origen)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            versioning.autor_actual.reset(marca)
+
+
+app.add_middleware(_OrigenDelCambio)
 
 
 @app.get("/eventos")
