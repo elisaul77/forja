@@ -44,6 +44,13 @@ TIMEOUT_S = 120.0
 
 _RE_DOC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _RE_SHA = re.compile(r"^[0-9a-f]{40}$")
+_RE_SHA_CORTO = re.compile(r"^[0-9a-f]{7,40}$")
+# G2: branch names are one safe ref component (no `/`, `.`, `..`, `@{`,
+# spaces, `.lock`...) — stricter than `git check-ref-format`.
+_RE_RAMA = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$")
+REF_RAMAS = "refs/forja/ramas/"
+RAMA_PRINCIPAL = "main"
+_ARCHIVO_ACTIVA = "forja-rama-activa"
 _SEPARADOR = "\n\nForja-Snapshot: "
 
 _bloqueos: dict[str, threading.Lock] = {}
@@ -81,6 +88,19 @@ def validar_nombre(nombre: str) -> str:
         or any(ord(c) < 32 for c in nombre)
     ):
         raise ValueError(f"nombre de archivo fuera del repositorio: {nombre!r}")
+    return nombre
+
+
+def validar_sha(sha: str) -> str:
+    """A full 40-hex commit id coming from outside (never a ref expression)."""
+    if not isinstance(sha, str) or not _RE_SHA.match(sha):
+        raise ValueError("sha no valido")
+    return sha
+
+
+def validar_rama(nombre: str) -> str:
+    if not isinstance(nombre, str) or not _RE_RAMA.match(nombre) or nombre.endswith("-lock"):
+        raise ValueError(f"nombre de rama no valido: {nombre!r} (letras, numeros, - y _; max 48)")
     return nombre
 
 
@@ -166,9 +186,13 @@ def _escribir_arbol(repo: Path, entradas: list[tuple[str, str, str]]) -> str:
     return _git(repo, "mktree", entrada=texto.encode()).decode().strip()
 
 
-def construir_mensaje(mensaje: str, snapshot_id: str, fecha: str, archivos: list[str]) -> str:
-    return (f"{mensaje}{_SEPARADOR}{snapshot_id}\nForja-Fecha: {fecha}\n"
-            f"Forja-Archivos: {json.dumps(sorted(archivos), ensure_ascii=False)}\n")
+def construir_mensaje(mensaje: str, snapshot_id: str, fecha: str, archivos: list[str],
+                      extra: dict[str, str] | None = None) -> str:
+    texto = (f"{mensaje}{_SEPARADOR}{snapshot_id}\nForja-Fecha: {fecha}\n"
+             f"Forja-Archivos: {json.dumps(sorted(archivos), ensure_ascii=False)}\n")
+    for clave, valor in (extra or {}).items():
+        texto += f"Forja-{clave}: {valor}\n"
+    return texto
 
 
 def _fecha_git(fecha: str) -> str:
@@ -178,11 +202,27 @@ def _fecha_git(fecha: str) -> str:
 
 def escribir_commit(doc_id: str, archivos: dict[str, bytes], mensaje: str, snapshot_id: str,
                     fecha: str, autor: str | None = None, fuente: dict[str, bytes] | None = None,
-                    padre: str | None = "HEAD") -> str:
+                    padre: str | None = "HEAD", extra: dict[str, str] | None = None) -> str:
     """Create the commit object (tree = exactly ``archivos`` + optional
     ``_fuente/``) on top of ``padre`` (``"HEAD"`` = current branch tip,
     ``None`` = root commit, else a sha) WITHOUT moving the branch. Returns
     the new commit sha. Caller holds :func:`bloqueo`."""
+    repo = inicializar(doc_id)
+    arbol = construir_arbol(doc_id, archivos, fuente)
+    if padre == "HEAD":
+        padre = cabeza(doc_id)
+    args = ["commit-tree", arbol]
+    if padre:
+        args += ["-p", validar_sha(padre)]
+    texto = construir_mensaje(mensaje, snapshot_id, fecha, list(archivos), extra)
+    return _git(repo, *args, entrada=texto.encode(), autor=autor,
+                fecha_git=_fecha_git(fecha)).decode().strip()
+
+
+def construir_arbol(doc_id: str, archivos: dict[str, bytes],
+                    fuente: dict[str, bytes] | None = None) -> str:
+    """Write the blobs and the tree (``archivos`` + optional ``_fuente/``);
+    returns the tree sha. Same bytes -> same tree sha."""
     repo = inicializar(doc_id)
     entradas = [("blob", _escribir_blob(repo, contenido), validar_nombre(nombre))
                 for nombre, contenido in sorted(archivos.items())]
@@ -190,22 +230,20 @@ def escribir_commit(doc_id: str, archivos: dict[str, bytes], mensaje: str, snaps
         sub = [("blob", _escribir_blob(repo, contenido), validar_nombre(nombre))
                for nombre, contenido in sorted(fuente.items())]
         entradas.append(("tree", _escribir_arbol(repo, sub), FUENTE_DIR))
-    arbol = _escribir_arbol(repo, entradas)
-    if padre == "HEAD":
-        padre = cabeza(doc_id)
-    args = ["commit-tree", arbol]
-    if padre:
-        args += ["-p", padre]
-    texto = construir_mensaje(mensaje, snapshot_id, fecha, list(archivos))
-    return _git(repo, *args, entrada=texto.encode(), autor=autor,
-                fecha_git=_fecha_git(fecha)).decode().strip()
+    return _escribir_arbol(repo, entradas)
+
+
+def arbol_de(doc_id: str, commit_sha: str) -> str:
+    return _git(ruta_repo(doc_id), "rev-parse", "--verify", "--end-of-options",
+                f"{validar_sha(commit_sha)}^{{tree}}").decode().strip()
 
 
 def mover_rama(doc_id: str, nuevo: str, anterior: str | None) -> None:
     """Compare-and-swap the branch tip (empty old value = must not exist)."""
-    if not _RE_SHA.match(nuevo):
-        raise ValueError("sha no valido")
-    _git(ruta_repo(doc_id), "update-ref", RAMA, nuevo, anterior or "0" * 40)
+    validar_sha(nuevo)
+    if anterior:
+        validar_sha(anterior)
+    _git(ruta_repo(doc_id), "update-ref", "--end-of-options", RAMA, nuevo, anterior or "0" * 40)
 
 
 def commit(doc_id: str, archivos: dict[str, bytes], mensaje: str, snapshot_id: str, fecha: str,
@@ -230,6 +268,8 @@ def _parsear(sha: str, cuerpo: str, autor: str) -> dict[str, Any] | None:
     for linea in lineas[1:]:
         if linea.startswith("Forja-Fecha: "):
             datos["fecha"] = linea[len("Forja-Fecha: "):]
+        elif linea.startswith("Forja-Revision: "):
+            datos["revision"] = linea[len("Forja-Revision: "):].strip() or None
         elif linea.startswith("Forja-Archivos: "):
             try:
                 datos["archivos"] = json.loads(linea[len("Forja-Archivos: "):])
@@ -243,12 +283,15 @@ def _parsear(sha: str, cuerpo: str, autor: str) -> dict[str, Any] | None:
 def log(doc_id: str, desde: str | None = None) -> list[dict[str, Any]]:
     """Forja commits reachable from ``desde`` (default: branch tip), oldest
     first: ``[{sha, id, fecha, mensaje, autor, archivos}]``."""
+    if desde:
+        validar_sha(desde)
     if not existe(doc_id):
         return []
     tip = desde or cabeza(doc_id)
     if not tip:
         return []
-    salida = _git(ruta_repo(doc_id), "log", "--reverse", "--format=%H%x00%an%x00%B%x1e", tip)
+    salida = _git(ruta_repo(doc_id), "log", "--reverse", "--format=%H%x00%an%x00%B%x1e",
+                  "--end-of-options", tip)
     entradas = []
     for bloque in salida.decode("utf-8", errors="surrogateescape").split("\x1e"):
         bloque = bloque.lstrip("\n")
@@ -262,15 +305,14 @@ def log(doc_id: str, desde: str | None = None) -> list[dict[str, Any]]:
 
 
 def _leer_objeto(repo: Path, sha: str) -> bytes:
-    return _git(repo, "cat-file", "blob", sha)
+    return _git(repo, "cat-file", "blob", validar_sha(sha))
 
 
 def leer(doc_id: str, commit_sha: str) -> dict[str, bytes]:
     """Top-level files of ``commit_sha`` (never ``_fuente/``)."""
-    if not _RE_SHA.match(commit_sha):
-        raise ValueError("sha no valido")
+    validar_sha(commit_sha)
     repo = ruta_repo(doc_id)
-    listado = _git(repo, "ls-tree", "-z", commit_sha).decode("utf-8", errors="surrogateescape")
+    listado = _git(repo, "ls-tree", "-z", "--end-of-options", commit_sha).decode("utf-8", errors="surrogateescape")
     archivos = {}
     for linea in listado.split("\x00"):
         if not linea:
@@ -283,16 +325,120 @@ def leer(doc_id: str, commit_sha: str) -> dict[str, bytes]:
 
 
 def leer_fuente(doc_id: str, commit_sha: str) -> dict[str, bytes]:
-    if not _RE_SHA.match(commit_sha):
-        raise ValueError("sha no valido")
+    validar_sha(commit_sha)
     repo = ruta_repo(doc_id)
-    salida = _git(repo, "ls-tree", "-z", f"{commit_sha}:{FUENTE_DIR}", permitir_fallo=True).decode()
+    salida = _git(repo, "ls-tree", "-z", "--end-of-options", f"{commit_sha}:{FUENTE_DIR}", permitir_fallo=True).decode()
     archivos = {}
     for linea in salida.split("\x00"):
         if linea:
             cabecera, nombre = linea.split("\t", 1)
             archivos[nombre] = _leer_objeto(repo, cabecera.split()[2])
     return archivos
+
+
+# ------------------------------------------------------------ G2: ramas
+#
+# Branches live under ``refs/forja/ramas/<nombre>``, NOT ``refs/heads/``:
+# ``refs/heads/main`` is (since G1) the chain of "before the change"
+# snapshots that `leer_historial`/`restaurar` read, and it must stay intact.
+# Each branch commit holds the COMPLETE state after an accepted change.
+
+def ref_rama(nombre: str) -> str:
+    return REF_RAMAS + validar_rama(nombre)
+
+
+def tip_rama(doc_id: str, nombre: str) -> str | None:
+    if not existe(doc_id):
+        return None
+    sha = _git(ruta_repo(doc_id), "rev-parse", "-q", "--verify", "--end-of-options",
+               ref_rama(nombre), permitir_fallo=True).decode().strip()
+    return sha or None
+
+
+def listar_ramas(doc_id: str) -> dict[str, str]:
+    """``{nombre: sha}`` of every branch (sorted by name)."""
+    if not existe(doc_id):
+        return {}
+    salida = _git(ruta_repo(doc_id), "for-each-ref", "--format=%(refname)%00%(objectname)",
+                  REF_RAMAS).decode()
+    ramas = {}
+    for linea in salida.splitlines():
+        ref, _, sha = linea.partition("\x00")
+        nombre = ref[len(REF_RAMAS):]
+        if _RE_RAMA.match(nombre) and _RE_SHA.match(sha):
+            ramas[nombre] = sha
+    return dict(sorted(ramas.items()))
+
+
+def mover_ref_rama(doc_id: str, nombre: str, nuevo: str | None, anterior: str | None) -> None:
+    """Compare-and-swap a branch ref; ``nuevo=None`` deletes it (only if it
+    still points at ``anterior``). Caller holds :func:`bloqueo`."""
+    repo = ruta_repo(doc_id)
+    ref = ref_rama(nombre)
+    if nuevo is None:
+        _git(repo, "update-ref", "-d", "--end-of-options", ref, validar_sha(anterior or ""))
+    else:
+        _git(repo, "update-ref", "--end-of-options", ref, validar_sha(nuevo),
+             validar_sha(anterior) if anterior else "0" * 40)
+
+
+def rama_activa(doc_id: str) -> str:
+    try:
+        nombre = (ruta_repo(doc_id) / _ARCHIVO_ACTIVA).read_text().strip()
+        return validar_rama(nombre)
+    except (OSError, ValueError):
+        return RAMA_PRINCIPAL
+
+
+def fijar_rama_activa(doc_id: str, nombre: str) -> None:
+    destino = inicializar(doc_id) / _ARCHIVO_ACTIVA
+    temporal = destino.with_name(destino.name + ".tmp")
+    temporal.write_text(validar_rama(nombre) + "\n")
+    os.replace(temporal, destino)
+
+
+def resolver(doc_id: str, referencia: str) -> str:
+    """Branch name, full sha or abbreviated sha (7+ hex) -> full commit sha.
+    Raises ``ValueError`` for anything else (never passes free text to git
+    as a revision expression) and ``LookupError`` if it does not exist."""
+    if not isinstance(referencia, str):
+        raise ValueError("referencia no valida")
+    if _RE_SHA_CORTO.match(referencia):
+        sha = _git(ruta_repo(doc_id), "rev-parse", "-q", "--verify", "--end-of-options",
+                   f"{referencia}^{{commit}}", permitir_fallo=True).decode().strip()
+        if _RE_SHA.match(sha):
+            return sha
+        if not _RE_RAMA.match(referencia):
+            raise LookupError(f"paso {referencia!r} no encontrado")
+    sha = tip_rama(doc_id, referencia)
+    if sha is None:
+        raise LookupError(f"rama o paso {referencia!r} no encontrado")
+    return sha
+
+
+def contar(doc_id: str, sha: str) -> int:
+    return int(_git(ruta_repo(doc_id), "rev-list", "--count", "--end-of-options",
+                    validar_sha(sha)).decode().strip() or 0)
+
+
+def log_limitado(doc_id: str, sha: str, limite: int) -> list[dict[str, Any]]:
+    """Newest-first Forja commits reachable from ``sha`` (at most ``limite``)."""
+    salida = _git(ruta_repo(doc_id), "log", f"--max-count={int(limite)}",
+                  "--format=%H%x00%an%x00%B%x1e", "--end-of-options", validar_sha(sha))
+    entradas = []
+    for bloque in salida.decode("utf-8", errors="surrogateescape").split("\x1e"):
+        bloque = bloque.lstrip("\n")
+        if not bloque:
+            continue
+        sha_c, autor, cuerpo = bloque.split("\x00", 2)
+        datos = _parsear(sha_c, cuerpo, autor)
+        if datos is not None:
+            entradas.append(datos)
+    return entradas
+
+
+def recoger(doc_id: str) -> None:
+    _git(ruta_repo(doc_id), "gc", "--auto", "--quiet", permitir_fallo=True)
 
 
 def compactar(doc_id: str, agresivo: bool = False, timeout: float = 1800.0) -> None:

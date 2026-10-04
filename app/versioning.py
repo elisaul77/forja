@@ -42,6 +42,15 @@ _MANIFEST_NAME = "manifest.json"
 # (viewer), "forja" (unknown/internal). Set by the middleware in `main.py`.
 autor_actual: contextvars.ContextVar[str] = contextvars.ContextVar("forja_autor", default="forja")
 
+# G2: per-request list of ``(doc_id, mensaje, autor)`` for every snapshot
+# taken while handling it. The middleware in `main.py` sets a fresh list
+# per request and, once the route succeeded, records the COMPLETE state
+# after the change on the document's active branch (`app/ramas.py`).
+# Mutating the list (never re-setting the var) is what makes appends from
+# Starlette's threadpool visible to the middleware.
+cambios_pendientes: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "forja_cambios_pendientes", default=None)
+
 
 # ------------------------------------------------------- legacy (ADR-0006)
 
@@ -71,13 +80,18 @@ def _ahora() -> str:
 
 
 def crear_snapshot(doc_id: str, mensaje: str, archivos: dict[str, bytes],
-                   autor: str | None = None, fuente: dict[str, bytes] | None = None) -> str:
+                   autor: str | None = None, fuente: dict[str, bytes] | None = None,
+                   pendiente: bool = True) -> str:
     """Commit ``archivos`` (name -> bytes) as a new snapshot for ``doc_id``.
     Returns the new snapshot id. ``fuente`` (optional) adds source blobs
-    under ``_fuente/`` that are never returned by :func:`leer_snapshot`."""
+    under ``_fuente/`` that are never returned by :func:`leer_snapshot`.
+    ``pendiente`` (G2): queue a post-change state commit for the request."""
     snapshot_id = uuid.uuid4().hex[:12]
-    git_store.commit(doc_id, archivos, mensaje, snapshot_id, _ahora(),
-                     autor or autor_actual.get(), fuente)
+    quien = autor or autor_actual.get()
+    git_store.commit(doc_id, archivos, mensaje, snapshot_id, _ahora(), quien, fuente)
+    lista = cambios_pendientes.get()
+    if pendiente and lista is not None:
+        lista.append((doc_id, mensaje, quien))
     return snapshot_id
 
 
