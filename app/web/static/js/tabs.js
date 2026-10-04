@@ -5,7 +5,8 @@ import { ForjaViewer } from "./viewer.js?v=11";
 import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
-import { obtenerDocumento, obtenerMallaConRevision } from "./api.js?v=11";
+import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
+import { crearBotonCupon } from "./cupon.js?v=1";
 import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js";
 import { renderPiecesPanel } from "./pieces.js?v=8";
 import { construirAnclas } from "./orca.js?v=3";
@@ -30,6 +31,8 @@ export class TabManager {
     this.statusEls = statusEls;
     this.tabs = new Map(); // docId -> { boton, contenedor, viewer, ficha, notas, historial }
     this.activeId = null;
+    // Lo asigna app.js: abre (o activa) la pestaña de un documento por id.
+    this.abrirDocumento = null;
 
     // Panel lateral (Fase 4), compartido entre pestañas: muestra siempre
     // los datos de la pestaña activa.
@@ -205,6 +208,28 @@ export class TabManager {
       feedback.textContent = texto;
     }, () => viewer.selectedPiece);
     toolbar.append(...anclasOrca);
+    const btnCupon = crearBotonCupon(document, {
+      id: ficha.id,
+      origin: window.location.origin,
+      obtenerPieza: () => viewer.selectedPiece,
+      obtenerToken: obtenerTokenSesion,
+      abrirDocumento: (id) => this.abrirDocumento?.(id),
+      mostrar: (texto, esError, enlace) => {
+        const feedback = document.getElementById("fj-feedback");
+        if (!feedback) return;
+        feedback.hidden = false;
+        feedback.classList.toggle("is-error", Boolean(esError));
+        feedback.textContent = texto;
+        if (enlace) {
+          const a = document.createElement("a");
+          a.className = "fj-btn";
+          a.href = enlace.href;
+          a.textContent = enlace.texto;
+          feedback.append(" ", a);
+        }
+      },
+    });
+    toolbar.append(btnCupon);
     viewer.onSeleccion = () => anclasOrca.refrescar?.();
     contenedor.appendChild(toolbar);
 
