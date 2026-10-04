@@ -29,6 +29,19 @@ export async function activarRama(id, rama) { return (await pedir(`/documentos/$
 export async function borrarRama(id, rama) { return (await pedir(`/documentos/${enc(id)}/ramas/${enc(rama)}`, conToken("DELETE"))).json(); }
 export async function compararEstados(id, a, b) { return (await pedir(`/documentos/${enc(id)}/comparar?a=${enc(a)}&b=${enc(b)}`)).json(); }
 export async function mallaDeEstado(id, ref) { return (await pedir(`/documentos/${enc(id)}/comparar/malla?ref=${enc(ref)}`)).arrayBuffer(); }
+// G4/G5
+export async function fusionarRama(id, cuerpo) { return (await pedir(`/documentos/${enc(id)}/ramas/fusionar`, conToken("POST", cuerpo))).json(); }
+export async function listarHitos(id) { return (await pedir(`/documentos/${enc(id)}/hitos`)).json(); }
+export async function crearHito(id, nombre, paso, descripcion = null) { return (await pedir(`/documentos/${enc(id)}/hitos`, conToken("POST", { nombre, paso, descripcion }))).json(); }
+export async function pasosCurados(id, rama, vista) { return (await pedir(`/documentos/${enc(id)}/ramas/${enc(rama)}/pasos_curados?vista=${enc(vista)}&limite=50`)).json(); }
+
+const TEXTO_RESULTADO = {
+  fusionada: "Fusión confirmada",
+  simulada: "Vista previa: sin conflictos, lista para confirmar",
+  conflicto: "Hay conflictos: no se puede confirmar",
+  conflicto_geometrico: "Conflicto geométrico: aparecen choques nuevos",
+  ya_incluida: "Esa rama ya está incluida en la activa",
+};
 
 export class ForjaRamasControlador {
   constructor(docId, { alCambiar, alComparar }) {
@@ -40,15 +53,51 @@ export class ForjaRamasControlador {
     this.avisos = []; // p. ej. «script_divergente: ...» tras cambiar de rama
     this._alCambiar = alCambiar;
     this._alComparar = alComparar;
+    this.fusion = null; // {desde, piezas, plan} mientras se previsualiza una fusión
+    this.eligiendo = null; // {desde, piezas: {nombre: estado}} al traer piezas
+    this.soloHitos = false;
+  }
+
+  async _cargarPasos() {
+    this.pasos = this.soloHitos
+      ? (await pasosCurados(this.docId, this.vista, "hitos")).pasos
+      : (await pasosDeRama(this.docId, this.vista)).pasos;
   }
 
   async cargarInicial() {
     this.datos = await listarRamas(this.docId);
     if (!this.vista || !this.datos.ramas.some(r => r.nombre === this.vista)) this.vista = this.datos.activa;
-    this.pasos = (await pasosDeRama(this.docId, this.vista)).pasos;
+    await this._cargarPasos();
   }
 
-  async verRama(nombre) { this.vista = nombre; this.pasos = (await pasosDeRama(this.docId, nombre)).pasos; }
+  async verRama(nombre) { this.vista = nombre; await this._cargarPasos(); }
+
+  async alternarHitos() { this.soloHitos = !this.soloHitos; await this._cargarPasos(); }
+
+  async ponerHito(nombre, paso) { await crearHito(this.docId, nombre, paso); await this._cargarPasos(); }
+
+  async elegirPiezas(desde) {
+    const r = await compararEstados(this.docId, this.datos.activa, desde);
+    this.eligiendo = { desde, piezas: r.piezas };
+    this.fusion = null;
+  }
+
+  async previsualizarFusion(desde, piezas = null, estrategia = null) {
+    const plan = await fusionarRama(this.docId, { desde, piezas, estrategia, simular: true });
+    this.fusion = { desde, piezas, estrategia, plan };
+    this.eligiendo = null;
+    await this.comparar(this.datos.activa, desde);
+  }
+
+  async confirmarFusion(forzar = false) {
+    const { desde, piezas, estrategia } = this.fusion;
+    const plan = await fusionarRama(this.docId, { desde, piezas, estrategia, forzar });
+    if (!plan.confirmada) { this.fusion = { ...this.fusion, plan }; return; }
+    this.fusion = null;
+    this.avisos = Array.isArray(plan.avisos) ? plan.avisos : [];
+    await this.cargarInicial();
+    await this._alCambiar(plan);
+  }
 
   async crear(nombre, desde = null) { await crearRama(this.docId, nombre, desde); await this.cargarInicial(); }
 
@@ -154,6 +203,8 @@ export function renderizarPanelRamas(ctl) {
     if (!r.activa) {
       acciones.appendChild(boton("Cambiar", async () => { await ctl.cambiar(r.nombre); renderizarPanelRamas(ctl); }));
       acciones.appendChild(boton("Comparar", async () => { await ctl.comparar(activa, r.nombre); }));
+      acciones.appendChild(boton("Fusionar en esta rama", async () => { await ctl.previsualizarFusion(r.nombre); renderizarPanelRamas(ctl); }));
+      acciones.appendChild(boton("Traer pieza…", async () => { await ctl.elegirPiezas(r.nombre); renderizarPanelRamas(ctl); }));
       if (r.nombre !== "main") acciones.appendChild(boton("Borrar", async () => {
         if (!window.confirm(`¿Borrar la rama «${r.nombre}»?`)) return;
         await ctl.borrar(r.nombre); renderizarPanelRamas(ctl);
@@ -163,6 +214,16 @@ export function renderizarPanelRamas(ctl) {
     lista.appendChild(fila);
   }
   panelRamas.appendChild(lista);
+  if (ctl.eligiendo) renderizarEleccion(ctl);
+  if (ctl.fusion) renderizarFusion(ctl);
+
+  const vistaHitos = document.createElement("label");
+  vistaHitos.className = "fj-ramas__subtitulo";
+  const casilla = document.createElement("input");
+  casilla.type = "checkbox"; casilla.checked = ctl.soloHitos;
+  casilla.addEventListener("change", async () => { await ctl.alternarHitos(); renderizarPanelRamas(ctl); });
+  vistaHitos.append(casilla, " Solo hitos");
+  panelRamas.appendChild(vistaHitos);
 
   const subtitulo = document.createElement("div");
   subtitulo.className = "fj-ramas__subtitulo";
@@ -181,10 +242,10 @@ export function renderizarPanelRamas(ctl) {
     cuerpo.className = "fj-item-historial__cuerpo";
     const mensaje = document.createElement("div");
     mensaje.className = "fj-item-nota__comentario";
-    mensaje.textContent = p.mensaje;
+    mensaje.textContent = p.hito ? `◆ ${p.hito} — ${p.mensaje}` : p.mensaje;
     const meta = document.createElement("div");
     meta.className = "fj-item-historial__meta";
-    meta.textContent = `${p.fecha} · ${p.autor} · ${p.sha_corto}`;
+    meta.textContent = `${p.fecha} · ${p.autor} · ${p.sha_corto}` + (p.agrupa > 1 ? ` · agrupa ${p.agrupa} pasos` : "");
     cuerpo.append(mensaje, meta);
     const acciones = document.createElement("div");
     acciones.className = "fj-item-historial__acciones";
@@ -194,7 +255,93 @@ export function renderizarPanelRamas(ctl) {
       if (!nombre) return;
       await ctl.crear(nombre.trim(), p.sha_corto); renderizarPanelRamas(ctl);
     }));
+    if (!p.hito) acciones.appendChild(boton("Hito…", async () => {
+      const nombre = window.prompt("Nombre del hito (letras, números, - y _):");
+      if (!nombre) return;
+      await ctl.ponerHito(nombre.trim(), p.sha_corto); renderizarPanelRamas(ctl);
+    }));
     fila.append(cuerpo, acciones);
     panelRamas.appendChild(fila);
   });
+}
+
+const ESTADO_PIEZA = { igual: "igual", cambiada: "cambiada", "añadida": "añadida en la otra rama", quitada: "no existe en la otra rama" };
+
+function caja(titulo) {
+  const div = document.createElement("div");
+  div.className = "fj-ramas__fusion";
+  div.style.cssText = "border:1px solid #556;border-radius:4px;padding:6px 8px;margin:6px 0;font-size:12px";
+  const h = document.createElement("div");
+  h.className = "fj-item-nota__comentario";
+  h.textContent = titulo;
+  div.appendChild(h);
+  return div;
+}
+
+function linea(texto, estilo = "") {
+  const d = document.createElement("div");
+  d.textContent = texto;
+  if (estilo) d.style.cssText = estilo;
+  return d;
+}
+
+function renderizarEleccion(ctl) {
+  const { desde, piezas } = ctl.eligiendo;
+  const div = caja(`Traer piezas de «${desde}» a «${ctl.datos.activa}»`);
+  const marcadas = new Set();
+  for (const [nombre, estado] of Object.entries(piezas)) {
+    if (nombre === "documento") continue;
+    const fila = document.createElement("label");
+    fila.style.display = "block";
+    const c = document.createElement("input");
+    c.type = "checkbox"; c.disabled = estado === "igual";
+    c.addEventListener("change", () => { if (c.checked) marcadas.add(nombre); else marcadas.delete(nombre); });
+    fila.append(c, ` ${nombre} — ${ESTADO_PIEZA[estado] ?? estado}`);
+    div.appendChild(fila);
+  }
+  const acciones = document.createElement("div");
+  acciones.appendChild(boton("Vista previa", async () => {
+    if (!marcadas.size) { alert("Marca al menos una pieza."); return; }
+    await ctl.previsualizarFusion(desde, [...marcadas]); renderizarPanelRamas(ctl);
+  }, "fj-btn"));
+  acciones.appendChild(boton("Cancelar", async () => { ctl.eligiendo = null; renderizarPanelRamas(ctl); }));
+  div.appendChild(acciones);
+  panelRamas.appendChild(div);
+}
+
+function renderizarFusion(ctl) {
+  const { desde, piezas, plan } = ctl.fusion;
+  const que = piezas ? `Traer ${piezas.join(", ")} de «${desde}»` : `Fusionar «${desde}» en «${ctl.datos.activa}»`;
+  const div = caja(que);
+  const ok = plan.resultado === "simulada";
+  div.appendChild(linea(TEXTO_RESULTADO[plan.resultado] ?? plan.resultado, `font-weight:600;color:${ok ? "#7fd18b" : "#ffb35c"}`));
+  for (const c of plan.cambios || []) div.appendChild(linea(`• ${c}`));
+  for (const c of plan.conflictos || []) {
+    div.appendChild(linea(`✗ ${c.mensaje}`, "color:#ff8a80"));
+    if (Array.isArray(c.lineas)) {
+      const pre = document.createElement("pre");
+      pre.style.cssText = "max-height:160px;overflow:auto;font-size:11px;background:#111;padding:4px";
+      pre.textContent = c.lineas.join("\n");
+      div.appendChild(pre);
+    }
+  }
+  const v = plan.verificacion;
+  if (v && v.comprobada) {
+    div.appendChild(linea(`Verificación: sólido ${v.valido ? "válido" : "NO válido"} · ${v.choques.length} choques (activa ${v.padres.a}, otra ${v.padres.b})`));
+    for (const [a, b] of v.choques_nuevos) div.appendChild(linea(`✗ choque nuevo: ${a} ↔ ${b}`, "color:#ff8a80"));
+  }
+  for (const a of plan.avisos || []) div.appendChild(linea(`⚠ ${a}`, "color:#ffd97a"));
+  const acciones = document.createElement("div");
+  if (ok) acciones.appendChild(boton("Confirmar", async () => { await ctl.confirmarFusion(false); renderizarPanelRamas(ctl); }, "fj-btn"));
+  if (plan.resultado === "conflicto_geometrico") acciones.appendChild(boton("Confirmar de todos modos", async () => {
+    if (!window.confirm("La fusión deja choques nuevos entre piezas. ¿Confirmar igualmente?")) return;
+    await ctl.confirmarFusion(true); renderizarPanelRamas(ctl);
+  }, "fj-btn"));
+  if (plan.resultado === "conflicto" && !piezas) {
+    acciones.appendChild(boton("Quedarme con lo mío", async () => { await ctl.previsualizarFusion(desde, null, "nuestra"); renderizarPanelRamas(ctl); }));
+    acciones.appendChild(boton("Tomar lo de la otra", async () => { await ctl.previsualizarFusion(desde, null, "suya"); renderizarPanelRamas(ctl); }));
+  }
+  acciones.appendChild(boton("Cancelar", async () => { ctl.fusion = null; renderizarPanelRamas(ctl); }));
+  div.appendChild(acciones);
+  panelRamas.appendChild(div);
 }

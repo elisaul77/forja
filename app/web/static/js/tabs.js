@@ -12,7 +12,7 @@ import { renderPiecesPanel } from "./pieces.js?v=9";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
 import { construirAnclas } from "./orca.js?v=3";
 import { createRefreshScheduler } from "./live-core.js?v=11";
-import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=2";
+import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=3";
 
 function formatoVolumen(mm3) {
   return `${mm3.toFixed(2)} mm³`;
