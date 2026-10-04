@@ -545,7 +545,51 @@ export class ForjaViewer {
     this.render();
   }
 
+  /** Historial 2.0: vista dividida antes/después con deslizador. A la
+   * izquierda de `division` (0..1 del ancho) se dibuja el estado A, a la
+   * derecha el B; colores por estado de pieza como la superposición. */
+  mostrarComparacionDividida(bufferA, bufferB, estados) {
+    this.salirComparacion();
+    const colores = { "añadida": 0x3fb950, quitada: 0xe5534b, cambiada: 0xe3a008, igual: 0x8b8b8b };
+    const crear = buffer => {
+      const grupo = new THREE.Group();
+      const { stl, manifest } = decodePieceBundle(buffer);
+      const geom = loader.parse(stl);
+      geom.computeVertexNormals();
+      const piezas = manifest?.piezas ?? [{ nombre: "documento", rangos: [[0, geom.getAttribute("position").count / 3]] }];
+      for (const pieza of piezas) {
+        const estado = estados[pieza.nombre] ?? "igual";
+        const indices = [];
+        for (const [primero, n] of pieza.rangos) for (let t = primero; t < primero + n; t++) indices.push(t * 3, t * 3 + 1, t * 3 + 2);
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", geom.getAttribute("position"));
+        g.setAttribute("normal", geom.getAttribute("normal"));
+        g.setIndex(indices);
+        grupo.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: colores[estado] ?? colores.igual, metalness: 0.1, roughness: 0.7 })));
+      }
+      return grupo;
+    };
+    const grupoA = crear(bufferA);
+    const grupoB = crear(bufferB);
+    const grupo = new THREE.Group();
+    grupo.add(grupoA, grupoB);
+    this._comparacion = grupo;
+    this._division = { a: grupoA, b: grupoB, x: 0.5 };
+    this.scene.add(grupo);
+    if (this.mesh) this.mesh.visible = false;
+    for (const piece of this.pieces.values()) piece.mesh.visible = false;
+    this.render();
+  }
+
+  fijarDivision(fraccion) {
+    if (!this._division) return;
+    this._division.x = Math.min(1, Math.max(0, fraccion));
+    this.render();
+  }
+
   salirComparacion() {
+    this._division = null;
+    this.renderer.setScissorTest(false);
     if (!this._comparacion) return;
     this.scene.remove(this._comparacion);
     this._comparacion.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
@@ -555,7 +599,23 @@ export class ForjaViewer {
   }
 
   render() {
+    const d = this._division;
+    if (!d) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    const tam = new THREE.Vector2();
+    this.renderer.getSize(tam);
+    const corte = Math.round(tam.x * d.x);
+    this.renderer.setScissorTest(true);
+    d.a.visible = true; d.b.visible = false;
+    this.renderer.setScissor(0, 0, corte, tam.y);
+    this.renderer.setViewport(0, 0, tam.x, tam.y);
     this.renderer.render(this.scene, this.camera);
+    d.a.visible = false; d.b.visible = true;
+    this.renderer.setScissor(corte, 0, tam.x - corte, tam.y);
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.setScissorTest(false);
   }
 
   dispose() {

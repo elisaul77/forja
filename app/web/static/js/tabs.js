@@ -1,9 +1,10 @@
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=13";
+import { ForjaViewer } from "./viewer.js?v=14";
 import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
-import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js";
+import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
+import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=3";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
 import { crearBotonCupon } from "./cupon.js?v=2";
@@ -69,7 +70,8 @@ export class TabManager {
     this.panelActivo = seccion;
     this.panelSeccionNotas.hidden = seccion !== "notas";
     this.panelSeccionHistorial.hidden = seccion !== "historial";
-    this.panelSeccionRamas.hidden = seccion !== "ramas";
+    // Historial 2.0: «Ramas» vive en el cajón de la vista Historial.
+    this.panel.classList.toggle("fj-panel-lateral--historial", seccion === "historial");
     this.panelSeccionParametros.hidden = seccion !== "parametros";
     this.panelSeccionEnsamble.hidden = seccion !== "ensamble";
     this.panelSeccionPiezas.hidden = seccion !== "piezas";
@@ -81,6 +83,7 @@ export class TabManager {
 
   abrirPanel(seccion) {
     if (!this.activeId) return;
+    if (seccion === "ramas") seccion = "historial";
     if (this.panel.hidden) this.panelReturnFocus = document.activeElement;
     this.panel.hidden = false;
     this._mostrarSeccionPanel(seccion);
@@ -93,7 +96,10 @@ export class TabManager {
     if (!entrada) return;
     renderizarPanelNotas(entrada.notas);
     renderizarPanelHistorial(entrada.historial);
-    if (this.panelActivo === "ramas") renderizarPanelRamas(entrada.ramas);
+    if (this.panelActivo === "historial") {
+      renderizarHistorial2(entrada.h2);
+      renderizarPanelRamas(entrada.ramas);
+    }
     renderizarPanelParametros(entrada.parametros);
     if (this.panelActivo === "ensamble") renderizarPanelEnsamble(entrada.ensamble);
     if (this.panelActivo === "piezas") renderPiecesPanel(entrada.viewer, entrada.ficha.nombre, entrada.materiales);
@@ -152,6 +158,9 @@ export class TabManager {
         const actual = this.tabs.get(ficha.id);
         renderPiecesPanel(viewer, actual.ficha.nombre, actual.materiales);
       }
+      if (this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "historial") {
+        renderizarHistorial2(this.tabs.get(ficha.id).h2);
+      }
     };
     const historial = new ForjaHistorialControlador(ficha.id, async (registroActualizado) => {
       await this._alRestaurar(ficha.id, registroActualizado);
@@ -159,6 +168,11 @@ export class TabManager {
     const ramas = new ForjaRamasControlador(ficha.id, {
       alCambiar: async (registro) => { this._salirComparacion(ficha.id); await this._alRestaurar(ficha.id, registro); },
       alComparar: async (resumen, mallaA, mallaB) => this._mostrarComparacion(ficha.id, resumen, mallaA, mallaB),
+    });
+    const h2 = new ForjaHistorial2Controlador(ficha.id, {
+      alCambiar: async (registro) => { this._salirComparacion(ficha.id); await this._alRestaurar(ficha.id, registro); },
+      alComparar: async (resumen, mallaA, mallaB, opciones) => this._mostrarComparacion(ficha.id, resumen, mallaA, mallaB, opciones),
+      piezaSeleccionada: () => viewer.selectedPiece,
     });
     const parametros = new ForjaParametrosControlador(ficha.id, async (registroActualizado) => {
       await this._alCambiarParametros(ficha.id, registroActualizado);
@@ -287,7 +301,39 @@ export class TabManager {
     banda.hidden = true;
     contenedor.append(banda);
 
-    const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, banda, parametros, ensamble, btnParametros,
+    // Historial 2.0: divisor arrastrable de la vista antes/después.
+    const divisor = document.createElement("div");
+    divisor.className = "fj-divisor";
+    divisor.hidden = true;
+    divisor.tabIndex = 0;
+    divisor.setAttribute("role", "slider");
+    divisor.setAttribute("aria-label", "Deslizador antes / después");
+    divisor.setAttribute("aria-valuemin", "0");
+    divisor.setAttribute("aria-valuemax", "100");
+    divisor.innerHTML = '<span class="fj-divisor__etq fj-divisor__etq--a"></span><span class="fj-divisor__asa" aria-hidden="true">⟷</span><span class="fj-divisor__etq fj-divisor__etq--b"></span>';
+    const moverDivisor = fraccion => {
+      const f = Math.min(0.98, Math.max(0.02, fraccion));
+      divisor.style.left = `${f * 100}%`;
+      divisor.setAttribute("aria-valuenow", String(Math.round(f * 100)));
+      viewer.fijarDivision(f);
+    };
+    divisor._mover = moverDivisor;
+    divisor.addEventListener("pointerdown", ev => {
+      ev.preventDefault();
+      divisor.setPointerCapture(ev.pointerId);
+      const mover = e => { const r = contenedor.getBoundingClientRect(); moverDivisor((e.clientX - r.left) / r.width); };
+      const soltar = () => { divisor.removeEventListener("pointermove", mover); divisor.removeEventListener("pointerup", soltar); };
+      divisor.addEventListener("pointermove", mover);
+      divisor.addEventListener("pointerup", soltar);
+    });
+    divisor.addEventListener("keydown", ev => {
+      const actual = Number(divisor.getAttribute("aria-valuenow") || 50) / 100;
+      if (ev.key === "ArrowLeft") { ev.preventDefault(); moverDivisor(actual - 0.05); }
+      if (ev.key === "ArrowRight") { ev.preventDefault(); moverDivisor(actual + 0.05); }
+    });
+    contenedor.append(divisor);
+
+    const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, btnParametros,
       revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
     entry.materiales = {
       materiales: {},
@@ -369,7 +415,7 @@ export class TabManager {
       entrada.viewer.cargarMallaSTL(malla.buffer);
       this._setRevision(entrada, malla.revision);
       entrada.notas.invalidarCaras();
-      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
+      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       entrada.btnParametros.hidden = !entrada.parametros.tieneParametros();
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
@@ -398,7 +444,7 @@ export class TabManager {
       entrada.notas.invalidarCaras();
       const msMalla = performance.now() - inicio;
       entrada.ficha = registroActualizado;
-      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
+      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         if (!this.panel.hidden && this.panelActivo !== "parametros") this._renderizarPanelPestanaActiva();
@@ -411,16 +457,39 @@ export class TabManager {
   }
 
   /** G3: modo Comparar sobre el visor de la pestaña. */
-  _mostrarComparacion(docId, resumen, mallaA, mallaB) {
+  _mostrarComparacion(docId, resumen, mallaA, mallaB, opciones = {}) {
     const entry = this.tabs.get(docId);
     if (!entry) return;
-    entry.viewer.mostrarComparacion(mallaA, mallaB, resumen.piezas);
+    const dividida = opciones.modo === "dividida";
+    const [etqA, etqB] = opciones.etiquetas ?? [resumen.a.sha_corto.slice(0, 7), resumen.b.sha_corto.slice(0, 7)];
+    if (dividida) {
+      entry.viewer.mostrarComparacionDividida(mallaA, mallaB, resumen.piezas);
+      entry.divisor.querySelector(".fj-divisor__etq--a").textContent = `◀ ${etqA}`;
+      entry.divisor.querySelector(".fj-divisor__etq--b").textContent = `${etqB} ▶`;
+      entry.divisor.hidden = false;
+      entry.divisor._mover(0.5);
+    } else {
+      entry.viewer.mostrarComparacion(mallaA, mallaB, resumen.piezas);
+      entry.divisor.hidden = true;
+    }
     entry.banda.textContent = "";
+    entry.banda.classList.toggle("is-dividida", dividida);
     const titulo = document.createElement("strong");
-    titulo.textContent = `Comparar ${resumen.a.sha_corto} → ${resumen.b.sha_corto}`;
+    titulo.textContent = `Comparar ${resumen.a.sha_corto.slice(0, 7)} → ${resumen.b.sha_corto.slice(0, 7)}`;
+    const modos = document.createElement("div");
+    modos.className = "fj-comparar__modos";
+    modos.setAttribute("role", "group");
+    modos.setAttribute("aria-label", "Modo de comparación");
+    for (const [modo, texto] of [["dividida", "Dividida"], ["superpuesta", "Superpuesta"]]) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "fj-btn fj-btn--ghost"; b.textContent = texto;
+      b.setAttribute("aria-pressed", String((modo === "dividida") === dividida));
+      b.addEventListener("click", () => this._mostrarComparacion(docId, resumen, mallaA, mallaB, { ...opciones, modo }));
+      modos.append(b);
+    }
     const leyenda = document.createElement("div");
     leyenda.className = "fj-comparar__leyenda";
-    leyenda.textContent = "verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual";
+    leyenda.textContent = dividida ? "Arrastra el divisor · verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual" : "verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual";
     const lista = document.createElement("ul");
     for (const linea of textoResumen(resumen)) {
       const li = document.createElement("li"); li.textContent = linea; lista.appendChild(li);
@@ -428,7 +497,7 @@ export class TabManager {
     const volver = document.createElement("button");
     volver.type = "button"; volver.className = "fj-btn"; volver.textContent = "Volver";
     volver.addEventListener("click", () => this._salirComparacion(docId));
-    entry.banda.append(titulo, leyenda, lista, volver);
+    entry.banda.append(titulo, modos, leyenda, lista, volver);
     entry.banda.hidden = false;
   }
 
@@ -437,6 +506,7 @@ export class TabManager {
     if (!entry) return;
     entry.viewer.salirComparacion();
     entry.banda.hidden = true;
+    entry.divisor.hidden = true;
     entry.ramas.comparando = null;
   }
 
@@ -472,7 +542,7 @@ export class TabManager {
     entry.notas.invalidarCaras();
     entry.ficha = ficha;
     this._setRevision(entry, mesh.revision);
-    await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
+    await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar(), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
     if (!entry.parametros.ocupado()) await entry.parametros.cargarInicial();
     if (this.tabs.get(docId) !== entry) return;
     entry.btnParametros.hidden = !entry.parametros.tieneParametros();
@@ -500,9 +570,9 @@ export class TabManager {
       if ((tag === "notas" && entry.notas.ocupado()) || (tag === "parametros" && entry.parametros.ocupado())) continue;
       entry.pendingPanels.delete(tag);
       if (tag === "notas") tasks.push(entry.notas.recargar());
-      if (tag === "historial") tasks.push(entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}));
+      if (tag === "historial") tasks.push(entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar());
       if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial());
-      if (tag === "ramas") tasks.push(entry.ramas.cargarInicial());
+      if (tag === "ramas") tasks.push(entry.ramas.cargarInicial(), entry.h2.invalidar());
       if (tag === "parametros") tasks.push(entry.parametros.cargarInicial());
       if (tag === "materiales") tasks.push(this._cargarMateriales(entry));
     }
