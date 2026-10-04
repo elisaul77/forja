@@ -414,7 +414,8 @@ def restaurar(id: str, snapshot: str) -> dict[str, Any]:
 
 
 def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = None,
-         a: str | None = None) -> Any:
+         a: str | None = None, piezas: list[str] | None = None, estrategia: str | None = None,
+         forzar: bool = False, simular: bool = False) -> Any:
     """Ramas y pasos de un diseño (Plan G). Cada cambio aceptado deja un
     «paso» con el estado COMPLETO (geometria, script con su texto,
     parametros, materiales, notas, ensamble) en la rama activa.
@@ -436,8 +437,24 @@ def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = No
       activa); A/B = rama o sha_corto. Devuelve piezas
       {nombre: añadida|quitada|cambiada|igual}, volumen {a,b,delta,pct},
       bbox delta, parametros y materiales cambiados (antes/despues).
-    Nombres de rama: letras, numeros, - y _ (max 48)."""
-    return client.rama(id, accion, nombre, desde, a)
+    - `fusionar`: fusiona `desde` (rama o paso) en la rama activa con su
+      ancestro comun: parametros por clave, materiales por pieza, notas y
+      trazos por id, ensamble por articulacion, script con merge de 3 vias
+      y reconstruccion en el sandbox. Despues verifica validez y colisiones
+      contra las dos ramas. `resultado`: fusionada | simulada | conflicto
+      (lista `conflictos` en español, con `lineas` si es de texto del
+      script) | conflicto_geometrico (choques nuevos; no se confirma salvo
+      `forzar=true`) | ya_incluida. `simular=true` no escribe nada.
+      `estrategia`: auto (por defecto) | nuestra | suya para resolver
+      conflictos de datos/texto. Confirmada = paso con dos padres.
+    - `traer_pieza`: trae de `desde` las `piezas` (nombres) y sustituye o
+      añade solo esas (con sus materiales); el resto queda igual. Si el
+      documento tiene script, queda marcado `geometria_editada` (regenerar
+      parametros pedira confirmar_script=true). Misma verificacion.
+    - `hito`: pone el hito `nombre` en el paso `desde` (por defecto el
+      ultimo de la rama activa), con descripcion `a`. `hitos`: lista.
+    Nombres de rama/hito: letras, numeros, - y _ (max 48)."""
+    return client.rama(id, accion, nombre, desde, a, piezas, estrategia, forzar, simular)
 
 
 def captura(

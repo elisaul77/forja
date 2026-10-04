@@ -456,11 +456,13 @@ def restaurar(doc_id: str, snapshot: str) -> dict[str, Any]:
     return resp.json()
 
 
-_ACCIONES_RAMA = ("listar", "crear", "cambiar", "renombrar", "borrar", "pasos", "comparar")
+_ACCIONES_RAMA = ("listar", "crear", "cambiar", "renombrar", "borrar", "pasos", "comparar",
+                  "fusionar", "traer_pieza", "hito", "hitos")
 
 
 def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None = None,
-         a: str | None = None) -> Any:
+         a: str | None = None, piezas: list[str] | None = None, estrategia: str | None = None,
+         forzar: bool = False, simular: bool = False) -> Any:
     """G2/G3: thin wrapper over `app/ramas.py`'s REST routes; mutations
     carry the token. Path segments are URL-quoted; the server validates
     every branch name and sha."""
@@ -470,10 +472,26 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
         return {"error": True, "mensaje": f"accion desconocida: {accion!r} (usa {'|'.join(_ACCIONES_RAMA)})"}
     base = f"/documentos/{quote(doc_id, safe='')}/ramas"
     q = (lambda v: quote(v or "", safe=""))
-    timeout = _heavy_timeout() if accion in ("cambiar", "comparar") else _TIMEOUT
+    timeout = _heavy_timeout() if accion in ("cambiar", "comparar", "fusionar", "traer_pieza") else _TIMEOUT
+    doc_base = f"/documentos/{quote(doc_id, safe='')}"
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=timeout) as c:
         if accion == "listar":
             resp = c.get(base)
+        elif accion in ("fusionar", "traer_pieza"):
+            if not desde:
+                return {"error": True, "mensaje": f"{accion} necesita desde (rama o sha_corto del paso)"}
+            if accion == "traer_pieza" and not piezas:
+                return {"error": True, "mensaje": "traer_pieza necesita piezas (lista de nombres)"}
+            resp = c.post(f"{base}/fusionar", json={
+                "desde": desde, "piezas": piezas if accion == "traer_pieza" else None,
+                "estrategia": estrategia, "forzar": forzar, "simular": simular}, headers=_headers_con_token())
+        elif accion == "hitos":
+            resp = c.get(f"{doc_base}/hitos")
+        elif accion == "hito":
+            if not nombre:
+                return {"error": True, "mensaje": "hito necesita nombre"}
+            resp = c.post(f"{doc_base}/hitos", json={"nombre": nombre, "paso": desde, "descripcion": a},
+                          headers=_headers_con_token())
         elif accion == "pasos":
             if nombre is None:
                 actual = c.get(base)

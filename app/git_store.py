@@ -202,11 +202,13 @@ def _fecha_git(fecha: str) -> str:
 
 def escribir_commit(doc_id: str, archivos: dict[str, bytes], mensaje: str, snapshot_id: str,
                     fecha: str, autor: str | None = None, fuente: dict[str, bytes] | None = None,
-                    padre: str | None = "HEAD", extra: dict[str, str] | None = None) -> str:
+                    padre: str | None = "HEAD", extra: dict[str, str] | None = None,
+                    padres_extra: list[str] | None = None) -> str:
     """Create the commit object (tree = exactly ``archivos`` + optional
     ``_fuente/``) on top of ``padre`` (``"HEAD"`` = current branch tip,
     ``None`` = root commit, else a sha) WITHOUT moving the branch. Returns
-    the new commit sha. Caller holds :func:`bloqueo`."""
+    the new commit sha. ``padres_extra`` (G4) adds more parents after
+    ``padre`` (a merge commit). Caller holds :func:`bloqueo`."""
     repo = inicializar(doc_id)
     arbol = construir_arbol(doc_id, archivos, fuente)
     if padre == "HEAD":
@@ -214,6 +216,8 @@ def escribir_commit(doc_id: str, archivos: dict[str, bytes], mensaje: str, snaps
     args = ["commit-tree", arbol]
     if padre:
         args += ["-p", validar_sha(padre)]
+    for otro in padres_extra or []:
+        args += ["-p", validar_sha(otro)]
     texto = construir_mensaje(mensaje, snapshot_id, fecha, list(archivos), extra)
     return _git(repo, *args, entrada=texto.encode(), autor=autor,
                 fecha_git=_fecha_git(fecha)).decode().strip()
@@ -484,3 +488,100 @@ def borrar(doc_id: str) -> None:
     with bloqueo(doc_id):
         if repo.exists() and repo.resolve().parent == REPOS_DIR.resolve():
             shutil.rmtree(repo, ignore_errors=True)
+
+
+# ------------------------------------------------------------ G4: fusion
+
+def base_comun(doc_id: str, a: str, b: str) -> str | None:
+    """Best common ancestor of two commits (``git merge-base``) or ``None``."""
+    sha = _git(ruta_repo(doc_id), "merge-base", "--end-of-options", validar_sha(a), validar_sha(b),
+               permitir_fallo=True).decode().strip()
+    return sha if _RE_SHA.match(sha) else None
+
+
+def fusionar_texto(base: bytes, nuestro: bytes, suyo: bytes,
+                   estrategia: str | None = None) -> tuple[bytes, int]:
+    """Three-way text merge with ``git merge-file -p`` (no repo needed).
+    Returns ``(texto, conflictos)``; with conflicts the text carries the
+    usual ``<<<<<<< / ||||||| / ======= / >>>>>>>`` markers. ``estrategia``
+    ``nuestra``/``suya`` resolves every conflict hunk to that side."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="forja-merge-") as tmp:
+        rutas = []
+        for nombre, contenido in (("a", nuestro), ("o", base), ("b", suyo)):
+            camino = Path(tmp) / nombre
+            camino.write_bytes(contenido)
+            rutas.append(str(camino))
+        args = ["merge-file", "-p", "--diff3", "-L", "rama activa", "-L", "ancestro", "-L", "rama fusionada"]
+        if estrategia == "nuestra":
+            args.append("--ours")
+        elif estrategia == "suya":
+            args.append("--theirs")
+        try:
+            res = subprocess.run(["git", *args, *rutas], capture_output=True, timeout=TIMEOUT_S,
+                                 env=_entorno(), check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise GitError("git merge-file supero el tiempo") from exc
+    if res.returncode < 0 or res.returncode > 127:
+        raise GitError(f"git merge-file fallo: {res.stderr.decode(errors='replace')[:300]}")
+    return res.stdout, res.returncode
+
+
+# ------------------------------------------------------------ G5: hitos y curacion
+#
+# Milestones are refs ``refs/forja/hitos/<nombre>`` pointing at a step; the
+# description, hidden steps and groups live in ``forja-curacion.json``
+# inside the repo (metadata apart: history is never rewritten).
+
+REF_HITOS = "refs/forja/hitos/"
+_ARCHIVO_CURACION = "forja-curacion.json"
+
+
+def ref_hito(nombre: str) -> str:
+    return REF_HITOS + validar_rama(nombre)
+
+
+def listar_hitos(doc_id: str) -> dict[str, str]:
+    if not existe(doc_id):
+        return {}
+    salida = _git(ruta_repo(doc_id), "for-each-ref", "--format=%(refname)%00%(objectname)",
+                  REF_HITOS).decode()
+    hitos = {}
+    for linea in salida.splitlines():
+        ref, _, sha = linea.partition("\x00")
+        nombre = ref[len(REF_HITOS):]
+        if _RE_RAMA.match(nombre) and _RE_SHA.match(sha):
+            hitos[nombre] = sha
+    return dict(sorted(hitos.items()))
+
+
+def mover_ref_hito(doc_id: str, nombre: str, nuevo: str | None, anterior: str | None) -> None:
+    """Compare-and-swap a milestone ref; ``nuevo=None`` deletes it."""
+    repo = ruta_repo(doc_id)
+    ref = ref_hito(nombre)
+    if nuevo is None:
+        _git(repo, "update-ref", "-d", "--end-of-options", ref, validar_sha(anterior or ""))
+    else:
+        _git(repo, "update-ref", "--end-of-options", ref, validar_sha(nuevo),
+             validar_sha(anterior) if anterior else "0" * 40)
+
+
+def leer_curacion(doc_id: str) -> dict[str, Any]:
+    """``{descripciones: {hito: texto}, ocultos: [sha]}`` (always both)."""
+    try:
+        datos = json.loads((ruta_repo(doc_id) / _ARCHIVO_CURACION).read_text())
+    except (OSError, ValueError):
+        datos = {}
+    if not isinstance(datos, dict):
+        datos = {}
+    desc = datos.get("descripciones")
+    ocultos = datos.get("ocultos")
+    return {"descripciones": {k: str(v) for k, v in desc.items() if isinstance(k, str)} if isinstance(desc, dict) else {},
+            "ocultos": [s for s in ocultos if isinstance(s, str) and _RE_SHA.match(s)] if isinstance(ocultos, list) else []}
+
+
+def guardar_curacion(doc_id: str, datos: dict[str, Any]) -> None:
+    destino = inicializar(doc_id) / _ARCHIVO_CURACION
+    temporal = destino.with_name(destino.name + ".tmp")
+    temporal.write_text(json.dumps(datos, ensure_ascii=False))
+    os.replace(temporal, destino)

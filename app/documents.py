@@ -760,10 +760,23 @@ def obtener_parametros(doc_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="documento no encontrado")
     datos = parametros.cargar(doc_id)
     respuesta: dict[str, Any] = {"esquema": datos["parametros"], "valores": datos["valores"]}
-    aviso = aviso_script_divergente(doc_id, datos["script"])
-    if aviso:
-        respuesta["avisos"] = [aviso]
+    avisos = [a for a in (aviso_script_divergente(doc_id, datos["script"]),
+                          aviso_geometria_editada(doc_id)) if a]
+    if avisos:
+        respuesta["avisos"] = avisos
     return respuesta
+
+
+def aviso_geometria_editada(doc_id: str) -> str | None:
+    """G4: ``geometria_editada: ...`` while the geometry carries pieces
+    brought from another branch (the script alone would not rebuild it)."""
+    marca = parametros._leer_meta(doc_id).get("geometria_editada")
+    if not isinstance(marca, dict):
+        return None
+    piezas = ", ".join(str(p) for p in (marca.get("piezas") or [])[:10])
+    return (f"geometria_editada: las piezas {piezas} vienen del paso {marca.get('desde')} de otra rama; "
+            "el script no las genera asi. Regenerar con parametros las sustituiria por lo que produce "
+            "el script (confirmar_script=true para hacerlo).")
 
 
 def aviso_script_divergente(doc_id: str, script: Any) -> str | None:
@@ -829,6 +842,9 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
                 raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
         else:
             codigo = script["codigo"]
+        editada = aviso_geometria_editada(doc_id)
+        if editada and not body.confirmar_script:
+            raise HTTPException(status_code=409, detail="no se regenera: " + editada.split(": ", 1)[1])
         try:
             esquema = parametros.esquema_desde_codigo(codigo)
             valores = parametros.aplicar_valores(esquema, datos["valores"], body.valores)
@@ -849,6 +865,7 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
             materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
             if "ruta" in script:  # confirmed (or matching) file: mark resolved
                 git_store.fijar_script_divergente(doc_id, None, None)
+            parametros.quitar_geometria_editada(doc_id)  # G4: script rebuilt everything
             confirmar_revision(doc_id)
     return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
 

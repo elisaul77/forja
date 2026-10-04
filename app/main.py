@@ -21,6 +21,7 @@ import eventos
 import notes
 import perfiles
 import ramas
+import fusion
 import versioning
 from mcp_server.http_app import app_mcp_http
 
@@ -47,6 +48,7 @@ app.include_router(assembly_routes.router)
 app.include_router(bridges.router)
 app.include_router(perfiles.router)
 app.include_router(cupon.router)
+app.include_router(fusion.router)
 app.include_router(ramas.router)
 
 
