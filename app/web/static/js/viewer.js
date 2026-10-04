@@ -509,11 +509,57 @@ export class ForjaViewer {
     this.isolatedPiece = null;
   }
 
+  /** G3: vista superpuesta de dos estados. `estados` = {pieza: añadida|
+   * quitada|cambiada|igual}. Se dibuja B entero coloreado por estado y, de
+   * A, las piezas quitadas en rojo translúcido. La malla normal se oculta
+   * hasta `salirComparacion()`. */
+  mostrarComparacion(bufferA, bufferB, estados) {
+    this.salirComparacion();
+    const colores = { "añadida": 0x3fb950, quitada: 0xe5534b, cambiada: 0xe3a008, igual: 0x8b8b8b };
+    const grupo = new THREE.Group();
+    const agregar = (buffer, filtro, transparente) => {
+      const { stl, manifest } = decodePieceBundle(buffer);
+      const geom = loader.parse(stl);
+      geom.computeVertexNormals();
+      const piezas = manifest?.piezas ?? [{ nombre: "documento", rangos: [[0, geom.getAttribute("position").count / 3]] }];
+      for (const pieza of piezas) {
+        const estado = estados[pieza.nombre] ?? "igual";
+        if (!filtro(estado)) continue;
+        const indices = [];
+        for (const [primero, n] of pieza.rangos) for (let t = primero; t < primero + n; t++) indices.push(t * 3, t * 3 + 1, t * 3 + 2);
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", geom.getAttribute("position"));
+        g.setAttribute("normal", geom.getAttribute("normal"));
+        g.setIndex(indices);
+        const mat = new THREE.MeshStandardMaterial({ color: colores[estado], metalness: 0.1, roughness: 0.7,
+          transparent: transparente, opacity: transparente ? 0.35 : 1, depthWrite: !transparente });
+        grupo.add(new THREE.Mesh(g, mat));
+      }
+    };
+    agregar(bufferB, () => true, false);
+    agregar(bufferA, estado => estado === "quitada", true);
+    this._comparacion = grupo;
+    this.scene.add(grupo);
+    if (this.mesh) this.mesh.visible = false;
+    for (const piece of this.pieces.values()) piece.mesh.visible = false;
+    this.render();
+  }
+
+  salirComparacion() {
+    if (!this._comparacion) return;
+    this.scene.remove(this._comparacion);
+    this._comparacion.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+    this._comparacion = null;
+    if (this.mesh) this.mesh.visible = this.pieces.size === 0;
+    this._applyPieceVisibility();
+  }
+
   render() {
     this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {
+    this.salirComparacion();
     this._resizeObserver.disconnect();
     this.controls.dispose();
     this.renderer.domElement.removeEventListener("pointerdown", this._piecePointerDown);
