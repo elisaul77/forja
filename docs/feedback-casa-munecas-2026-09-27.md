@@ -1,7 +1,7 @@
 ## Feedback de uso real de Forja — sesión "casa de muñecas" (27-sep-2026)
 
 Diseñé por MCP una casa de muñecas de 2 plantas con 20 muebles (≈225 primitivos,
-21 sólidos). Script: ~/Documentos/3D/forja/casa-munecas/casa_v2.py.
+21 sólidos). Script: `casa_v2.py`.
 
 **Consumo medido:** 33 llamadas al modelo, 33 k tokens de salida, 2,48 M releídos de
 caché (~90 k por llamada). Lo caro es el NÚMERO DE LLAMADAS, no el tamaño del script.
