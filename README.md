@@ -48,6 +48,8 @@
 |:---:|
 | ![Tornillo](docs/img/tornillo.png) |
 
+> 📘 **¿Imprimes en FDM?** Lee el [Manual del ciclo FDM](docs/MANUAL-FDM.md): perfil de tolerancias, cupones de prueba, arreglos FDM y material por pieza.
+
 ## 🚀 Inicio rápido
 
 ```bash
