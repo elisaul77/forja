@@ -7,6 +7,16 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (G2/G3 — ramas, pasos y comparar)
+
+- `app/ramas.py`: ramas en `refs/forja/ramas/<nombre>` con un paso (estado completo tras el cambio: geometría, `meta.json`, notas, sólidos, materiales, ensamble, `_fuente/script.py` con el texto aunque venga de `ruta`; trailers `Forja-Revision`/`Forja-Rama`) por cada petición mutante con éxito, registrado por el middleware antes de responder. `refs/heads/main` (instantáneas G1) intacto.
+- Cambiar de rama: guarda lo no registrado, deja instantánea G1 «antes de cambiar a la rama X», escribe todo de forma atómica bajo el candado, actualiza registro/revisión y emite el evento SSE. Crear (desde el estado actual o un paso), renombrar, borrar (ni `main` ni la activa), pasos.
+- Comparar (regla de G0): por pieza con nombre añadida/quitada/cambiada/igual, Δvolumen y %, Δbbox, parámetros y materiales cambiados, script cambiado; sin candado; caras solo si vol/bbox coinciden (caché por contenido). Malla FJP1 por paso para superponer (caché en `.cache/comparar`).
+- REST (`/ramas`, `/ramas/{rama}/activar|renombrar|pasos`, `DELETE /ramas/{rama}`, `/comparar`, `/comparar/malla`), token en mutaciones. MCP: herramienta `rama` (21 herramientas).
+- Visor: pestaña «Ramas» (selector de rama activa, nueva rama, cambiar, borrar, pasos con fecha/autor/mensaje, rama desde un paso; sin miniaturas aún) y modo «Comparar» superpuesto con resumen y «Volver». `ramas.js?v=1`, `viewer.js?v=13`, `tabs.js?v=20`, `app.js?v=22`, `forja-base.css?v=13`.
+- Seguridad (pendientes de G1): shas externos validados (`validar_sha`), `--end-of-options` en `log`/`ls-tree`/`rev-parse`/`update-ref`; nombres de rama `[A-Za-z0-9][A-Za-z0-9_-]{0,47}`; ADR-0014: el autor es una etiqueta, no prueba de identidad.
+- Pruebas: `tests/test_ramas.py` (37).
+
 ### Added (G0/G1 — git como historial, ADR-0014)
 
 - G0: reconstrucción determinista verificada en los 5 documentos con script (2 builds, STEP normalizado idéntico byte a byte); regla de comparación para G3 en `plans/maestro/fases/G0-resultados.md`.

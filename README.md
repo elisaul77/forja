@@ -228,6 +228,27 @@ Orca); el 3MF no es idéntico byte a byte entre descargas (las marcas de tiempo
 del zip cambian, el contenido no); y `valido: true` **no detecta pérdida de
 geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
 
+### Ramas, pasos y comparar (Plan G · G2/G3)
+
+Cada documento tiene un repo git (`.repos/{id}.git`). `refs/heads/main` es el
+historial de instantáneas «antes del cambio» de siempre (`historial`/`restaurar`).
+Las ramas viven en `refs/forja/ramas/<nombre>`: cada cambio aceptado deja un
+**paso** con el estado COMPLETO (geometría, `meta.json`, notas, sólidos,
+materiales, ensamble y el texto del script aunque venga de `ruta`).
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /documentos/{id}/ramas` | `{activa, ramas:[{nombre, activa, pasos, ultimo}]}` (crea `main` la primera vez) |
+| `POST /documentos/{id}/ramas` 🔑 | `{nombre, desde?}` — rama desde el estado actual o un paso/rama |
+| `POST .../ramas/{rama}/activar` 🔑 | materializa la rama en el documento (+ evento en vivo) |
+| `POST .../ramas/{rama}/renombrar` 🔑 · `DELETE .../ramas/{rama}` 🔑 | ni `main` ni la activa |
+| `GET .../ramas/{rama}/pasos?limite=` | `[{sha_corto, fecha, autor, mensaje, revision}]` |
+| `GET /documentos/{id}/comparar?a=&b=` | diff por pieza (añadida/quitada/cambiada/igual), Δvolumen y %, Δbbox, parámetros, materiales |
+| `GET /documentos/{id}/comparar/malla?ref=` | malla FJP1 de un paso para la vista superpuesta |
+
+MCP: `rama(id, accion, nombre?, desde?, a?)` con `listar|crear|cambiar|renombrar|borrar|pasos|comparar`.
+Visor: pestaña «Ramas» del panel lateral y modo «Comparar» (verde añadida, rojo quitada, ámbar cambiada, gris igual).
+
 ### MCP
 
 Forja expone un servidor MCP (`mcp_server/`, `mcp` 2.2.0) que corre

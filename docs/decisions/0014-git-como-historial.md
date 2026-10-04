@@ -33,7 +33,9 @@ ADR-0006 guardaba cada instantánea como copia completa de archivos en
   restaurar X`…) + trailers `Forja-Snapshot` (id de 12 hex, el mismo contrato
   de siempre), `Forja-Fecha`, `Forja-Archivos`. Autor neutro: `agente` (MCP,
   cabecera `X-Forja-Origen: agente`), `humano` (navegador, `Sec-Fetch-Site`),
-  `forja` (resto/migración). Nunca datos personales.
+  `forja` (resto/migración). Nunca datos personales. El autor es una
+  **etiqueta de origen** que declara el cliente (cabecera), no una prueba de
+  identidad: cualquiera con acceso a la API puede enviar `agente` o `humano`.
 - Contratos `leer_historial`/`restaurar` (REST y MCP) idénticos: mismos ids,
   `{id, fecha, mensaje}`, orden, bytes. Se añade `versioning.listar_commits`.
 - Mientras exista un `.historial/` sin migrar se lee y lista primero (nada
@@ -61,3 +63,22 @@ commit *posterior* al cambio y una caché por hash de árbol: G2/G3.
   mismo árbol).
 - No se alcanza aún «< 50 MB»: queda para cuando la geometría sea derivada.
 - `.historial.migrado/` (1,4 GB) queda hasta que Eli decida borrarlo.
+
+## G2/G3 — ramas, pasos y comparar (2026-10-04)
+
+- `refs/heads/main` sigue siendo la cadena de instantáneas «antes del
+  cambio» (contratos de historial/restaurar intactos). Las ramas viven en
+  `refs/forja/ramas/<nombre>` y cada commit es un **paso**: el estado
+  COMPLETO tras un cambio aceptado (geometría, `meta.json`, notas, sólidos,
+  materiales, ensamble y `_fuente/script.py` con el texto aunque venga de
+  `ruta`), con trailers `Forja-Revision` y `Forja-Rama`. Rama activa en
+  `forja-rama-activa` dentro del repo; `main` se crea perezosamente.
+- El middleware registra el paso **antes** de enviar la respuesta de una
+  petición mutante con estado < 400 (lo que `crear_snapshot` anotó).
+- Cambiar de rama guarda antes lo no registrado en la rama que se deja y
+  una instantánea G1 «antes de cambiar a la rama X»; escribe los archivos
+  de forma atómica bajo el candado del documento y emite el evento SSE.
+- Nombres de rama: `[A-Za-z0-9][A-Za-z0-9_-]{0,47}`; shas de fuera: 40 hex
+  o abreviados de 7+ hex, nunca expresiones de revisión; `--end-of-options`.
+- Comparar aplica la regla de G0 sobre `solidos.json` (caras solo si lo
+  demás coincide, con caché por contenido) sin tomar el candado.
