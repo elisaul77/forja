@@ -12,9 +12,11 @@ only read.
 
 Crop box heuristic: the box is the overlap of the two bboxes (each grown by
 ``holgura_max``) plus ``margen``, but along an axis where the overlap is
-small compared with the pair's full extent (less than half) the box is cut;
-along the other axes it keeps the pair's full extent, so a bushing around a
-shaft keeps its whole wall and the shaft is cut to the bushing's length.
+a side of the box is completed to the pair's full extent (plus margin) only
+when it would otherwise leave less than ``margen`` behind; otherwise it is
+cut there. So a bushing around a shaft keeps its whole wall, the shaft is
+cut to the bushing's length, and a big plate resting on a post is cut to the
+post's footprint plus margin.
 """
 from __future__ import annotations
 
@@ -64,8 +66,12 @@ def caja_de_interes(bbox_a: list[float], bbox_b: list[float], holgura: float, ma
     for eje in range(3):
         lo, hi = solape[2 * eje] - margen, solape[2 * eje + 1] + margen
         t_lo, t_hi = total[2 * eje], total[2 * eje + 1]
-        if (hi - lo) * 2 > (t_hi - t_lo):
-            lo, hi = t_lo - margen, t_hi + margen
+        # A side that would leave less than ``margen`` of the pair behind
+        # is completed (keeps a bushing's whole wall); otherwise it is cut.
+        if lo - t_lo <= margen:
+            lo = min(lo, t_lo - margen)
+        if t_hi - hi <= margen:
+            hi = max(hi, t_hi + margen)
         caja += [lo, hi]
     return caja
 
