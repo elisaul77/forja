@@ -63,6 +63,10 @@ def resumen_documento(
     dentro de su propia caja delimitadora (una lamina solida como un
     estante de 2 mm o una alfombra nunca cae aca, solo un residuo casi nulo
     de una operacion booleana).
+
+    `materiales` (solo si alguna pieza tiene uno, fdm-D):
+    `{pieza: {material?, color?, extrusor?}}`; cambiarlos con
+    `parametros(id, materiales={...})`.
     """
     return client.resumen_documento(id, tope_solidos=tope_solidos, umbral_astilla_mm3=umbral_astilla_mm3)
 
@@ -284,7 +288,9 @@ def percibir(
     )
 
 
-def parametros(id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
+def parametros(
+    id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Parametros de un documento creado con un script parametrico (Fase 5C):
     iterar cambiando NUMEROS, sin volver a mandar el script.
 
@@ -306,8 +312,17 @@ def parametros(id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]
     valor) y lee los valores con `def construir(params): ... return figura`
     (preferido; Forja la llama si el script no asigna `resultado`) o con el
     dict global `PARAMS` que Forja inyecta antes de ejecutar.
+
+    `materiales` (opcional, fdm-D): cambia el filamento de piezas con
+    nombre SIN re-ejecutar el script: `{"tapa": "PETG negro", "junta":
+    {"material": "TPU", "color": "#202020", "extrusor": 2}, "base": null}`
+    (`null` quita la asignacion; color #RRGGBB; extrusor 1..16). Se puede
+    combinar con `valores` o ir solo; la respuesta incluye `materiales`
+    vigentes. Un script tambien puede declararlos con un dict literal
+    `MATERIALES = {...}` a nivel de modulo. El 3MF descargado/abierto en
+    Orca lleva el extrusor de cada pieza y su color.
     """
-    return client.parametros(id, valores)
+    return client.parametros(id, valores, materiales)
 
 
 def check_fdm(

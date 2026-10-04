@@ -1,4 +1,8 @@
 // Per-tab display state belongs to the viewer, never to the stored document.
+// Exception (fdm-D): the material of each piece IS document data, edited
+// through `materiales` ({materiales, guardar(cambios)}) and saved by POST.
+import { entradaDesdeFormulario, etiquetaMaterial } from "./materiales.js?v=1";
+
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -13,7 +17,8 @@ function button(text, action) {
   return node;
 }
 
-export function renderPiecesPanel(viewer, documentName) {
+export function renderPiecesPanel(viewer, documentName, materiales = null) {
+  const asignados = materiales?.materiales ?? {};
   const panel = document.getElementById("fj-panel-piezas");
   panel.replaceChildren();
   panel.append(element("h3", "Piezas"));
@@ -62,7 +67,12 @@ export function renderPiecesPanel(viewer, documentName) {
     select.title = name;
     select.dataset.piece = name;
     select.addEventListener("dblclick", () => viewer.framePiece(name));
-    row.append(visible, select);
+    const swatch = element("span", undefined, "fj-piece-swatch");
+    swatch.setAttribute("aria-hidden", "true");
+    if (asignados[name]?.color) swatch.style.background = asignados[name].color;
+    else swatch.classList.add("is-empty");
+    if (asignados[name]) swatch.title = etiquetaMaterial(asignados[name]);
+    row.append(visible, swatch, select);
     list.append(row);
     rows.push({ name, piece, row, visible, select });
   }
@@ -104,9 +114,49 @@ export function renderPiecesPanel(viewer, documentName) {
       if (Number.isFinite(selected.volumen)) detail.append(element("span", `${selected.volumen.toLocaleString("es", { maximumFractionDigits: 2 })} mm³`));
       if (selected.fragmentos > 1) detail.append(element("span", `${selected.fragmentos} sólidos forman esta pieza`));
       if (!selected.mesh.visible) detail.append(element("span", "Pieza oculta"));
+      if (materiales) detail.append(materialForm(selected.nombre));
     } else {
       detail.append(element("span", "Selecciona una pieza en la lista o sobre el modelo. Doble clic en su nombre para encuadrarla."));
     }
   }
   update();
+
+  function materialForm(name) {
+    const actual = asignados[name] ?? {};
+    const form = element("form", undefined, "fj-piece-material");
+    form.append(element("span", `Material: ${etiquetaMaterial(asignados[name])}`));
+    const campo = (texto, input) => { const l = element("label", texto, "fj-campo"); l.append(input); return l; };
+    const material = element("input", undefined, "fj-input");
+    material.maxLength = 64; material.placeholder = "p. ej. PETG negro"; material.value = actual.material ?? "";
+    const conColor = element("input"); conColor.type = "checkbox"; conColor.checked = Boolean(actual.color);
+    const color = element("input", undefined, "fj-input"); color.type = "color"; color.value = (actual.color ?? "#a8a29e").toLowerCase();
+    color.disabled = !conColor.checked;
+    conColor.addEventListener("change", () => { color.disabled = !conColor.checked; });
+    const extrusor = element("input", undefined, "fj-input");
+    extrusor.type = "number"; extrusor.min = "1"; extrusor.max = "16"; extrusor.step = "1"; extrusor.placeholder = "—";
+    extrusor.value = actual.extrusor ?? "";
+    const colorRow = element("div", undefined, "fj-piece-material__color");
+    colorRow.append(campo("Usar color", conColor), campo("Color", color));
+    const msg = element("span", "", "fj-piece-hint"); msg.setAttribute("role", "status");
+    const guardar = element("button", "Guardar material", "fj-btn"); guardar.type = "submit";
+    const quitar = button("Quitar", () => enviar(null));
+    quitar.disabled = !asignados[name];
+    form.append(campo("Material", material), colorRow, campo("Extrusor (1–16)", extrusor), guardar, quitar, msg);
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      try {
+        enviar(entradaDesdeFormulario({ material: material.value, color: color.value, extrusor: extrusor.value, conColor: conColor.checked }));
+      } catch (error) { msg.textContent = error.message; }
+    });
+    async function enviar(entrada) {
+      guardar.disabled = true; quitar.disabled = true; msg.textContent = "Guardando…";
+      try {
+        await materiales.guardar({ [name]: entrada });
+      } catch (error) {
+        msg.textContent = `No se pudo guardar: ${error.message}`;
+        guardar.disabled = false; quitar.disabled = !asignados[name];
+      }
+    }
+    return form;
+  }
 }

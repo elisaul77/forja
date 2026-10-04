@@ -53,6 +53,9 @@ _CONTENT_TYPES_3MF = (
     '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>'
     "</Types>"
 )
+_CONTENT_TYPES_3MF_CON_CONFIG = _CONTENT_TYPES_3MF.replace(
+    "</Types>", '<Default Extension="config" ContentType="text/xml"/></Types>'
+)
 _RELS_3MF = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -62,7 +65,36 @@ _RELS_3MF = (
 _TOPE_OBJETOS_RESPUESTA = 30
 
 
-def bytes_3mf(objetos: list[tuple[str, trimesh.Trimesh]]) -> bytes:
+_COLOR_SIN_MATERIAL = "#A8A29E"
+RUTA_MODEL_SETTINGS = "Metadata/model_settings.config"
+
+
+def _model_settings(
+    objetos: list[tuple[str, trimesh.Trimesh]], materiales: dict[str, dict[str, Any]]
+) -> str:
+    """OrcaSlicer/Bambu Studio per-object settings (fdm-D): one
+    ``<object id>`` per model object with its ``name`` and, when assigned,
+    ``extruder`` (1-based filament slot). Object-level only -- no ``<part>``
+    entries, so a loader never has to match sub-volumes it doesn't have.
+    Slicers that don't know this file ignore it."""
+    lineas = ['<?xml version="1.0" encoding="UTF-8"?>\n<config>']
+    for i, (nombre, _malla) in enumerate(objetos, start=1):
+        lineas.append(f'  <object id="{i}">')
+        lineas.append(f'    <metadata key="name" value={quoteattr(nombre)}/>')
+        entrada = materiales.get(nombre) or {}
+        if "extrusor" in entrada:
+            lineas.append(f'    <metadata key="extruder" value="{int(entrada["extrusor"])}"/>')
+        if "material" in entrada:
+            lineas.append(f'    <metadata key="forja_material" value={quoteattr(entrada["material"])}/>')
+        lineas.append("  </object>")
+    lineas.append("</config>")
+    return "\n".join(lineas)
+
+
+def bytes_3mf(
+    objetos: list[tuple[str, trimesh.Trimesh]],
+    materiales: dict[str, dict[str, Any]] | None = None,
+) -> bytes:
     """Build a 3MF package by hand, in memory (Phase 5C, no new dependency: trimesh's
     own 3MF exporter needs `networkx`, which is not in this image).
 
@@ -73,12 +105,37 @@ def bytes_3mf(objetos: list[tuple[str, trimesh.Trimesh]]) -> bytes:
     world coordinates (an assembly keeps its layout; the slicer can still
     arrange/split). Units: millimetre. Package parts: ``[Content_Types].xml``,
     ``_rels/.rels`` and ``3D/3dmodel.model``.
+
+    ``materiales`` (fdm-D, optional ``{nombre: {material?, color?,
+    extrusor?}}``): pieces with an entry get (a) a core-spec
+    ``<basematerials>`` base (``name`` + ``displaycolor``) referenced by the
+    object's ``pid``/``pindex`` -- the standard way any 3MF reader shows a
+    colour -- and (b) ``Metadata/model_settings.config`` with the object's
+    ``extruder``, the per-object setting OrcaSlicer/Bambu read. Without
+    materials the package is byte-for-byte what it was before.
     """
+    materiales = {n: m for n, m in (materiales or {}).items() if any(n == o[0] for o in objetos)}
     partes: list[str] = [
         '<?xml version="1.0" encoding="UTF-8"?>\n',
         f'<model unit="millimeter" xml:lang="en-US" xmlns="{_NS_3MF_CORE}">',
         "<resources>",
     ]
+    id_materiales = len(objetos) + 1
+    indice_base: dict[tuple[str, str], int] = {}
+    if materiales:
+        bases: list[str] = []
+        for nombre, _malla in objetos:
+            entrada = materiales.get(nombre)
+            if not entrada:
+                continue
+            etiqueta = entrada.get("material") or (
+                f"Extrusor {entrada['extrusor']}" if "extrusor" in entrada else nombre
+            )
+            clave = (etiqueta, entrada.get("color", _COLOR_SIN_MATERIAL))
+            if clave not in indice_base:
+                indice_base[clave] = len(bases)
+                bases.append(f'<base name={quoteattr(clave[0])} displaycolor="{clave[1]}FF"/>')
+        partes.append(f'<basematerials id="{id_materiales}">{"".join(bases)}</basematerials>')
     for i, (nombre, malla) in enumerate(objetos, start=1):
         malla = malla.copy()
         malla.merge_vertices()
@@ -86,7 +143,15 @@ def bytes_3mf(objetos: list[tuple[str, trimesh.Trimesh]]) -> bytes:
         # index (v1 == v2); slicers reject those, so drop them (fix-review).
         malla.update_faces(malla.nondegenerate_faces())
         malla.remove_unreferenced_vertices()
-        partes.append(f'<object id="{i}" name={quoteattr(nombre)} type="model"><mesh><vertices>')
+        entrada = materiales.get(nombre)
+        prop = ""
+        if entrada:
+            etiqueta = entrada.get("material") or (
+                f"Extrusor {entrada['extrusor']}" if "extrusor" in entrada else nombre
+            )
+            pindex = indice_base[(etiqueta, entrada.get("color", _COLOR_SIN_MATERIAL))]
+            prop = f' pid="{id_materiales}" pindex="{pindex}"'
+        partes.append(f'<object id="{i}" name={quoteattr(nombre)}{prop} type="model"><mesh><vertices>')
         partes.extend(
             f'<vertex x="{x:.6f}" y="{y:.6f}" z="{z:.6f}"/>' for x, y, z in malla.vertices.tolist()
         )
@@ -101,15 +166,21 @@ def bytes_3mf(objetos: list[tuple[str, trimesh.Trimesh]]) -> bytes:
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("[Content_Types].xml", _CONTENT_TYPES_3MF)
+        zf.writestr("[Content_Types].xml", _CONTENT_TYPES_3MF_CON_CONFIG if materiales else _CONTENT_TYPES_3MF)
         zf.writestr("_rels/.rels", _RELS_3MF)
         zf.writestr("3D/3dmodel.model", "".join(partes))
+        if materiales:
+            zf.writestr(RUTA_MODEL_SETTINGS, _model_settings(objetos, materiales))
     return buffer.getvalue()
 
 
-def escribir_3mf(objetos: list[tuple[str, trimesh.Trimesh]], destino: Path) -> None:
+def escribir_3mf(
+    objetos: list[tuple[str, trimesh.Trimesh]],
+    destino: Path,
+    materiales: dict[str, dict[str, Any]] | None = None,
+) -> None:
     """Write the package built by `bytes_3mf` to ``destino`` (Phase 5C)."""
-    destino.write_bytes(bytes_3mf(objetos))
+    destino.write_bytes(bytes_3mf(objetos, materiales))
 
 
 def objetos_3mf(
@@ -146,6 +217,7 @@ def exportar_3mf_documento(
     destino: Path,
     nombre_por_defecto: str = "pieza",
     tolerancia: float = TOLERANCIA_TESSELLATION_MM,
+    materiales: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """ONE 3MF with one named object per named piece (a piece split into
     several disconnected solids stays one object, its meshes concatenated
@@ -158,7 +230,7 @@ def exportar_3mf_documento(
     Returns ``{ruta, tamano_bytes, objetos[, objetos_mas][, nombres_inciertos]}``.
     """
     objetos, nombres_inciertos = objetos_3mf(shape, entradas, nombre_por_defecto, tolerancia)
-    escribir_3mf(objetos, destino)
+    escribir_3mf(objetos, destino, materiales)
     nombres = [nombre for nombre, _ in objetos]
     respuesta: dict[str, Any] = {
         "ruta": str(destino),

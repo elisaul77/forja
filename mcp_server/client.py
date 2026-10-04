@@ -310,9 +310,31 @@ def percibir(
     return resp.json()
 
 
-def parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
+def parametros(
+    doc_id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """`None` -> read the schema + current values (token-free GET); a dict
-    -> apply them (token-protected POST, re-runs the stored script)."""
+    -> apply them (token-protected POST, re-runs the stored script).
+    `materiales` (fdm-D) -> POST /materiales first (no re-run); the answer
+    then carries `materiales` (and, alone, also the read of the schema)."""
+    resultado_materiales: dict[str, Any] | None = None
+    if materiales is not None:
+        with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+            resp = c.post(
+                f"/documentos/{doc_id}/materiales",
+                json={"materiales": materiales},
+                headers=_headers_con_token(),
+            )
+        if resp.status_code >= 400:
+            return {"error": True, **_detalle_estructurado(resp)}
+        resultado_materiales = resp.json()["materiales"]
+    respuesta = _parametros(doc_id, valores)
+    if resultado_materiales is not None and not respuesta.get("error"):
+        respuesta["materiales"] = resultado_materiales
+    return respuesta
+
+
+def _parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
     with httpx.Client(
         base_url=BASE_URL, timeout=_TIMEOUT if valores is None else _TIMEOUT + _SCRIPT_TIMEOUT_MARGIN
     ) as c:
