@@ -808,7 +808,7 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
   `casa_v2.py`'s own `resultado` (escena mode) is a plain `Compound`, not a
   dict, so a plain run of it only ever gets flat `solido_N` names. A small
   wrapper script (passed as `codigo`, never written into
-  `~/Documentos/3D/forja/casa-munecas/`) `exec`s the original file's source
+  ``) `exec`s the original file's source
   from its real read-only path and rebuilds `resultado = {"casa": casa(),
   **{nombre: colocar(pieza, x, y, z, g) for nombre, pieza, x, y, z, g in
   MUEBLES}}` from its own already-defined `casa()`/`colocar()`/`MUEBLES` —
@@ -953,7 +953,7 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
   `extrude(Plane.YZ * perfil, amount=L)` extrudes toward -X (use
   `dir=(1, 0, 0)`); fixed the stale "no hay edicion in-place todavia"
   sentence. Tool table unchanged (12 tools, no new ones this phase).
-- Real-data smoke test: `~/Documentos/3D/forja/casa-munecas/casa_v2.py`
+- Real-data smoke test: `casa_v2.py`
   (225 primitives, no explicit naming) run via `ruta` in ~4.7s → 21 solids,
   matching the original feedback session; confirmed the flat `solido_N`
   fallback (not the `"COMPOUND"` bug) is what a real, un-managed script
