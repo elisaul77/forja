@@ -7,6 +7,17 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (fdm-B — cupones de prueba)
+
+- `app/cupon.py`: `POST /documentos/{id}/cupon` (token) con `{pieza?, holgura_max? (1 mm, 0–5), margen? (4 mm, 0–20), caja? {min, max}}`. Detecta parejas de sólidos de distinto nombre a menos de `holgura_max` (prefiltro de cajas de `checks/distancia.py` + `Shape.distance`), calcula una caja de interés por pareja (solape + margen; un lado se completa hasta el final de la pareja solo si quedaría menos de `margen` fuera, así un buje conserva su pared y el eje se corta a su largo), fusiona las cajas que se solapan, recorta cada pieza y las deja sobre la cama (z = 0, en fila en X, orientación original) como `cupon_<pieza>` (`_zN` con varias zonas) en un documento NUEVO «Cupón — <nombre>». Responde `{id_nuevo, nombre, descarga, piezas: [{nombre, de, bbox}], zonas: [{piezas, pares: [{a, b, dist}], caja}]}` (+ `zonas_mas`, `errores`). El original no se toca. `documents.crear_documento_desde_formas` registra un documento desde formas build123d en proceso.
+- MCP: herramienta nueva `cupon` (20 herramientas; añade `url_descarga`/`enlace_orca`). Tests de inventario actualizados a propósito.
+- Visor: botón «Cupón de prueba» en la barra del documento (usa la pieza seleccionada), abre el documento nuevo en una pestaña y ofrece «Abrir en Orca». `cupon.js?v=1`, `tabs.js?v=17`, `app.js?v=19`.
+- Pruebas: `tests/test_cupon.py` (6) y `tests/web/cupon.test.mjs` (4).
+
+### Fixed (fdm-B — revisión de fdm-A)
+
+- `perfil_desde_mediciones`: 422 si el ajuste sale de |a| < 2 mm / |b| < 0.5 (u offset de ranuras ≥ 2 mm); descarta claves desconocidas de `mediciones`; `material` limitado a 40 caracteres.
+
 ### Added (fdm-A — perfil de tolerancias de la impresora)
 
 - `app/perfil_fdm.py` (sin dependencias): compensación `agujero(d)`, `eje(d)`, `ranura(w)` y `ajuste(nombre, d=None)` (`M2`…`M5` `_pasante`/`_roscado`, `eje_deslizante`, `eje_presion`); ajuste lineal por mínimos cuadrados del offset sobre las mediciones (`a + b·d`). Perfil semilla Ender-3 V3 SE / 0.4 / PLA marcado `semilla: true`.
