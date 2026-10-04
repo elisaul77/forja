@@ -132,3 +132,37 @@ def test_mcp_cupon_agrega_enlace_orca(monkeypatch):
     salida = mcp_client.cupon("abc", pieza="eje", margen=3.0)
     assert enviado == {"ruta": "/documentos/abc/cupon", "json": {"pieza": "eje", "margen": 3.0}, "con_token": True}
     assert salida["enlace_orca"].startswith("orcaslicer://open?file=")
+
+
+@pytest.mark.parametrize("crudo", [
+    '{"caja": {"min": [NaN, 0, 0], "max": [1, 1, 1]}}',
+    '{"caja": {"min": [0, 0, 0], "max": [Infinity, 1, 1]}}',
+    '{"caja": {"min": [0, 0, -Infinity], "max": [1, 1, 1]}}',
+    '{"caja": {"min": [0, 0, 0], "max": [1500, 1, 1]}}',
+])
+def test_cupon_caja_no_finita_o_enorme_422(ensamble, crudo):
+    h = {**_headers(), "Content-Type": "application/json"}
+    resp = client.post(f"/documentos/{ensamble}/cupon", content=crudo, headers=h)
+    assert resp.status_code == 422, resp.text
+
+
+def test_colocar_envuelve_filas_y_avisa():
+    from build123d import Box
+
+    recortes = [(f"p{i}", f"p{i}", Box(60, 30, 10)) for i in range(5)]
+    colocados = cupon.colocar(recortes)
+    bbs = [f.bounding_box() for _n, _o, f in colocados]
+    xs = [v for b in bbs for v in (b.min.X, b.max.X)]
+    ys = [v for b in bbs for v in (b.min.Y, b.max.Y)]
+    assert max(xs) - min(xs) <= cupon.ANCHO_FILA_MM
+    assert max(ys) - min(ys) == pytest.approx(65.0, abs=1e-6)  # 2 filas: 30 + 5 + 30
+    assert (min(xs) + max(xs)) / 2 == pytest.approx(110.0, abs=1e-6)
+    assert all(b.min.Z == pytest.approx(0.0, abs=1e-6) for b in bbs)
+    for i in range(len(bbs)):
+        for j in range(i + 1, len(bbs)):
+            a, b = bbs[i], bbs[j]
+            assert a.max.X <= b.min.X + 1e-6 or b.max.X <= a.min.X + 1e-6 or a.max.Y <= b.min.Y + 1e-6 or b.max.Y <= a.min.Y + 1e-6
+    assert cupon.avisos_colocacion(colocados) == []
+    grande = cupon.colocar([("g", "g", Box(250, 10, 5))])
+    avisos = cupon.avisos_colocacion(grande)
+    assert avisos and avisos[0].startswith("g: 250x10")

@@ -40,7 +40,7 @@ export function crearBotonCupon(doc, opciones) {
     const token = (obtenerToken() || "").trim();
     if (!token) { mostrar("Operación cancelada: no se proporcionó la clave de edición", true); return; }
     boton.disabled = true;
-    mostrar("Generando cupón de prueba…", false);
+    mostrar("Generando cupón de prueba… puede tardar (hasta ~2 min en ensambles grandes).", false);
     try {
       const resp = await (fetchFn || fetch)(`/documentos/${encodeURIComponent(id)}/cupon`, {
         method: "POST",

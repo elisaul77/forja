@@ -6,8 +6,10 @@ closer than ``holgura_max`` (bbox prefilter shared with
 `checks/colisiones.py`, then one exact ``Shape.distance`` per candidate
 pair) and returns a box of interest per pair; overlapping boxes are merged.
 `recortar` intersects each implicated solid with its zone box and lays the
-results out on the bed (z min = 0, side by side along X, original
-orientation). The REST route creates a NEW document — the source document is
+results out on the bed (z min = 0, rows wrapping at ``ANCHO_FILA_MM`` in X
+and advancing in Y, centred on a ``CAMA_MM`` bed, original orientation —
+re-orienting is deliberately not done: a shaft laid on its side would print
+with a non-round, less accurate profile, which defeats a fit test). The REST route creates a NEW document — the source document is
 only read.
 
 Crop box heuristic: the box is the overlap of the two bboxes (each grown by
@@ -20,6 +22,7 @@ post's footprint plus margin.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,6 +40,9 @@ SEPARACION_MM = 5.0
 TOPE_ZONAS = 8
 VOLUMEN_MIN_MM3 = 1e-3
 PREFIJO = "cupon_"
+ANCHO_FILA_MM = 220.0
+CAMA_MM = (220.0, 220.0)
+LADO_MAX_CAJA_MM = 1000.0
 
 
 def _caja_vacia(c: list[float]) -> bool:
@@ -166,14 +172,51 @@ def recortar(grupos: list[tuple], zonas: list[dict[str, Any]], todas: bool = Fal
             forma = partes[0] if len(partes) == 1 else Compound(children=partes)
             recortes.append((_nombre_cupon(nombre, f"_z{k}" if varias else "", usados), nombre, forma))
 
-    colocados = []
-    cursor = 0.0
-    for nombre, origen, forma in recortes:
+    return colocar(recortes)
+
+
+def colocar(recortes: list[tuple[str, str, Any]]) -> list[tuple[str, str, Any]]:
+    """Grid layout: rows wrap at ``ANCHO_FILA_MM`` along X, advance in Y
+    (``SEPARACION_MM`` gaps), z min = 0; the whole grid is centred on the
+    bed when it fits, otherwise starts at the origin."""
+    from build123d import Pos
+
+    pos: list[tuple[float, float]] = []
+    x = y = alto_fila = 0.0
+    ancho_total = 0.0
+    for _n, _o, forma in recortes:
         bb = forma.bounding_box()
-        forma = Pos(cursor - bb.min.X, -bb.min.Y, -bb.min.Z) * forma
-        cursor += (bb.max.X - bb.min.X) + SEPARACION_MM
+        dx, dy = bb.max.X - bb.min.X, bb.max.Y - bb.min.Y
+        if x > 0 and x + dx > ANCHO_FILA_MM:
+            x, y, alto_fila = 0.0, y + alto_fila + SEPARACION_MM, 0.0
+        pos.append((x, y))
+        ancho_total = max(ancho_total, x + dx)
+        x += dx + SEPARACION_MM
+        alto_fila = max(alto_fila, dy)
+    fondo_total = y + alto_fila
+    ox = (CAMA_MM[0] - ancho_total) / 2 if ancho_total <= CAMA_MM[0] else 0.0
+    oy = (CAMA_MM[1] - fondo_total) / 2 if fondo_total <= CAMA_MM[1] else 0.0
+    colocados = []
+    for (nombre, origen, forma), (px, py) in zip(recortes, pos):
+        bb = forma.bounding_box()
+        forma = Pos(ox + px - bb.min.X, oy + py - bb.min.Y, -bb.min.Z) * forma
         colocados.append((nombre, origen, forma))
     return colocados
+
+
+def avisos_colocacion(colocados: list[tuple[str, str, Any]]) -> list[str]:
+    avisos = []
+    xs, ys = [], []
+    for nombre, _o, forma in colocados:
+        bb = forma.bounding_box()
+        dx, dy = bb.max.X - bb.min.X, bb.max.Y - bb.min.Y
+        xs += [bb.min.X, bb.max.X]
+        ys += [bb.min.Y, bb.max.Y]
+        if dx > CAMA_MM[0] or dy > CAMA_MM[1]:
+            avisos.append(f"{nombre}: {dx:.0f}x{dy:.0f} mm en planta, no cabe en {CAMA_MM[0]:.0f}x{CAMA_MM[1]:.0f}")
+    if xs and (max(xs) - min(xs) > CAMA_MM[0] or max(ys) - min(ys) > CAMA_MM[1]):
+        avisos.append(f"conjunto de {max(xs) - min(xs):.0f}x{max(ys) - min(ys):.0f} mm: no cabe en una cama de {CAMA_MM[0]:.0f}x{CAMA_MM[1]:.0f}")
+    return avisos
 
 
 class _CuponBody(BaseModel):
@@ -191,6 +234,10 @@ def _caja_explicita(caja: dict[str, list[float]]) -> list[float]:
     if len(mn) != 3 or len(mx) != 3:
         raise ValueError("caja debe ser {min: [x, y, z], max: [x, y, z]} en mm")
     c = [mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]]
+    if not all(math.isfinite(v) for v in c):
+        raise ValueError("caja con valores no finitos (NaN o infinito)")
+    if any(abs(v) > 1e6 for v in c) or any(c[2 * e + 1] - c[2 * e] > LADO_MAX_CAJA_MM for e in range(3)):
+        raise ValueError(f"caja demasiado grande: cada lado debe medir como mucho {LADO_MAX_CAJA_MM:.0f} mm")
     if _caja_vacia(c):
         raise ValueError("caja vacia: cada max debe ser mayor que su min")
     return c
@@ -210,16 +257,20 @@ def crear_cupon(doc_id: str, body: _CuponBody) -> dict[str, Any]:
     """New document «Cupón — <nombre>» with the fit zones of ``doc_id``
     cropped and laid on the bed. The source document is never modified."""
     import documents
+    import parametros
     from kernel import b123d_kernel
 
     registro = documents._registry.get(doc_id)
     if registro is None:
         raise HTTPException(status_code=404, detail="documento no encontrado")
-    ruta = documents._ruta_step_o_404(doc_id)
-    entradas = solids.cargar(doc_id)
-    if not entradas:
-        raise HTTPException(status_code=400, detail="este documento no tiene desglose de solidos")
-    shape = b123d_kernel.import_from_step(ruta)
+    # Read STEP + solids under the per-document lock, then release it: the
+    # long booleans below work on the in-memory copy only.
+    with parametros.bloqueo(doc_id):
+        ruta = documents._ruta_step_o_404(doc_id)
+        entradas = solids.cargar(doc_id)
+        if not entradas:
+            raise HTTPException(status_code=400, detail="este documento no tiene desglose de solidos")
+        shape = b123d_kernel.import_from_step(ruta)
     grupos, _inciertos = solids.solidos_por_indice(shape, entradas)
     nombres = {g[0] for g in grupos}
     if body.pieza is not None and body.pieza not in nombres:
@@ -261,6 +312,9 @@ def crear_cupon(doc_id: str, body: _CuponBody) -> dict[str, Any]:
     }
     if zonas_mas:
         salida["zonas_mas"] = zonas_mas
+    avisos = avisos_colocacion(colocados)
+    if avisos:
+        salida["avisos"] = avisos[:10]
     if errores:
         salida["errores"] = errores[:10]
     return salida

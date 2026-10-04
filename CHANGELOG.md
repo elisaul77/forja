@@ -7,6 +7,14 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (fdm-B — ronda de revisión)
+
+- `cupon._caja_explicita`: rechaza con 422 valores no finitos (NaN/±Infinity en JSON crudo) y lados de más de 1000 mm (`LADO_MAX_CAJA_MM`).
+- Colocación en cuadrícula (`cupon.colocar`): filas que envuelven a 220 mm en X (`ANCHO_FILA_MM`), avanzan en Y con 5 mm de separación, centradas en una cama de 220×220 cuando caben. Respuesta con `avisos: [...]` (aditivo) si una pieza o el conjunto no cabe en 220×220. Sin reorientar a propósito: un eje tumbado pierde redondez y falsea la prueba de encaje.
+- Lectura del STEP y `solids.cargar` bajo `parametros.bloqueo(doc_id)`; el candado se suelta antes de los booleanos (trabajan sobre la copia en memoria).
+- Visor: el aviso de progreso dice que puede tardar hasta ~2 min. `cupon.js?v=2`, `tabs.js?v=18`, `app.js?v=20`.
+- Pruebas: +5 en `tests/test_cupon.py` (NaN, Infinity, -Infinity, lado 1500 → 422; cuadrícula + avisos).
+
 ### Added (fdm-B — cupones de prueba)
 
 - `app/cupon.py`: `POST /documentos/{id}/cupon` (token) con `{pieza?, holgura_max? (1 mm, 0–5), margen? (4 mm, 0–20), caja? {min, max}}`. Detecta parejas de sólidos de distinto nombre a menos de `holgura_max` (prefiltro de cajas de `checks/distancia.py` + `Shape.distance`), calcula una caja de interés por pareja (solape + margen; un lado se completa hasta el final de la pareja solo si quedaría menos de `margen` fuera, así un buje conserva su pared y el eje se corta a su largo), fusiona las cajas que se solapan, recorta cada pieza y las deja sobre la cama (z = 0, en fila en X, orientación original) como `cupon_<pieza>` (`_zN` con varias zonas) en un documento NUEVO «Cupón — <nombre>». Responde `{id_nuevo, nombre, descarga, piezas: [{nombre, de, bbox}], zonas: [{piezas, pares: [{a, b, dist}], caja}]}` (+ `zonas_mas`, `errores`). El original no se toca. `documents.crear_documento_desde_formas` registra un documento desde formas build123d en proceso.

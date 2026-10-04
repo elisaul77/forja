@@ -6,7 +6,7 @@ import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
-import { crearBotonCupon } from "./cupon.js?v=1";
+import { crearBotonCupon } from "./cupon.js?v=2";
 import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js";
 import { renderPiecesPanel } from "./pieces.js?v=8";
 import { construirAnclas } from "./orca.js?v=3";
