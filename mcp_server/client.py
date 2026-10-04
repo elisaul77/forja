@@ -454,6 +454,61 @@ def restaurar(doc_id: str, snapshot: str) -> dict[str, Any]:
     return resp.json()
 
 
+_ACCIONES_RAMA = ("listar", "crear", "cambiar", "renombrar", "borrar", "pasos", "comparar")
+
+
+def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None = None,
+         a: str | None = None) -> Any:
+    """G2/G3: thin wrapper over `app/ramas.py`'s REST routes; mutations
+    carry the token. Path segments are URL-quoted; the server validates
+    every branch name and sha."""
+    from urllib.parse import quote
+
+    if accion not in _ACCIONES_RAMA:
+        return {"error": True, "mensaje": f"accion desconocida: {accion!r} (usa {'|'.join(_ACCIONES_RAMA)})"}
+    base = f"/documentos/{quote(doc_id, safe='')}/ramas"
+    q = (lambda v: quote(v or "", safe=""))
+    timeout = _heavy_timeout() if accion in ("cambiar", "comparar") else _TIMEOUT
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=timeout) as c:
+        if accion == "listar":
+            resp = c.get(base)
+        elif accion == "pasos":
+            if nombre is None:
+                actual = c.get(base)
+                if actual.status_code >= 400:
+                    return {"error": True, "mensaje": _detalle(actual)}
+                nombre = actual.json().get("activa", "main")
+            resp = c.get(f"{base}/{q(nombre)}/pasos")
+        elif accion == "comparar":
+            if not desde:
+                return {"error": True, "mensaje": "comparar necesita desde (A) y opcionalmente a (B, por defecto la rama activa)"}
+            destino = a
+            if not destino:
+                actual = c.get(base)
+                if actual.status_code >= 400:
+                    return {"error": True, "mensaje": _detalle(actual)}
+                destino = actual.json().get("activa", "main")
+            resp = c.get(f"/documentos/{quote(doc_id, safe='')}/comparar", params={"a": desde, "b": destino})
+        elif not nombre:
+            return {"error": True, "mensaje": f"{accion} necesita nombre"}
+        elif accion == "crear":
+            resp = c.post(base, json={"nombre": nombre, "desde": desde}, headers=_headers_con_token())
+        elif accion == "cambiar":
+            resp = c.post(f"{base}/{q(nombre)}/activar", headers=_headers_con_token())
+        elif accion == "renombrar":
+            if not a:
+                return {"error": True, "mensaje": "renombrar necesita a (nombre nuevo)"}
+            resp = c.post(f"{base}/{q(nombre)}/renombrar", json={"a": a}, headers=_headers_con_token())
+        else:  # borrar
+            resp = c.delete(f"{base}/{q(nombre)}", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    datos = resp.json()
+    if accion == "cambiar":
+        return {k: datos.get(k) for k in ("rama", "sha_corto", "revision", "volumen", "solidos", "valido")}
+    return datos
+
+
 def eliminar_documento(doc_id: str) -> dict[str, Any]:
     """Permanently delete a document (file + notes + history). Token-
     protected (ADR-0005); not an MCP tool — used by tests/tooling that

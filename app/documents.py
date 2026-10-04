@@ -1008,8 +1008,10 @@ def _guardar_cache_malla(doc_id: str, revision: str, components: bool, contenido
 
 
 def _borrar_cache_malla(doc_id: str) -> None:
-    for viejo in _CACHE_MALLAS.glob(f"{doc_id}.*"):
-        viejo.unlink(missing_ok=True)
+    # G3: the per-step meshes of the compare view live next door.
+    for cache in (_CACHE_MALLAS, _CACHE_MALLAS.parent / "comparar"):
+        for viejo in cache.glob(f"{doc_id}.*"):
+            viejo.unlink(missing_ok=True)
 
 
 @router.get("/documentos/{doc_id}/malla")

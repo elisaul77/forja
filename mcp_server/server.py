@@ -1,7 +1,7 @@
 """Forja MCP server: one tool registry, two transports (ADR-0004/0005/0008).
 
 `crear_servidor()` is the single source of truth for the server metadata and
-the 19 tool registrations. Both transports build from it:
+the 21 tool registrations. Both transports build from it:
 
 - **stdio** (fallback): `python -m mcp_server.server`, launched by Claude
   Code via `docker exec -i forja python -m mcp_server.server` -- a
@@ -29,7 +29,7 @@ from mcp_server import tools
 
 
 def crear_servidor() -> MCPServer:
-    """Build a new `MCPServer` with Forja's metadata and all 20 tools
+    """Build a new `MCPServer` with Forja's metadata and all 21 tools
     registered. Called once per process for stdio (module-level `mcp`) and
     once per FastAPI lifespan for HTTP (a `StreamableHTTPSessionManager`
     can only `run()` once, so each lifespan needs its own instance)."""
@@ -50,7 +50,8 @@ def crear_servidor() -> MCPServer:
             "los tokens de una imagen, que ademas es ambigua en profundidad. "
             "Notas/pines y pizarra: crear_nota/leer_notas sobre un documento; "
             "cada cambio aceptado queda en leer_historial y se puede revertir "
-            "con restaurar. Piezas moviles: 'ensamble' define articulaciones "
+            "con restaurar; 'rama' crea/cambia/compara ramas de diseño "
+            "(cada cambio deja un paso con el estado completo). Piezas moviles: 'ensamble' define articulaciones "
             "(fijo|giro|deslizamiento) entre solidos con nombre, aplica una "
             "pose absoluta (valores) o quita las articulaciones conservando la "
             "posicion; 'suspension' consulta el simulador del mostertruck por "
@@ -80,6 +81,7 @@ def crear_servidor() -> MCPServer:
     servidor.tool(name="borrar_nota")(tools.borrar_nota)
     servidor.tool(name="leer_historial")(tools.leer_historial)
     servidor.tool(name="restaurar")(tools.restaurar)
+    servidor.tool(name="rama")(tools.rama)
     servidor.tool(name="ensamble")(tools.ensamble)
     servidor.tool(name="suspension")(tools.suspension)
     servidor.tool(name="puentes")(tools.puentes)

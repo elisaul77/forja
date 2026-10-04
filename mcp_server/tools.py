@@ -407,6 +407,30 @@ def restaurar(id: str, snapshot: str) -> dict[str, Any]:
     return client.restaurar(id, snapshot)
 
 
+def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = None,
+         a: str | None = None) -> Any:
+    """Ramas y pasos de un diseño (Plan G). Cada cambio aceptado deja un
+    «paso» con el estado COMPLETO (geometria, script con su texto,
+    parametros, materiales, notas, ensamble) en la rama activa.
+
+    accion:
+    - `listar`: `{activa, ramas: [{nombre, activa, pasos, ultimo}]}`.
+    - `crear`: rama `nombre` desde el estado actual o desde `desde`
+      (rama o sha_corto de un paso). No cambia de rama.
+    - `cambiar`: materializa la rama `nombre` en el documento (el estado
+      actual queda guardado; se deshace con `restaurar` o volviendo).
+    - `renombrar`: `nombre` -> `a` (main no). `borrar`: `nombre` (ni la
+      activa ni main).
+    - `pasos`: `[{sha_corto, fecha, autor, mensaje, revision}]` de la rama
+      `nombre` (por defecto la activa), mas reciente primero.
+    - `comparar`: diff de `desde` (A) contra `a` (B, por defecto la rama
+      activa); A/B = rama o sha_corto. Devuelve piezas
+      {nombre: añadida|quitada|cambiada|igual}, volumen {a,b,delta,pct},
+      bbox delta, parametros y materiales cambiados (antes/despues).
+    Nombres de rama: letras, numeros, - y _ (max 48)."""
+    return client.rama(id, accion, nombre, desde, a)
+
+
 def captura(
     id: str,
     azimut: float = 45.0,
