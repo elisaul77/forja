@@ -7,6 +7,14 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (fdm-A — perfil de tolerancias de la impresora)
+
+- `app/perfil_fdm.py` (sin dependencias): compensación `agujero(d)`, `eje(d)`, `ranura(w)` y `ajuste(nombre, d=None)` (`M2`…`M5` `_pasante`/`_roscado`, `eje_deslizante`, `eje_presion`); ajuste lineal por mínimos cuadrados del offset sobre las mediciones (`a + b·d`). Perfil semilla Ender-3 V3 SE / 0.4 / PLA marcado `semilla: true`.
+- `app/perfiles.py`: perfiles en `documentos_data/.perfiles/<nombre>.json` (escritura atómica tmp+replace) y perfil activo en `.perfiles/.activo`; rutas `GET /perfiles`, `GET /perfiles/{nombre}` (`activo` = alias), `POST /perfiles` (token; refit desde `mediciones`, `activar`) y `POST /perfiles/probeta` (token) que crea el documento «Calibración de tolerancias» (74×54 mm: agujeros 3/5/8 verticales y horizontales, ejes 3/5/8, ranuras 2/3/5, holguras .1–.5 con pin suelto de 5 mm, rótulos en relieve de 7 segmentos).
+- Sandbox: cada script recibe el perfil activo como global `PERFIL` (un dict propio o el nombre de un perfil en `variables["PERFIL"]` lo sustituye) y las funciones `agujero`/`eje`/`ranura`/`ajuste`. Documentado en `ejecutar_script` (MCP) sin cambiar su contrato.
+- Visor: botón y diálogo «Perfil de impresora» (resumen del activo con medidas a modelar, generar probeta, capturar mediciones). `app.js?v=18`, `perfil.js?v=1`, `forja-base.css?v=11`.
+- Pruebas: `tests/test_perfiles.py` (10) y `tests/web/perfil.test.mjs` (2).
+
 ### Added (F11.1–F11.2 — visor en vivo)
 
 - Revisión estable de cada documento, incluida en fichas y mallas; el encabezado STEP variable no provoca una actualización falsa.
