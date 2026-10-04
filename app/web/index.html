@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Forja</title>
 <link rel="stylesheet" href="/static/css/forja-tokens.css?v=7">
-<link rel="stylesheet" href="/static/css/forja-base.css?v=10">
+<link rel="stylesheet" href="/static/css/forja-base.css?v=11">
 <script type="importmap">
 {
   "imports": {
@@ -31,6 +31,7 @@
         <div id="fj-lista-documentos"></div>
       </div>
       <button id="fj-btn-galeria" class="fj-btn" type="button">Galería</button>
+      <button id="fj-btn-perfil" class="fj-btn" type="button" aria-haspopup="dialog">Perfil de impresora</button>
     </div>
   </header>
 
@@ -117,6 +118,17 @@
     </form>
   </dialog>
 
+  <dialog id="fj-dialogo-perfil" class="fj-dialogo fj-dialogo--perfil" aria-labelledby="fj-perfil-titulo">
+    <div class="fj-dialogo__form">
+      <div class="fj-perfil__cabecera">
+        <h3 id="fj-perfil-titulo">Perfil de impresora</h3>
+        <button type="button" id="fj-perfil-cerrar" class="fj-btn fj-btn--ghost fj-btn--icon" aria-label="Cerrar">×</button>
+      </div>
+      <div id="fj-perfil-cuerpo"></div>
+      <p id="fj-perfil-estado" class="fj-perfil__estado" role="status" aria-live="polite"></p>
+    </div>
+  </dialog>
+
   <footer class="fj-statusbar">
     <div class="fj-statusbar__item">
       <span class="fj-statusbar__label">Nombre</span>
@@ -141,6 +153,6 @@
   </footer>
 </div>
 
-<script type="module" src="/static/js/app.js?v=17"></script>
+<script type="module" src="/static/js/app.js?v=18"></script>
 </body>
 </html>

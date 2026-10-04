@@ -4,6 +4,7 @@ import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocum
 import { createLibrary, latestStep } from "./library.js?v=11";
 import { TabManager } from "./tabs.js?v=16";
 import { startLive } from "./live.js?v=11";
+import { iniciarPanelPerfil } from "./perfil.js?v=1";
 
 const tabs = new TabManager({
   tabsEl: document.getElementById("fj-tabs"),
@@ -97,6 +98,11 @@ const library = createLibrary({
   },
 });
 document.getElementById('fj-btn-galeria').onclick = () => library.show();
+iniciarPanelPerfil({
+  boton: document.getElementById("fj-btn-perfil"),
+  dialogo: document.getElementById("fj-dialogo-perfil"),
+  abrirDocumento: id => withLoading("Abriendo la probeta…", () => abrirDocumentoPorId(id)),
+});
 
 startLive({
   tabs,
