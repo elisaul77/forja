@@ -120,6 +120,20 @@ def ejecutar_script(
     M2.5, M4, M5), y `"eje_deslizante"`/`"eje_presion"` (con `d` = diametro
     del eje devuelve el agujero a modelar; sin `d`, la holgura en mm). Ej.:
     `Cylinder(agujero(3) / 2, 10)`. Perfiles: `GET /perfiles`.
+
+    Arreglos FDM (tambien inyectados, con el mismo `PERFIL`):
+    `agujero_gota(d, largo, eje="X"|"Y", centro=(x,y,z))` solido a RESTAR:
+    agujero horizontal con techo en punta a 45 grados (sin soporte), ya
+    compensado; `chaflan_base(pieza, alto=0.5)` chaflan en las aristas de
+    la cara apoyada (pata de elefante; si falla devuelve la pieza igual y
+    deja un aviso en `AVISOS_FDM`); `puente_sacrificio(d, z, centro=(x,y))`
+    disco de 1 capa a SUMAR sobre un contrataladro impreso boca abajo (se
+    perfora luego); `partir_para_cama(pieza, cama=(220,220,250),
+    union="pasadores"|"cola_milano", nombre="pieza")` parte con planos lo
+    que no cabe y devuelve `{"<nombre>_parte1": ..., "<nombre>_pasador1":
+    ...}` listo para `resultado` (agujeros compensados con holgura
+    `eje_presion`; pasadores de pie al lado). Ej.:
+    `resultado = partir_para_cama(caja - agujero_gota(8, 320), nombre="caja")`.
     """
     return client.ejecutar_script(
         codigo=codigo,
@@ -314,6 +328,10 @@ def check_fdm(
       -> `{min_mm, bbox, muestras}`; aristas en filo tambien aparecen.
     - `base`: area de contacto de la primera capa < 10 mm2 -> `{contacto_mm2}`.
     - `diminuto`: alguna dimension < `boquilla` -> `{dim_min_mm}`.
+
+    Si hay arreglo directo, `sugerencias: [{pieza, funcion, motivo}]`
+    nombra la funcion del script: `agujero_gota` (agujero redondo
+    horizontal) o `partir_para_cama` (no cabe en ninguna orientacion).
 
     Solo documentos STEP con solidos con nombre; si no, `{error, mensaje}`.
     """

@@ -289,6 +289,17 @@ ni caras crudas; un resumen de un cubo pesa ~200 bytes. Ver
 `~/.claude/skills/forja/SKILL.md` para la tabla completa de herramientas y
 el flujo de trabajo recomendado.
 
+### Arreglos FDM dentro del script (fdm-C)
+
+`app/fdm_ops.py` (geometría pura build123d, importada por el sandbox) se
+inyecta en cada script ligada al `PERFIL` activo: `agujero_gota` (agujero
+horizontal con techo a 45°, compensado), `chaflan_base` (pata de elefante;
+nunca rompe el script, avisa en `AVISOS_FDM`), `puente_sacrificio`
+(contrataladros boca abajo) y `partir_para_cama` (corta por planos lo que
+no cabe y une con pasadores compensados —gota si son horizontales— o colas
+de milano). `check_fdm` añade `sugerencias` con la función a usar. No hay
+"voladizos a 45° automático": reescribir caras arbitrarias no es robusto.
+
 ### Notas, pizarra, nombrado estable y versionado (Fase 4)
 
 En el visor web, cada pestaña tiene una barra de herramientas propia:

@@ -7,6 +7,14 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (fdm-C — arreglos automáticos de diseño FDM)
+
+- `app/fdm_ops.py`: `agujero_gota(d, largo, eje, centro)` (techo en punta a 45°, diámetro compensado como agujero horizontal), `chaflan_base(pieza, alto)` (aristas de la cara apoyada; si falla devuelve la pieza intacta + aviso), `puente_sacrificio(d, z, centro)` (disco de 1 altura de capa), `partir_para_cama(pieza, cama, union="pasadores"|"cola_milano", nombre)` (cortes por planos, giro 90° en Z si ahorra partes, hasta 2 pasadores por cara de corte con agujeros compensados `eje_presion`/`eje_deslizante` —gota si horizontales— y pasadores de pie al lado; cola de milano de 15° para cortes X/Y). Sin `voladizos_a_45`: no robusto en B-rep.
+- Sandbox: `bootstrap._inyectar_fdm_ops` inyecta esas funciones ligadas al `PERFIL` + `AVISOS_FDM` con `setdefault` (requiere `docker compose build`).
+- `check_fdm`: campo aditivo `sugerencias: [{pieza, funcion, motivo}]` (solo si hay): agujero redondo horizontal → `agujero_gota`; no cabe en ninguna orientación → `partir_para_cama`.
+- MCP: descripción de `ejecutar_script` y `check_fdm` (solo texto).
+- Pruebas: `tests/test_fdm_ops.py` (11).
+
 ### Fixed (fdm-B — ronda de revisión)
 
 - `cupon._caja_explicita`: rechaza con 422 valores no finitos (NaN/±Infinity en JSON crudo) y lados de más de 1000 mm (`LADO_MAX_CAJA_MM`).
