@@ -365,3 +365,15 @@ por tests). Fase 10 (abrir en OrcaSlicer desde el navegador) completada: ruta de
 descarga sin token, botones en el visor, enlace `enlace_orca` en `exportar`,
 `FORJA_PUBLIC_URL` y ADR-0011. `docker exec forja python -m pytest /tests -q` →
 459 passed; `node --test tests/web/*.test.mjs` → 21 passed.
+
+---
+
+## 📄 Licencia
+
+Distribuido bajo la licencia **MIT**. Consulta [LICENSE](LICENSE) para más detalles.
+
+Si te sirvió, considera apoyar:
+
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsors-pink?style=for-the-badge&logo=githubsponsors)](https://github.com/sponsors/elisaul77)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?style=for-the-badge&logo=paypal)](https://paypal.me/eflorezp)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow?style=for-the-badge&logo=buymeacoffee)](https://buymeacoffee.com/elisaul77)
