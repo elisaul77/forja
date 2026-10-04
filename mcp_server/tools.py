@@ -455,6 +455,12 @@ def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = No
       estaba en el paso `desde` (sha_corto); el resto queda igual. Mismo
       motor y verificacion que `traer_pieza`; deja un paso «restaurar
       pieza X a <sha>». `resultado: sin_cambios` si ya era igual.
+    - `incorporar`: mete en ESTE documento (mismo id) la geometria del
+      documento `desde` (su id): todas sus piezas o las `piezas` indicadas.
+      Destino STL: concatena la malla. Destino STEP: añade los solidos con
+      su nombre (si choca, sufijo _2, _3...); un origen STL en destino STEP
+      es error. El origen no cambia; deja el paso «incorporar <piezas>
+      desde <nombre origen>» (se deshace con `restaurar` y `snapshot_previo`).
     - `hito`: pone el hito `nombre` en el paso `desde` (por defecto el
       ultimo de la rama activa), con descripcion `a`. `hitos`: lista.
     Nombres de rama/hito: letras, numeros, - y _ (max 48)."""

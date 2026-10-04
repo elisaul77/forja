@@ -23,6 +23,7 @@ import perfiles
 import ramas
 import fusion
 import historial_grafo
+import incorporar
 import versioning
 from mcp_server.http_app import app_mcp_http
 
@@ -52,6 +53,7 @@ app.include_router(cupon.router)
 app.include_router(fusion.router)
 app.include_router(historial_grafo.router)
 app.include_router(ramas.router)
+app.include_router(incorporar.router)
 
 
 class _OrigenDelCambio:

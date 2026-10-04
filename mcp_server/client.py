@@ -457,7 +457,7 @@ def restaurar(doc_id: str, snapshot: str) -> dict[str, Any]:
 
 
 _ACCIONES_RAMA = ("listar", "crear", "cambiar", "renombrar", "borrar", "pasos", "comparar",
-                  "fusionar", "traer_pieza", "hito", "hitos", "restaurar_pieza")
+                  "fusionar", "traer_pieza", "hito", "hitos", "restaurar_pieza", "incorporar")
 
 
 def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None = None,
@@ -472,7 +472,7 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
         return {"error": True, "mensaje": f"accion desconocida: {accion!r} (usa {'|'.join(_ACCIONES_RAMA)})"}
     base = f"/documentos/{quote(doc_id, safe='')}/ramas"
     q = (lambda v: quote(v or "", safe=""))
-    timeout = _heavy_timeout() if accion in ("cambiar", "comparar", "fusionar", "traer_pieza", "restaurar_pieza") else _TIMEOUT
+    timeout = _heavy_timeout() if accion in ("cambiar", "comparar", "fusionar", "traer_pieza", "restaurar_pieza", "incorporar") else _TIMEOUT
     doc_base = f"/documentos/{quote(doc_id, safe='')}"
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=timeout) as c:
         if accion == "listar":
@@ -485,6 +485,11 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
             resp = c.post(f"{base}/fusionar", json={
                 "desde": desde, "piezas": piezas if accion == "traer_pieza" else None,
                 "estrategia": estrategia, "forzar": forzar, "simular": simular}, headers=_headers_con_token())
+        elif accion == "incorporar":
+            if not desde:
+                return {"error": True, "mensaje": "incorporar necesita desde (id del documento origen)"}
+            resp = c.post(f"{doc_base}/incorporar", json={"desde": desde, "piezas": piezas or None},
+                          headers=_headers_con_token())
         elif accion == "restaurar_pieza":
             if not desde or not piezas or len(piezas) != 1:
                 return {"error": True, "mensaje": "restaurar_pieza necesita desde (sha_corto del paso) y piezas con UN nombre"}
