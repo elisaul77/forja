@@ -850,6 +850,10 @@ def cambiar_materiales(doc_id: str, body: _MaterialesBody) -> dict[str, Any]:
         try:
             # Validate first (dry run on the merge rules) so a bad request
             # leaves neither a snapshot nor a write behind.
+            if len(body.materiales) > materiales.MAX_MATERIALES:
+                raise materiales.MaterialesInvalidos(
+                    f"demasiadas piezas (maximo {materiales.MAX_MATERIALES})"
+                )
             for nombre, valor in body.materiales.items():
                 if nombre not in nombres:
                     raise materiales.MaterialesInvalidos(f"pieza inexistente en el documento: {nombre!r}")
