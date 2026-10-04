@@ -263,6 +263,27 @@ def check_colisiones(doc_id: str, tolerancia_mm3: float = 0.5) -> dict[str, Any]
 
 
 @_heavy_operation
+def cupon(
+    doc_id: str,
+    pieza: str | None = None,
+    holgura_max: float | None = None,
+    margen: float | None = None,
+    caja: dict[str, list[float]] | None = None,
+) -> dict[str, Any]:
+    cuerpo = {k: v for k, v in (
+        ("pieza", pieza), ("holgura_max", holgura_max), ("margen", margen), ("caja", caja),
+    ) if v is not None}
+    with httpx.Client(base_url=BASE_URL, timeout=_heavy_timeout()) as c:
+        resp = c.post(f"/documentos/{doc_id}/cupon", json=cuerpo, headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    resultado = resp.json()
+    if isinstance(resultado, dict):
+        resultado.update(_enlace_orca(resultado.get("descarga")))
+    return resultado
+
+
+@_heavy_operation
 def percibir(
     doc_id: str,
     capas: str = "contactos",
@@ -289,9 +310,31 @@ def percibir(
     return resp.json()
 
 
-def parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
+def parametros(
+    doc_id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """`None` -> read the schema + current values (token-free GET); a dict
-    -> apply them (token-protected POST, re-runs the stored script)."""
+    -> apply them (token-protected POST, re-runs the stored script).
+    `materiales` (fdm-D) -> POST /materiales first (no re-run); the answer
+    then carries `materiales` (and, alone, also the read of the schema)."""
+    resultado_materiales: dict[str, Any] | None = None
+    if materiales is not None:
+        with httpx.Client(base_url=BASE_URL, timeout=_TIMEOUT) as c:
+            resp = c.post(
+                f"/documentos/{doc_id}/materiales",
+                json={"materiales": materiales},
+                headers=_headers_con_token(),
+            )
+        if resp.status_code >= 400:
+            return {"error": True, **_detalle_estructurado(resp)}
+        resultado_materiales = resp.json()["materiales"]
+    respuesta = _parametros(doc_id, valores)
+    if resultado_materiales is not None and not respuesta.get("error"):
+        respuesta["materiales"] = resultado_materiales
+    return respuesta
+
+
+def _parametros(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
     with httpx.Client(
         base_url=BASE_URL, timeout=_TIMEOUT if valores is None else _TIMEOUT + _SCRIPT_TIMEOUT_MARGIN
     ) as c:

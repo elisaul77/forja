@@ -1,13 +1,15 @@
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=11";
+import { ForjaViewer } from "./viewer.js?v=12";
 import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
-import { obtenerDocumento, obtenerMallaConRevision } from "./api.js?v=11";
+import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
+import { crearBotonCupon } from "./cupon.js?v=2";
 import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js";
-import { renderPiecesPanel } from "./pieces.js?v=8";
+import { renderPiecesPanel } from "./pieces.js?v=9";
+import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
 import { construirAnclas } from "./orca.js?v=3";
 import { createRefreshScheduler } from "./live-core.js?v=11";
 
@@ -30,6 +32,8 @@ export class TabManager {
     this.statusEls = statusEls;
     this.tabs = new Map(); // docId -> { boton, contenedor, viewer, ficha, notas, historial }
     this.activeId = null;
+    // Lo asigna app.js: abre (o activa) la pestaña de un documento por id.
+    this.abrirDocumento = null;
 
     // Panel lateral (Fase 4), compartido entre pestañas: muestra siempre
     // los datos de la pestaña activa.
@@ -88,7 +92,7 @@ export class TabManager {
     renderizarPanelHistorial(entrada.historial);
     renderizarPanelParametros(entrada.parametros);
     if (this.panelActivo === "ensamble") renderizarPanelEnsamble(entrada.ensamble);
-    if (this.panelActivo === "piezas") renderPiecesPanel(entrada.viewer, entrada.ficha.nombre);
+    if (this.panelActivo === "piezas") renderPiecesPanel(entrada.viewer, entrada.ficha.nombre, entrada.materiales);
   }
 
   /** Abre (o reactiva si ya existe) una pestaña para el documento dado. */
@@ -141,7 +145,8 @@ export class TabManager {
     viewer.canSelectPiece = () => !notas.modo;
     viewer.onPieceSelection = () => {
       if (this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "piezas") {
-        renderPiecesPanel(viewer, this.tabs.get(ficha.id).ficha.nombre);
+        const actual = this.tabs.get(ficha.id);
+        renderPiecesPanel(viewer, actual.ficha.nombre, actual.materiales);
       }
     };
     const historial = new ForjaHistorialControlador(ficha.id, async (registroActualizado) => {
@@ -205,6 +210,28 @@ export class TabManager {
       feedback.textContent = texto;
     }, () => viewer.selectedPiece);
     toolbar.append(...anclasOrca);
+    const btnCupon = crearBotonCupon(document, {
+      id: ficha.id,
+      origin: window.location.origin,
+      obtenerPieza: () => viewer.selectedPiece,
+      obtenerToken: obtenerTokenSesion,
+      abrirDocumento: (id) => this.abrirDocumento?.(id),
+      mostrar: (texto, esError, enlace) => {
+        const feedback = document.getElementById("fj-feedback");
+        if (!feedback) return;
+        feedback.hidden = false;
+        feedback.classList.toggle("is-error", Boolean(esError));
+        feedback.textContent = texto;
+        if (enlace) {
+          const a = document.createElement("a");
+          a.className = "fj-btn";
+          a.href = enlace.href;
+          a.textContent = enlace.texto;
+          feedback.append(" ", a);
+        }
+      },
+    });
+    toolbar.append(btnCupon);
     viewer.onSeleccion = () => anclasOrca.refrescar?.();
     contenedor.appendChild(toolbar);
 
@@ -249,6 +276,13 @@ export class TabManager {
 
     const entry = { boton, contenedor, viewer, ficha, notas, historial, parametros, ensamble, btnParametros,
       revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
+    entry.materiales = {
+      materiales: {},
+      guardar: async cambios => {
+        const respuesta = await guardarMateriales(ficha.id, cambios);
+        this._aplicarMateriales(entry, respuesta.materiales);
+      },
+    };
     boton.dataset.revision = revision ?? "";
     entry.scheduler = createRefreshScheduler({
       canRun: () => this.activeId === ficha.id && !document.hidden && !entry.localRefresh && !notas.ocupado() && !parametros.ocupado(),
@@ -276,7 +310,7 @@ export class TabManager {
     entry.scheduler.setShown(revision);
     this.tabs.set(ficha.id, entry);
     try {
-      await Promise.all([notas.cargarInicial(), historial.cargarInicial(), parametros.cargarInicial(), ensamble.cargarInicial()]);
+      await Promise.all([notas.cargarInicial(), historial.cargarInicial(), parametros.cargarInicial(), ensamble.cargarInicial(), this._cargarMateriales(entry)]);
     } catch (error) {
       this.cerrar(ficha.id);
       throw error;
@@ -322,7 +356,7 @@ export class TabManager {
       entrada.viewer.cargarMallaSTL(malla.buffer);
       this._setRevision(entrada, malla.revision);
       entrada.notas.invalidarCaras();
-      await Promise.all([entrada.notas.recargar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial()]);
+      await Promise.all([entrada.notas.recargar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       entrada.btnParametros.hidden = !entrada.parametros.tieneParametros();
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
@@ -351,7 +385,7 @@ export class TabManager {
       entrada.notas.invalidarCaras();
       const msMalla = performance.now() - inicio;
       entrada.ficha = registroActualizado;
-      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ensamble.cargarInicial()]);
+      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         if (!this.panel.hidden && this.panelActivo !== "parametros") this._renderizarPanelPestanaActiva();
@@ -360,6 +394,24 @@ export class TabManager {
     } finally {
       entrada.localRefresh = false;
       entrada.scheduler.flush(true);
+    }
+  }
+
+  /** fdm-D: materiales por pieza (colores en el visor + panel Piezas).
+   * Un fallo de red deja los anteriores: nunca rompe la pestaña. */
+  async _cargarMateriales(entry) {
+    try {
+      const respuesta = await obtenerMateriales(entry.ficha.id);
+      this._aplicarMateriales(entry, respuesta.materiales);
+    } catch { /* se reintenta con el próximo cambio */ }
+  }
+
+  _aplicarMateriales(entry, materiales) {
+    if (this.tabs.get(entry.ficha.id) !== entry) return;
+    entry.materiales.materiales = materiales ?? {};
+    entry.viewer.setPieceColors(coloresDePiezas(entry.materiales.materiales));
+    if (this.activeId === entry.ficha.id && !this.panel.hidden && this.panelActivo === "piezas") {
+      renderPiecesPanel(entry.viewer, entry.ficha.nombre, entry.materiales);
     }
   }
 
@@ -376,7 +428,7 @@ export class TabManager {
     entry.notas.invalidarCaras();
     entry.ficha = ficha;
     this._setRevision(entry, mesh.revision);
-    await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ensamble.cargarInicial()]);
+    await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
     if (!entry.parametros.ocupado()) await entry.parametros.cargarInicial();
     if (this.tabs.get(docId) !== entry) return;
     entry.btnParametros.hidden = !entry.parametros.tieneParametros();
@@ -407,6 +459,7 @@ export class TabManager {
       if (tag === "historial") tasks.push(entry.historial.cargarInicial());
       if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial());
       if (tag === "parametros") tasks.push(entry.parametros.cargarInicial());
+      if (tag === "materiales") tasks.push(this._cargarMateriales(entry));
     }
     if (!tasks.length) return;
     entry.panelLoading = true;
@@ -423,8 +476,8 @@ export class TabManager {
     for (const [id, entry] of this.tabs) {
       if (!known.has(id)) this.documentoEliminado(id);
       else this.aplicarCambioExterno(id,
-        known.get(id) === entry.revision ? ["notas", "historial", "parametros", "ensamble"]
-          : ["geometria", "notas", "historial", "parametros", "ensamble"], known.get(id));
+        known.get(id) === entry.revision ? ["notas", "historial", "parametros", "ensamble", "materiales"]
+          : ["geometria", "notas", "historial", "parametros", "ensamble", "materiales"], known.get(id));
     }
   }
 

@@ -82,6 +82,7 @@ def test_tool_names_match_skill_table():
         "ensamble",
         "suspension",
         "puentes",
+        "cupon",  # fdm-B
     }
     registradas = {tool.name for tool in mcp_instance._tool_manager.list_tools()}  # noqa: SLF001
     assert registradas == esperadas

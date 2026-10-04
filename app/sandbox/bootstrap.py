@@ -209,6 +209,72 @@ def _reportar_error_script(exc: BaseException, codigo: str) -> None:
     print("__FORJA_ERROR__" + json.dumps(detalle), file=sys.stderr)
 
 
+def _inyectar_perfil(namespace: dict) -> None:
+    """fdm-A: bind ``agujero(d)``, ``eje(d)``, ``ranura(w)`` and
+    ``ajuste(nombre, d=None)`` to the injected ``PERFIL`` (seed if absent).
+    Names the caller already passed as variables are left alone."""
+    import functools
+
+    import perfil_fdm
+
+    perfil = namespace.get("PERFIL")
+    if not isinstance(perfil, dict):
+        perfil = dict(perfil_fdm.SEMILLA)
+        namespace["PERFIL"] = perfil
+
+    def agujero(d, horizontal=False):
+        return perfil_fdm.agujero(d, perfil, horizontal=horizontal)
+
+    funciones = {
+        "agujero": agujero,
+        "eje": functools.partial(perfil_fdm.eje, perfil=perfil),
+        "ranura": functools.partial(perfil_fdm.ranura, perfil=perfil),
+        "ajuste": lambda nombre, d=None: perfil_fdm.ajuste(nombre, d, perfil),
+    }
+    for nombre, funcion in funciones.items():
+        namespace.setdefault(nombre, funcion)
+    _inyectar_fdm_ops(namespace, perfil)
+
+
+def _inyectar_fdm_ops(namespace: dict, perfil: dict) -> None:
+    """fdm-C: bind the design fixes of ``fdm_ops`` (``agujero_gota``,
+    ``chaflan_base``, ``puente_sacrificio``, ``partir_para_cama``) to the
+    same ``PERFIL``, plus ``AVISOS_FDM`` (their warnings). Never overrides
+    names the caller passed. ``fdm_ops`` (build123d) is imported on first
+    use only: importing it here would alter the child's environment and
+    stderr before the user's script runs."""
+    avisos: list = []
+
+    def _ops():
+        import fdm_ops
+
+        return fdm_ops
+
+    def agujero_gota(d, largo, eje="X", centro=(0.0, 0.0, 0.0), compensar=True):
+        return _ops().agujero_gota(d, largo, eje=eje, centro=centro, perfil=perfil, compensar=compensar)
+
+    def chaflan_base(pieza, alto=0.5):
+        return _ops().chaflan_base(pieza, alto, avisos=avisos)
+
+    def puente_sacrificio(d, z, centro=(0.0, 0.0), capas=1, solape=0.4):
+        return _ops().puente_sacrificio(d, z, centro=centro, perfil=perfil, capas=capas, solape=solape)
+
+    def partir_para_cama(pieza, cama=(220.0, 220.0, 250.0), union="pasadores", nombre="pieza",
+                         d_pasador=None, prof=None, holgura="eje_presion"):
+        return _ops().partir_para_cama(pieza, cama=cama, union=union, nombre=nombre, perfil=perfil,
+                                       d_pasador=d_pasador, prof=prof, holgura=holgura, avisos=avisos)
+
+    funciones = {
+        "agujero_gota": agujero_gota,
+        "chaflan_base": chaflan_base,
+        "puente_sacrificio": puente_sacrificio,
+        "partir_para_cama": partir_para_cama,
+        "AVISOS_FDM": avisos,
+    }
+    for nombre, funcion in funciones.items():
+        namespace.setdefault(nombre, funcion)
+
+
 def ejecutar(trabajo: Path) -> int:
     peticion = json.loads((trabajo / protocolo.PETICION).read_text())
     codigo = peticion["codigo"]
@@ -219,6 +285,7 @@ def ejecutar(trabajo: Path) -> int:
     sys.argv = [NOMBRE_SCRIPT, str(trabajo / protocolo.PETICION), str(salida)]
 
     namespace = dict(variables)
+    _inyectar_perfil(namespace)
     try:
         exec(compile(codigo, NOMBRE_SCRIPT, "exec"), namespace)
     except Exception as exc:  # noqa: BLE001 - reported compactly to the server

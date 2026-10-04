@@ -7,6 +7,51 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (fdm-D — material/filamento por pieza con nombre)
+
+- Scripts: dict literal `MATERIALES = {"tapa": "PETG negro", "junta": {"material": "TPU", "color": "#202020", "extrusor": 2}}` a nivel de módulo, leído con `ast.literal_eval` (nunca se ejecuta en el proceso web) y validado antes de correr (texto 1–64, color `#RRGGBB`, extrusor 1..16; 422 sin crear nada). Nombres que el script no produce se descartan y se informan en `materiales_ignorados` (aditivo).
+- `app/materiales.py` + sidecar `{id}.materiales.json` (escritura atómica) con `{materiales, declarado}`: re-ejecutar con la MISMA declaración conserva las ediciones manuales; una declaración distinta las reemplaza; un script sin `MATERIALES` no toca lo guardado. Viaja en cada instantánea de geometría como `materiales.json`; `restaurar` lo repone (o lo quita si la instantánea es anterior); borrar el documento lo elimina.
+- REST: `GET /documentos/{id}/materiales` → `{materiales, piezas}`; `POST` (token) `{materiales: {pieza: material|null}, reemplazar?}` sin re-ejecutar, con instantánea previa y evento `anotaciones_actualizadas` `["materiales","historial"]`. `GET /documentos/{id}` agrega `materiales` solo si hay alguno.
+- 3MF (descarga completa, por pieza y `exportar`): `<basematerials>` del estándar (`name` + `displaycolor`) referenciado por `pid`/`pindex` de cada objeto, y `Metadata/model_settings.config` estilo Orca/Bambu con `name` y `extruder` por objeto (más `forja_material` informativo). Sin materiales el paquete es idéntico al anterior.
+- MCP (sin herramientas nuevas): `resumen_documento` muestra `materiales`; `parametros(id, materiales={...})` los cambia sin re-ejecutar.
+- Visor: piezas coloreadas con su color de material, muestra del color en la lista y formulario material/color/extrusor en el detalle de la pieza (guarda por POST). `materiales.js?v=1`, `pieces.js?v=9`, `viewer.js?v=12`, `tabs.js?v=19`, `app.js?v=21`, `forja-base.css?v=12`.
+- Pruebas: `tests/test_materiales.py` (22), `tests/web/materiales.test.mjs` (3).
+
+### Added (fdm-C — arreglos automáticos de diseño FDM)
+
+- `app/fdm_ops.py`: `agujero_gota(d, largo, eje, centro)` (techo en punta a 45°, diámetro compensado como agujero horizontal), `chaflan_base(pieza, alto)` (aristas de la cara apoyada; si falla devuelve la pieza intacta + aviso), `puente_sacrificio(d, z, centro)` (disco de 1 altura de capa), `partir_para_cama(pieza, cama, union="pasadores"|"cola_milano", nombre)` (cortes por planos, giro 90° en Z si ahorra partes, hasta 2 pasadores por cara de corte con agujeros compensados `eje_presion`/`eje_deslizante` —gota si horizontales— y pasadores de pie al lado; cola de milano de 15° para cortes X/Y). Sin `voladizos_a_45`: no robusto en B-rep.
+- Sandbox: `bootstrap._inyectar_fdm_ops` inyecta esas funciones ligadas al `PERFIL` + `AVISOS_FDM` con `setdefault` (requiere `docker compose build`).
+- `check_fdm`: campo aditivo `sugerencias: [{pieza, funcion, motivo}]` (solo si hay): agujero redondo horizontal → `agujero_gota`; no cabe en ninguna orientación → `partir_para_cama`.
+- MCP: descripción de `ejecutar_script` y `check_fdm` (solo texto).
+- Pruebas: `tests/test_fdm_ops.py` (11).
+
+### Fixed (fdm-B — ronda de revisión)
+
+- `cupon._caja_explicita`: rechaza con 422 valores no finitos (NaN/±Infinity en JSON crudo) y lados de más de 1000 mm (`LADO_MAX_CAJA_MM`).
+- Colocación en cuadrícula (`cupon.colocar`): filas que envuelven a 220 mm en X (`ANCHO_FILA_MM`), avanzan en Y con 5 mm de separación, centradas en una cama de 220×220 cuando caben. Respuesta con `avisos: [...]` (aditivo) si una pieza o el conjunto no cabe en 220×220. Sin reorientar a propósito: un eje tumbado pierde redondez y falsea la prueba de encaje.
+- Lectura del STEP y `solids.cargar` bajo `parametros.bloqueo(doc_id)`; el candado se suelta antes de los booleanos (trabajan sobre la copia en memoria).
+- Visor: el aviso de progreso dice que puede tardar hasta ~2 min. `cupon.js?v=2`, `tabs.js?v=18`, `app.js?v=20`.
+- Pruebas: +5 en `tests/test_cupon.py` (NaN, Infinity, -Infinity, lado 1500 → 422; cuadrícula + avisos).
+
+### Added (fdm-B — cupones de prueba)
+
+- `app/cupon.py`: `POST /documentos/{id}/cupon` (token) con `{pieza?, holgura_max? (1 mm, 0–5), margen? (4 mm, 0–20), caja? {min, max}}`. Detecta parejas de sólidos de distinto nombre a menos de `holgura_max` (prefiltro de cajas de `checks/distancia.py` + `Shape.distance`), calcula una caja de interés por pareja (solape + margen; un lado se completa hasta el final de la pareja solo si quedaría menos de `margen` fuera, así un buje conserva su pared y el eje se corta a su largo), fusiona las cajas que se solapan, recorta cada pieza y las deja sobre la cama (z = 0, en fila en X, orientación original) como `cupon_<pieza>` (`_zN` con varias zonas) en un documento NUEVO «Cupón — <nombre>». Responde `{id_nuevo, nombre, descarga, piezas: [{nombre, de, bbox}], zonas: [{piezas, pares: [{a, b, dist}], caja}]}` (+ `zonas_mas`, `errores`). El original no se toca. `documents.crear_documento_desde_formas` registra un documento desde formas build123d en proceso.
+- MCP: herramienta nueva `cupon` (20 herramientas; añade `url_descarga`/`enlace_orca`). Tests de inventario actualizados a propósito.
+- Visor: botón «Cupón de prueba» en la barra del documento (usa la pieza seleccionada), abre el documento nuevo en una pestaña y ofrece «Abrir en Orca». `cupon.js?v=1`, `tabs.js?v=17`, `app.js?v=19`.
+- Pruebas: `tests/test_cupon.py` (6) y `tests/web/cupon.test.mjs` (4).
+
+### Fixed (fdm-B — revisión de fdm-A)
+
+- `perfil_desde_mediciones`: 422 si el ajuste sale de |a| < 2 mm / |b| < 0.5 (u offset de ranuras ≥ 2 mm); descarta claves desconocidas de `mediciones`; `material` limitado a 40 caracteres.
+
+### Added (fdm-A — perfil de tolerancias de la impresora)
+
+- `app/perfil_fdm.py` (sin dependencias): compensación `agujero(d)`, `eje(d)`, `ranura(w)` y `ajuste(nombre, d=None)` (`M2`…`M5` `_pasante`/`_roscado`, `eje_deslizante`, `eje_presion`); ajuste lineal por mínimos cuadrados del offset sobre las mediciones (`a + b·d`). Perfil semilla Ender-3 V3 SE / 0.4 / PLA marcado `semilla: true`.
+- `app/perfiles.py`: perfiles en `documentos_data/.perfiles/<nombre>.json` (escritura atómica tmp+replace) y perfil activo en `.perfiles/.activo`; rutas `GET /perfiles`, `GET /perfiles/{nombre}` (`activo` = alias), `POST /perfiles` (token; refit desde `mediciones`, `activar`) y `POST /perfiles/probeta` (token) que crea el documento «Calibración de tolerancias» (74×54 mm: agujeros 3/5/8 verticales y horizontales, ejes 3/5/8, ranuras 2/3/5, holguras .1–.5 con pin suelto de 5 mm, rótulos en relieve de 7 segmentos).
+- Sandbox: cada script recibe el perfil activo como global `PERFIL` (un dict propio o el nombre de un perfil en `variables["PERFIL"]` lo sustituye) y las funciones `agujero`/`eje`/`ranura`/`ajuste`. Documentado en `ejecutar_script` (MCP) sin cambiar su contrato.
+- Visor: botón y diálogo «Perfil de impresora» (resumen del activo con medidas a modelar, generar probeta, capturar mediciones). `app.js?v=18`, `perfil.js?v=1`, `forja-base.css?v=11`.
+- Pruebas: `tests/test_perfiles.py` (10) y `tests/web/perfil.test.mjs` (2).
+
 ### Added (F11.1–F11.2 — visor en vivo)
 
 - Revisión estable de cada documento, incluida en fichas y mallas; el encabezado STEP variable no provoca una actualización falsa.

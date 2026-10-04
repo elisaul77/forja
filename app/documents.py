@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 import assemblies
 import auth
+import materiales
 import eventos
 import export as export_solidos
 import naming
@@ -224,7 +225,7 @@ def confirmar_revision(doc_id: str, tipo: str = "documento_actualizado") -> str 
     if nueva is not None and (tipo == "documento_creado" or nueva != previa):
         eventos.publicar(
             tipo, doc_id, nueva,
-            ["geometria", "notas", "parametros", "ensamble", "historial"]
+            ["geometria", "notas", "parametros", "ensamble", "historial", "materiales"]
             if tipo == "documento_actualizado" else None,
         )
     return nueva
@@ -320,7 +321,21 @@ def _con_parametros_snapshot(archivos: dict[str, bytes], doc_id: str) -> dict[st
     estado = parametros.estado_para_snapshot(doc_id)
     if estado is not None:
         archivos[parametros.NOMBRE_SNAPSHOT] = estado
+    # fdm-D: the per-piece materials travel with every geometry snapshot.
+    estado_materiales = materiales.estado_para_snapshot(doc_id)
+    if estado_materiales is not None:
+        archivos[materiales.NOMBRE_SNAPSHOT] = estado_materiales
     return archivos
+
+
+def _nombres_piezas(doc_id: str) -> list[str]:
+    """Unique piece names of ``doc_id`` in `solidos.json` order (fdm-D)."""
+    nombres: list[str] = []
+    for entrada in solids.cargar(doc_id) or []:
+        nombre = entrada.get("nombre") if isinstance(entrada, dict) else None
+        if isinstance(nombre, str) and nombre not in nombres:
+            nombres.append(nombre)
+    return nombres
 
 
 def _con_ensamble_snapshot(archivos: dict[str, bytes], doc_id: str) -> dict[str, bytes]:
@@ -603,6 +618,15 @@ def crear_documento_desde_script(body: _ScriptBody) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     valores = parametros.valores_por_defecto(esquema)
     variables = parametros.variables_efectivas(body.variables, valores)
+    # fdm-D: a top-level MATERIALES literal, validated before running.
+    try:
+        declarados = materiales.desde_codigo(codigo)
+    except materiales.MaterialesInvalidos as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ignorados: list[str] = []
+
+    def _con_ignorados(respuesta: dict[str, Any]) -> dict[str, Any]:
+        return {**respuesta, "materiales_ignorados": ignorados} if ignorados else respuesta
 
     def _recordar_script(doc_id_: str) -> None:
         parametros.guardar(
@@ -614,6 +638,7 @@ def crear_documento_desde_script(body: _ScriptBody) -> dict[str, Any]:
             esquema=esquema,
             valores=valores,
         )
+        ignorados[:] = materiales.aplicar_declaracion(doc_id_, declarados, _nombres_piezas(doc_id_))
 
     if body.documento_id is not None:
         # Validated *before* the lock (Phase 6.3): `parametros.bloqueo`
@@ -630,13 +655,15 @@ def crear_documento_desde_script(body: _ScriptBody) -> dict[str, Any]:
             )
             _recordar_script(body.documento_id)
             confirmar_revision(body.documento_id)
-        return {**registro_actualizado, "revision": _revisiones.get(body.documento_id)}
+        return _con_ignorados({**registro_actualizado, "revision": _revisiones.get(body.documento_id)})
 
     # Id chosen before the run (F11.1) so the viewer's "construyendo..."
     # event and the final `documento_creado` name the same document.
     doc_id = uuid.uuid4().hex
     with _construyendo(doc_id):
-        return _crear_documento_desde_script(doc_id, codigo, timeout, variables, body.nombre, _recordar_script)
+        return _con_ignorados(
+            _crear_documento_desde_script(doc_id, codigo, timeout, variables, body.nombre, _recordar_script)
+        )
 
 
 def _crear_documento_desde_script(
@@ -675,15 +702,47 @@ def _crear_documento_desde_script(
     _registry[doc_id] = registro
     _files[doc_id] = destino
     _guardar_meta(doc_id, nombre)
-    recordar_script(doc_id)
     if entradas is not None:
         solids.guardar(doc_id, entradas)
+    # After `solids.guardar` (fdm-D): the materials declaration is checked
+    # against the piece names just saved.
+    recordar_script(doc_id)
     versioning.crear_snapshot(
         doc_id,
         "documento creado (script)",
         _con_solidos_snapshot({destino.name: destino.read_bytes()}, doc_id, entradas),
     )
     confirmar_revision(doc_id, "documento_creado")
+    return {**registro, "revision": _revisiones.get(doc_id)}
+
+
+def crear_documento_desde_formas(nombrados: dict[str, Any], nombre_pedido: str) -> dict[str, Any]:
+    """New STEP document straight from in-process build123d shapes
+    (``{nombre: Shape}``, names validated here) — fdm-B test coupons. Same
+    bookkeeping as a script-created document, minus the stored script."""
+    solids.validar_nombres(nombrados.keys())
+    doc_id = uuid.uuid4().hex
+    nombre = nombre_pedido if nombre_pedido.lower().endswith((".step", ".stp")) else f"{nombre_pedido}.step"
+    destino = DOCUMENTOS_DIR / f"{doc_id}.step"
+    with _construyendo(doc_id):
+        try:
+            b123d_kernel.export_to_step(b123d_kernel.combinar_nombrados(dict(nombrados)), destino)
+            analisis, entradas = _analizar_con_solidos(destino, ".step", list(nombrados.keys()))
+        except Exception as exc:  # noqa: BLE001
+            destino.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail=f"geometria invalida: {exc}") from exc
+        registro = {"id": doc_id, "nombre": nombre, **analisis}
+        _registry[doc_id] = registro
+        _files[doc_id] = destino
+        _guardar_meta(doc_id, nombre)
+        if entradas is not None:
+            solids.guardar(doc_id, entradas)
+        versioning.crear_snapshot(
+            doc_id,
+            "documento creado (cupon)",
+            _con_solidos_snapshot({destino.name: destino.read_bytes()}, doc_id, entradas),
+        )
+        confirmar_revision(doc_id, "documento_creado")
     return {**registro, "revision": _revisiones.get(doc_id)}
 
 
@@ -738,7 +797,8 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
         try:
             esquema = parametros.esquema_desde_codigo(codigo)
             valores = parametros.aplicar_valores(esquema, datos["valores"], body.valores)
-        except parametros.ParametrosInvalidos as exc:
+            declarados = materiales.desde_codigo(codigo)
+        except (parametros.ParametrosInvalidos, materiales.MaterialesInvalidos) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         inicio = time.perf_counter()
         with _construyendo(doc_id):
@@ -751,8 +811,75 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
             )
             ms = round((time.perf_counter() - inicio) * 1000)
             parametros.guardar_valores(doc_id, esquema, valores)
+            materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
             confirmar_revision(doc_id)
     return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
+
+
+@router.get("/documentos/{doc_id}/materiales")
+def obtener_materiales(doc_id: str) -> dict[str, Any]:
+    """Token-free (fdm-D): ``{materiales: {pieza: {material?, color?,
+    extrusor?}}, piezas: [nombres]}`` — only pieces that exist now."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    nombres = _nombres_piezas(doc_id)
+    return {"materiales": materiales.cargar(doc_id, nombres), "piezas": nombres}
+
+
+class _MaterialesBody(BaseModel):
+    materiales: dict[str, Any]
+    reemplazar: bool = False
+
+
+@router.post("/documentos/{doc_id}/materiales", dependencies=[Depends(auth.requiere_token)])
+def cambiar_materiales(doc_id: str, body: _MaterialesBody) -> dict[str, Any]:
+    """Change per-piece materials WITHOUT re-running the script (fdm-D):
+    ``{materiales: {pieza: material | null}, reemplazar?}`` — short text or
+    ``{material?, color?, extrusor?}``; ``null`` removes; unknown pieces or
+    bad values -> 422 and nothing written. Snapshots the current state
+    first (undoable via `restaurar`). Geometry revision is unchanged."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    with parametros.bloqueo(doc_id):
+        if doc_id not in _registry:
+            raise HTTPException(status_code=404, detail="documento no encontrado")
+        ruta = _files.get(doc_id)
+        if ruta is None or not ruta.exists():
+            raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+        nombres = _nombres_piezas(doc_id)
+        try:
+            # Validate first (dry run on the merge rules) so a bad request
+            # leaves neither a snapshot nor a write behind.
+            if len(body.materiales) > materiales.MAX_MATERIALES:
+                raise materiales.MaterialesInvalidos(
+                    f"demasiadas piezas (maximo {materiales.MAX_MATERIALES})"
+                )
+            for nombre, valor in body.materiales.items():
+                if nombre not in nombres:
+                    raise materiales.MaterialesInvalidos(f"pieza inexistente en el documento: {nombre!r}")
+                if valor is not None:
+                    materiales.normalizar_entrada(nombre, valor)
+        except materiales.MaterialesInvalidos as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        actuales: dict[str, bytes] = {ruta.name: ruta.read_bytes()}
+        ruta_notas_doc = notes.ruta_notas(doc_id)
+        if ruta_notas_doc.exists():
+            actuales["notas.json"] = ruta_notas_doc.read_bytes()
+        ruta_solidos_doc = solids.ruta_solidos(doc_id)
+        if ruta_solidos_doc.exists():
+            actuales["solidos.json"] = ruta_solidos_doc.read_bytes()
+        actuales = _con_parametros_snapshot(actuales, doc_id)
+        versioning.crear_snapshot(
+            doc_id, "materiales: " + ", ".join(list(body.materiales)[:5]),
+            _con_ensamble_snapshot(actuales, doc_id),
+        )
+        try:
+            resultado = materiales.actualizar(doc_id, body.materiales, nombres, body.reemplazar)
+        except materiales.MaterialesInvalidos as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    eventos.publicar("anotaciones_actualizadas", doc_id, _revisiones.get(doc_id),
+                     ["materiales", "historial"])
+    return {"materiales": resultado, "piezas": nombres}
 
 
 @router.get("/documentos/{doc_id}/fdm")
@@ -840,15 +967,16 @@ def obtener_documento(
     if registro is None:
         raise HTTPException(status_code=404, detail="documento no encontrado")
     entradas = solids.cargar(doc_id)
+    respuesta: dict[str, Any] = {**registro, "revision": _revisiones.get(doc_id)}
     if entradas and len(entradas) > 1:
-        return {
-            **registro,
-            "revision": _revisiones.get(doc_id),
-            "solidos_detalle": solids.resumen(
-                entradas, tope=tope_solidos, umbral_astilla_mm3=umbral_astilla_mm3
-            ),
-        }
-    return {**registro, "revision": _revisiones.get(doc_id)}
+        respuesta["solidos_detalle"] = solids.resumen(
+            entradas, tope=tope_solidos, umbral_astilla_mm3=umbral_astilla_mm3
+        )
+    # fdm-D: only present when some piece has a material (stays compact).
+    asignados = materiales.cargar(doc_id, _nombres_piezas(doc_id))
+    if asignados:
+        respuesta["materiales"] = asignados
+    return respuesta
 
 
 # Viewer meshes cached on disk per document revision: re-opening an unchanged
@@ -1066,7 +1194,9 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                 if sum(len(m.faces) for _n, m in objetos) > MAX_TRIANGULOS_DESCARGA:
                     raise too_big
                 contenido = (
-                    mesh.to_stl_bytes(objetos[0][1]) if formato == "stl" else export_solidos.bytes_3mf(objetos)
+                    mesh.to_stl_bytes(objetos[0][1])
+                    if formato == "stl"
+                    else export_solidos.bytes_3mf(objetos, materiales.cargar(doc_id))
                 )
             elif formato == "stl":
                 tri_mesh = shape if ext_origen in _STL_EXTS else mesh.tessellate_to_trimesh(shape)
@@ -1079,7 +1209,9 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                 )
                 if sum(len(m.faces) for _n, m in objetos) > MAX_TRIANGULOS_DESCARGA:
                     raise too_big
-                contenido = export_solidos.bytes_3mf(objetos)
+                contenido = export_solidos.bytes_3mf(
+                    objetos, materiales.cargar(doc_id) if entradas else None
+                )
         except HTTPException:
             raise
         except ValueError as exc:  # same mapping and message as `exportar`
@@ -1155,7 +1287,8 @@ def exportar_documento(
             entradas_3mf = None
         try:
             resultado_3mf = export_solidos.exportar_3mf_documento(
-                shape, entradas_3mf, destino, nombre_por_defecto=nombre_objeto
+                shape, entradas_3mf, destino, nombre_por_defecto=nombre_objeto,
+                materiales=materiales.cargar(doc_id) if entradas_3mf else None,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1506,8 +1639,8 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
             ruta_notas_doc.write_bytes(contenido)
         elif nombre == "solidos.json":
             ruta_solidos_doc.write_bytes(contenido)
-        elif nombre == parametros.NOMBRE_SNAPSHOT:
-            continue  # merged into meta.json below, never written as-is
+        elif nombre in (parametros.NOMBRE_SNAPSHOT, materiales.NOMBRE_SNAPSHOT):
+            continue  # applied below with the geometry, never written as-is
         elif nombre in (assemblies.STATE_KEY, assemblies.BASE_KEY):
             # Applied through `assemblies.restore_files` below: written here
             # instead, `ensamble.json`/`ensamble_base.step` would land in the
@@ -1528,6 +1661,7 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
     restaura_geometria = ruta.name in archivos
     if restaura_geometria:
         parametros.restaurar_estado(doc_id, archivos.get(parametros.NOMBRE_SNAPSHOT))
+        materiales.restaurar_estado(doc_id, archivos.get(materiales.NOMBRE_SNAPSHOT))
         # The assembly belongs to the geometry: a geometry snapshot carries
         # its pose state (C2), and one taken before the assembly existed
         # carries none, which removes it (`restore_files({})`) rather than
@@ -1556,7 +1690,7 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
     confirmar_revision(doc_id)
     if _revisiones.get(doc_id) == previa:
         eventos.publicar("anotaciones_actualizadas", doc_id, previa,
-                        ["notas", "historial", "parametros", "ensamble"])
+                        ["notas", "historial", "parametros", "ensamble", "materiales"])
     return {**registro, "revision": _revisiones.get(doc_id)}
 
 
@@ -1610,6 +1744,7 @@ def _eliminar_documento_bloqueado(doc_id: str) -> dict[str, Any]:
     _borrar_cache_malla(doc_id)
     notes.ruta_notas(doc_id).unlink(missing_ok=True)
     solids.borrar(doc_id)
+    materiales.borrar(doc_id)
     # The assembly is part of the document (Phase 6, ADR-0003/0006: deleting
     # a document must leave nothing of it behind, not even state a restore
     # could not reach); `clear` also removes `.ensambles/<id>/` itself.

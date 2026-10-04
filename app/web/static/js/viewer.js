@@ -398,6 +398,7 @@ export class ForjaViewer {
       this.mesh.visible = this.pieces.size === 0;
     }
     this.isolatedPiece = this.pieces.has(isolated) ? isolated : null;
+    this._applyPieceColors();
     this.selectPiece(this.pieces.has(selected) ? selected : null);
     this._applyPieceVisibility();
     if (conservarVista) this.render();
@@ -436,6 +437,21 @@ export class ForjaViewer {
     if (this.mesh) this.mesh.material.wireframe = enabled;
     for (const piece of this.pieces.values()) piece.mesh.material.wireframe = enabled;
     this.render();
+  }
+
+  /** fdm-D: color de material por pieza ({nombre: "#RRGGBB"}); las piezas
+   * sin color vuelven al tono neutro del visor. Persiste entre recargas. */
+  setPieceColors(colores = {}) {
+    this.pieceColors = { ...colores };
+    this._applyPieceColors();
+    this.render();
+  }
+
+  _applyPieceColors() {
+    const neutro = cssVarColor("--fj-ink-3", "#a8a29e");
+    for (const [name, piece] of this.pieces) {
+      piece.mesh.material.color.set(this.pieceColors?.[name] ?? neutro);
+    }
   }
 
   setGridVisible(enabled) {

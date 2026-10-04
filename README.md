@@ -21,7 +21,7 @@
 
 ## ✨ Qué puedes hacer
 
-- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (19 herramientas, respuestas compactas para gastar pocos tokens).
+- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (20 herramientas, respuestas compactas para gastar pocos tokens).
 - 👀 **Ver el diseño en vivo** — cuando el agente cambia un documento, el visor se actualiza solo, sin recargar y sin mover tu cámara.
 - 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
@@ -288,6 +288,24 @@ dicts compactos (ids, números, mensajes cortos en español) — nunca vértices
 ni caras crudas; un resumen de un cubo pesa ~200 bytes. Ver
 `~/.claude/skills/forja/SKILL.md` para la tabla completa de herramientas y
 el flujo de trabajo recomendado.
+
+### Arreglos FDM dentro del script (fdm-C)
+
+`app/fdm_ops.py` (geometría pura build123d, importada por el sandbox) se
+inyecta en cada script ligada al `PERFIL` activo: `agujero_gota` (agujero
+horizontal con techo a 45°, compensado), `chaflan_base` (pata de elefante;
+nunca rompe el script, avisa en `AVISOS_FDM`), `puente_sacrificio`
+(contrataladros boca abajo) y `partir_para_cama` (corta por planos lo que
+no cabe y une con pasadores compensados —gota si son horizontales— o colas
+de milano). `check_fdm` añade `sugerencias` con la función a usar. No hay
+"voladizos a 45° automático": reescribir caras arbitrarias no es robusto.
+
+### Material por pieza (fdm-D)
+
+- Declaración en el script: `MATERIALES = {"tapa": "PETG negro", "junta": {"material": "TPU", "color": "#202020", "extrusor": 2}}` (dict literal; forma corta = texto).
+- Leer/cambiar sin re-ejecutar: `GET|POST /documentos/{id}/materiales` (POST con token; `null` quita), MCP `parametros(id, materiales={...})`; `resumen_documento` los muestra. Visor: panel Piezas → detalle de la pieza.
+- Guardado en `{id}.materiales.json`; sobrevive a actualizaciones (misma declaración = se conservan las ediciones) y va en las instantáneas.
+- El 3MF lleva `basematerials` (color estándar) y `Metadata/model_settings.config` con `extruder` por objeto, que OrcaSlicer/Bambu leen como filamento asignado; otros slicers lo ignoran.
 
 ### Notas, pizarra, nombrado estable y versionado (Fase 4)
 

@@ -63,6 +63,10 @@ def resumen_documento(
     dentro de su propia caja delimitadora (una lamina solida como un
     estante de 2 mm o una alfombra nunca cae aca, solo un residuo casi nulo
     de una operacion booleana).
+
+    `materiales` (solo si alguna pieza tiene uno, fdm-D):
+    `{pieza: {material?, color?, extrusor?}}`; cambiarlos con
+    `parametros(id, materiales={...})`.
     """
     return client.resumen_documento(id, tope_solidos=tope_solidos, umbral_astilla_mm3=umbral_astilla_mm3)
 
@@ -109,6 +113,31 @@ def ejecutar_script(
     `codigo_linea` (numero y texto de la linea del script que fallo) solo
     estan presentes cuando el error viene de una excepcion dentro del
     script mismo, nunca un traceback completo.
+
+    Perfil de impresora (FDM): todo script recibe el perfil de tolerancias
+    activo como global `PERFIL` (dict; `variables={"PERFIL": "<nombre>"}`
+    elige otro perfil guardado) y estas funciones, que devuelven la medida
+    A MODELAR ya compensada para que la pieza impresa mida lo nominal:
+    `agujero(d)` (agujero vertical; `agujero(d, horizontal=True)` para uno
+    horizontal), `eje(d)` (pin/eje), `ranura(w)` (ancho de ranura) y
+    `ajuste(nombre, d=None)` con `"M3_pasante"`, `"M3_roscado"` (tambien M2,
+    M2.5, M4, M5), y `"eje_deslizante"`/`"eje_presion"` (con `d` = diametro
+    del eje devuelve el agujero a modelar; sin `d`, la holgura en mm). Ej.:
+    `Cylinder(agujero(3) / 2, 10)`. Perfiles: `GET /perfiles`.
+
+    Arreglos FDM (tambien inyectados, con el mismo `PERFIL`):
+    `agujero_gota(d, largo, eje="X"|"Y", centro=(x,y,z))` solido a RESTAR:
+    agujero horizontal con techo en punta a 45 grados (sin soporte), ya
+    compensado; `chaflan_base(pieza, alto=0.5)` chaflan en las aristas de
+    la cara apoyada (pata de elefante; si falla devuelve la pieza igual y
+    deja un aviso en `AVISOS_FDM`); `puente_sacrificio(d, z, centro=(x,y))`
+    disco de 1 capa a SUMAR sobre un contrataladro impreso boca abajo (se
+    perfora luego); `partir_para_cama(pieza, cama=(220,220,250),
+    union="pasadores"|"cola_milano", nombre="pieza")` parte con planos lo
+    que no cabe y devuelve `{"<nombre>_parte1": ..., "<nombre>_pasador1":
+    ...}` listo para `resultado` (agujeros compensados con holgura
+    `eje_presion`; pasadores de pie al lado). Ej.:
+    `resultado = partir_para_cama(caja - agujero_gota(8, 320), nombre="caja")`.
     """
     return client.ejecutar_script(
         codigo=codigo,
@@ -173,6 +202,31 @@ def check_colisiones(id: str, tolerancia_mm3: float = 0.5) -> dict[str, Any]:
     return client.check_colisiones(id, tolerancia_mm3=tolerancia_mm3)
 
 
+def cupon(
+    id: str,
+    pieza: str | None = None,
+    holgura_max: float | None = None,
+    margen: float | None = None,
+    caja: dict[str, list[float]] | None = None,
+) -> dict[str, Any]:
+    """Cupon de prueba FDM: crea un documento NUEVO «Cupón — <nombre>» con
+    solo las zonas donde las piezas encajan, para imprimirlas en minutos
+    antes de la pieza larga. El documento original no se toca.
+
+    Sin `caja`: busca parejas de solidos de distinto nombre que se tocan o
+    estan a menos de `holgura_max` mm (1 por defecto; con `pieza`, solo las
+    parejas de esa pieza), recorta cada una con su caja de interes mas
+    `margen` mm (4 por defecto) y las deja sobre la cama (z=0, separadas en
+    X, orientacion original) como `cupon_<pieza>` (`_zN` si hay varias
+    zonas). Con `caja` = `{min: [x, y, z], max: [x, y, z]}` (mm) recorta
+    con esa caja todas las piezas (o solo `pieza`).
+    Devuelve `{id_nuevo, nombre, piezas: [{nombre, de, bbox}], zonas:
+    [{piezas, pares: [{a, b, dist}], caja}], descarga, url_descarga,
+    enlace_orca}`; sin zonas de encaje → `{error: true, mensaje}`.
+    """
+    return client.cupon(id, pieza=pieza, holgura_max=holgura_max, margen=margen, caja=caja)
+
+
 def percibir(
     id: str,
     capas: str = "contactos",
@@ -234,7 +288,9 @@ def percibir(
     )
 
 
-def parametros(id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]:
+def parametros(
+    id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Parametros de un documento creado con un script parametrico (Fase 5C):
     iterar cambiando NUMEROS, sin volver a mandar el script.
 
@@ -256,8 +312,17 @@ def parametros(id: str, valores: dict[str, Any] | None = None) -> dict[str, Any]
     valor) y lee los valores con `def construir(params): ... return figura`
     (preferido; Forja la llama si el script no asigna `resultado`) o con el
     dict global `PARAMS` que Forja inyecta antes de ejecutar.
+
+    `materiales` (opcional, fdm-D): cambia el filamento de piezas con
+    nombre SIN re-ejecutar el script: `{"tapa": "PETG negro", "junta":
+    {"material": "TPU", "color": "#202020", "extrusor": 2}, "base": null}`
+    (`null` quita la asignacion; color #RRGGBB; extrusor 1..16). Se puede
+    combinar con `valores` o ir solo; la respuesta incluye `materiales`
+    vigentes. Un script tambien puede declararlos con un dict literal
+    `MATERIALES = {...}` a nivel de modulo. El 3MF descargado/abierto en
+    Orca lleva el extrusor de cada pieza y su color.
     """
-    return client.parametros(id, valores)
+    return client.parametros(id, valores, materiales)
 
 
 def check_fdm(
@@ -278,6 +343,10 @@ def check_fdm(
       -> `{min_mm, bbox, muestras}`; aristas en filo tambien aparecen.
     - `base`: area de contacto de la primera capa < 10 mm2 -> `{contacto_mm2}`.
     - `diminuto`: alguna dimension < `boquilla` -> `{dim_min_mm}`.
+
+    Si hay arreglo directo, `sugerencias: [{pieza, funcion, motivo}]`
+    nombra la funcion del script: `agujero_gota` (agujero redondo
+    horizontal) o `partir_para_cama` (no cabe en ninguna orientacion).
 
     Solo documentos STEP con solidos con nombre; si no, `{error, mensaje}`.
     """

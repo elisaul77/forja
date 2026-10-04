@@ -5,7 +5,7 @@ Two layers:
 - In-process (`TestClient` inside its context manager, so the FastAPI
   lifespan -- and with it the MCP session manager -- actually runs): auth
   (401 without/with a wrong token, both header styles accepted),
-  `initialize` + `tools/list` returning exactly the 19 tools, GET -> 405.
+  `initialize` + `tools/list` returning exactly the 20 tools (fdm-B adds `cupon`), GET -> 405.
 - Live (`http://localhost:8000/mcp`, the container's own uvicorn): real tool
   roundtrips (`estado`, `percibir` on a small script document, and the whole
   Phase-6 assembly sequence plus `puentes`). This is the path Claude Code
@@ -40,6 +40,7 @@ _TOOLS = {
     "exportar",
     "captura",
     "check_colisiones",
+    "cupon",
     "percibir",
     "parametros",
     "check_fdm",
@@ -118,7 +119,7 @@ def test_mcp_http_token_incorrecto_401(cliente):
 
 
 @pytest.mark.parametrize("estilo", ["x-forja-token", "bearer"])
-def test_mcp_http_initialize_y_lista_19_herramientas(cliente, estilo):
+def test_mcp_http_initialize_y_lista_20_herramientas(cliente, estilo):
     token = auth.obtener_token()
     cabecera = {"X-Forja-Token": token} if estilo == "x-forja-token" else {"Authorization": f"Bearer {token}"}
     headers = {"Accept": _ACCEPT, **cabecera}

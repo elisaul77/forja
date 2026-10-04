@@ -2,8 +2,9 @@
 // del servidor, subida de archivos y apertura de pestañas.
 import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=11";
 import { createLibrary, latestStep } from "./library.js?v=11";
-import { TabManager } from "./tabs.js?v=16";
+import { TabManager } from "./tabs.js?v=19";
 import { startLive } from "./live.js?v=11";
+import { iniciarPanelPerfil } from "./perfil.js?v=1";
 
 const tabs = new TabManager({
   tabsEl: document.getElementById("fj-tabs"),
@@ -19,6 +20,7 @@ const tabs = new TabManager({
 });
 
 const deletedDocuments = new Set();
+tabs.abrirDocumento = (id) => abrirDocumentoPorId(id);
 async function abrirDocumentoPorId(id) {
   if (deletedDocuments.has(id)) return;
   if (tabs.tieneAbierto(id)) { tabs.activar(id); return; }
@@ -97,6 +99,11 @@ const library = createLibrary({
   },
 });
 document.getElementById('fj-btn-galeria').onclick = () => library.show();
+iniciarPanelPerfil({
+  boton: document.getElementById("fj-btn-perfil"),
+  dialogo: document.getElementById("fj-dialogo-perfil"),
+  abrirDocumento: id => withLoading("Abriendo la probeta…", () => abrirDocumentoPorId(id)),
+});
 
 startLive({
   tabs,
