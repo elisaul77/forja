@@ -5,7 +5,7 @@ Two layers:
 - In-process (`TestClient` inside its context manager, so the FastAPI
   lifespan -- and with it the MCP session manager -- actually runs): auth
   (401 without/with a wrong token, both header styles accepted),
-  `initialize` + `tools/list` returning exactly the 20 tools (fdm-B adds `cupon`), GET -> 405.
+  `initialize` + `tools/list` returning exactly the 21 tools (fdm-B adds `cupon`, G2 adds `rama`), GET -> 405.
 - Live (`http://localhost:8000/mcp`, the container's own uvicorn): real tool
   roundtrips (`estado`, `percibir` on a small script document, and the whole
   Phase-6 assembly sequence plus `puentes`). This is the path Claude Code
@@ -52,6 +52,7 @@ _TOOLS = {
     "ensamble",
     "suspension",
     "puentes",
+    "rama",
 }
 
 

@@ -7,6 +7,53 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (Historial 2.0 — grafo, miniaturas por paso, historial por pieza)
+
+- `app/historial_grafo.py`: `GET /documentos/{id}/grafo` (todas las ramas, orden topológico, padres incl. fusiones de 2 padres, ramas que contienen cada paso, puntas, hitos, autor/fecha/mensaje/revisión, `fusion`, `desde` y resumen de cambios respecto al primer padre con la regla G0/G3; caché por sha en `.cache/grafo/`; `limite` ≤ 300, `truncado`). `?pieza=` filtra a los pasos que la tocaron y reescribe los padres (simplificación de historia).
+- `GET /documentos/{id}/pasos/{sha}/miniatura.png[?pieza=]`: PNG 256×192 sin leyenda, fondo `--fj-sunk`, caché por revisión en `.cache/miniaturas_pasos/<doc>/`, como mucho 2 renders a la vez; sin token, `sha` solo hex.
+- `POST /documentos/{id}/piezas/{pieza}/restaurar` 🔑 (motor de «traer pieza»: verificación + todo o nada, mensaje «restaurar pieza X a <sha>», `sin_cambios` si ya era igual) y `POST /documentos/{id}/pasos/{sha}/restaurar` 🔑 (todo el documento a un paso, como paso nuevo de un padre con `Forja-Desde`). MCP `rama`: acción `restaurar_pieza`.
+- Crece sin romper: `fusion.fusionar(..., mensaje=)`, `render.renderizar_png(..., leyenda_visible=, fondo=)`, `git_store.log_grafo`/`contar_varios`; borrar un documento borra sus cachés de grafo y miniaturas.
+- Visor: la pestaña **Historial** pasa a ser un panel ancho con grafo SVG (carriles por rama siguiendo el primer padre, curvas de fusión, pastillas de rama/hito, rama activa resaltada), tarjetas con miniatura, autor, fecha relativa en español, sha y chips (`+rueda`, `~mástil`, `−soporte`, `Δvol −0,08 %`, `alto 35→20`), detalle con piezas tocadas y «↺ Restaurar» por pieza, tabla de parámetros, «Antes / después» con **vista dividida y deslizador** (o superpuesta), comparar con el actual, restaurar todo, crear rama, marcar hito, cambiar de rama; filtro por pieza (selección del visor o ⌕) con tira de miniaturas; búsqueda, autor, «Solo hitos», rama; esqueletos, estados vacíos/errores, teclado (↑/↓/Inicio/Fin), `aria`, responsive (detalle debajo en estrecho), animaciones con `prefers-reduced-motion`. La pestaña «Ramas» y la lista de instantáneas pasan a cajones dentro de Historial (`?panel=ramas` abre Historial). Lógica pura en `historial-grafo.js`.
+- Disposición (revisión de Eli): panel de 480–760 px (`clamp`, redimensionable con un tirador, se recuerda), la barra «Vista 3D» ya no se monta sobre la columna de botones, nodos del grafo alineados con el centro medido de cada tarjeta, títulos humanos («Parámetros: alto 20→45», «Fusión de «b» en «main»», «Restaurar «mástil» a …») con el mensaje crudo en el detalle/tooltip, detalle compacto (título a 2 líneas, miniatura baja, acciones sin scroll), lista con scroll propio sobre los cajones.
+- Versiones: `historial-grafo.js?v=3`, `historial2.js?v=3`, `historial.js?v=2`, `viewer.js?v=14`, `tabs.js?v=24`, `app.js?v=26`, `forja-base.css?v=16`.
+- Pruebas: `tests/test_historial2.py` (11), `tests/web/historial-grafo.test.mjs` (13).
+
+### Added (G4/G5 — fusión verificada, traer pieza e hitos, ADR-0015)
+
+- `app/fusion.py`: `POST /documentos/{id}/ramas/fusionar` 🔑 `{desde, piezas?, estrategia?, forzar?, simular?}`. Fusión a 3 vías con el ancestro común: parámetros por clave, materiales por pieza, notas/trazos por id, ensamble por articulación, script con `git merge-file` y reconstrucción en el sandbox; sin script, geometría por pieza. Conflictos listados en español (con líneas si son de texto). Verificación obligatoria (validez + colisiones contra los dos padres): choques nuevos → `conflicto_geometrico` salvo `forzar`. `simular` no escribe. Confirmada = todo o nada, commit con dos padres, instantánea G1 y evento SSE.
+- Traer pieza (`piezas`): sustituye/añade/quita solo esas piezas y sus materiales; commit de un padre (`Forja-Desde`). Documentos con script quedan marcados `geometria_editada` (aviso en `GET /parametros`, 409 en `POST /parametros` salvo `confirmar_script`; regenerar lo borra).
+- G5: hitos `refs/forja/hitos/<nombre>` (`GET|POST /documentos/{id}/hitos`, `DELETE /hitos/{nombre}` 🔑), pasos ocultos (`POST /pasos/ocultar` 🔑) y vista curada `GET /ramas/{rama}/pasos_curados?vista=hitos|visibles|todos` (metadatos en `forja-curacion.json`, historia intacta).
+- `git_store`: `escribir_commit(padres_extra=...)`, `base_comun`, `fusionar_texto`, hitos y curación.
+- MCP `rama`: acciones `fusionar`, `traer_pieza`, `hito`, `hitos` y parámetros `piezas/estrategia/forzar/simular` (sin herramientas nuevas).
+- Visor (pestaña Ramas): «Fusionar en esta rama» y «Traer pieza…» (piezas con estado igual/cambiada/añadida/quitada), vista previa con el modo comparar, conflictos y verificación, «Confirmar» / «Confirmar de todos modos» / «Quedarme con lo mío» / «Tomar lo de la otra»; casilla «Solo hitos» y botón «Hito…». `ramas.js?v=3`, `tabs.js?v=22`, `app.js?v=24`.
+- Pruebas: `tests/test_fusion.py` (12).
+
+### Fixed (G2/G3 — revisión)
+
+- Cambiar de rama es todo o nada: temporales primero y renombrado después; cualquier fallo hasta `confirmar_revision` restaura los archivos del paso recién registrado, la rama activa, el registro, la revisión y la marca de script, y relanza.
+- Scripts por `ruta`: cambiar de rama nunca escribe el archivo; si difiere del texto de la rama devuelve `avisos: ["script_divergente: ..."]` (REST, MCP `rama`, visor) y `POST /parametros` responde 409 salvo `confirmar_script: true` (nuevo campo opcional; MCP `parametros(confirmar_script=...)`). `GET /parametros` incluye `avisos` mientras dure.
+- Rama sin `meta.json`: el actual se restablece a solo `{nombre}`.
+- Comparar con `solidos.json` en un solo lado usa la entrada única `documento`.
+- ADR-0014: garantía real del cambio, limitación de scripts por `ruta`, escritura perezosa de `main` en GET.
+
+### Added (G2/G3 — ramas, pasos y comparar)
+
+- `app/ramas.py`: ramas en `refs/forja/ramas/<nombre>` con un paso (estado completo tras el cambio: geometría, `meta.json`, notas, sólidos, materiales, ensamble, `_fuente/script.py` con el texto aunque venga de `ruta`; trailers `Forja-Revision`/`Forja-Rama`) por cada petición mutante con éxito, registrado por el middleware antes de responder. `refs/heads/main` (instantáneas G1) intacto.
+- Cambiar de rama: guarda lo no registrado, deja instantánea G1 «antes de cambiar a la rama X», escribe todo de forma atómica bajo el candado, actualiza registro/revisión y emite el evento SSE. Crear (desde el estado actual o un paso), renombrar, borrar (ni `main` ni la activa), pasos.
+- Comparar (regla de G0): por pieza con nombre añadida/quitada/cambiada/igual, Δvolumen y %, Δbbox, parámetros y materiales cambiados, script cambiado; sin candado; caras solo si vol/bbox coinciden (caché por contenido). Malla FJP1 por paso para superponer (caché en `.cache/comparar`).
+- REST (`/ramas`, `/ramas/{rama}/activar|renombrar|pasos`, `DELETE /ramas/{rama}`, `/comparar`, `/comparar/malla`), token en mutaciones. MCP: herramienta `rama` (21 herramientas).
+- Visor: pestaña «Ramas» (selector de rama activa, nueva rama, cambiar, borrar, pasos con fecha/autor/mensaje, rama desde un paso; sin miniaturas aún) y modo «Comparar» superpuesto con resumen y «Volver». `ramas.js?v=2`, `viewer.js?v=13`, `tabs.js?v=21`, `app.js?v=23`, `forja-base.css?v=13`.
+- Seguridad (pendientes de G1): shas externos validados (`validar_sha`), `--end-of-options` en `log`/`ls-tree`/`rev-parse`/`update-ref`; nombres de rama `[A-Za-z0-9][A-Za-z0-9_-]{0,47}`; ADR-0014: el autor es una etiqueta, no prueba de identidad.
+- Pruebas: `tests/test_ramas.py` (37).
+
+### Added (G0/G1 — git como historial, ADR-0014)
+
+- G0: reconstrucción determinista verificada en los 5 documentos con script (2 builds, STEP normalizado idéntico byte a byte); regla de comparación para G3 en `plans/maestro/fases/G0-resultados.md`.
+- `app/git_store.py`: un repo git bare por documento en `.repos/{id}.git`, solo plumbing, sin shell, sin hooks, sin red, `safe.directory` acotado, timeouts, nombres validados. `git` en la imagen.
+- `app/versioning.py` usa git por debajo con el mismo contrato (`{id, fecha, mensaje}`, mismos ids de 12 hex, mismos bytes); autor neutro `agente`/`humano`/`forja` por la cabecera `X-Forja-Origen` (el cliente MCP envía `agente`) o `Sec-Fetch-Site`; nuevo `versioning.listar_commits`.
+- `python -m migrar_historial [--aplicar]`: migra `.historial/` a commits (dry-run, idempotente, verificación byte a byte, marcador, mueve a `.historial.migrado/`). Aplicado: 122 instantáneas de 11 documentos, 1,40 GB → 156 MB.
+- ADR-0014 sustituye a ADR-0006. Pruebas: `tests/test_git_store.py` (31).
+
 ### Added (fdm-D — material/filamento por pieza con nombre)
 
 - Scripts: dict literal `MATERIALES = {"tapa": "PETG negro", "junta": {"material": "TPU", "color": "#202020", "extrusor": 2}}` a nivel de módulo, leído con `ast.literal_eval` (nunca se ejecuta en el proceso web) y validado antes de correr (texto 1–64, color `#RRGGBB`, extrusor 1..16; 422 sin crear nada). Nombres que el script no produce se descartan y se informan en `materiales_ignorados` (aditivo).

@@ -289,7 +289,8 @@ def percibir(
 
 
 def parametros(
-    id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None
+    id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None,
+    confirmar_script: bool = False,
 ) -> dict[str, Any]:
     """Parametros de un documento creado con un script parametrico (Fase 5C):
     iterar cambiando NUMEROS, sin volver a mandar el script.
@@ -321,8 +322,13 @@ def parametros(
     vigentes. Un script tambien puede declararlos con un dict literal
     `MATERIALES = {...}` a nivel de modulo. El 3MF descargado/abierto en
     Orca lleva el extrusor de cada pieza y su color.
+
+    Si un cambio de rama dejo el aviso `script_divergente` (el script por
+    `ruta` en disco no es el de esa rama), aplicar `valores` responde error
+    hasta restaurar el archivo o pasar `confirmar_script=true` (usa el
+    archivo tal como esta). La lectura incluye `avisos` en ese estado.
     """
-    return client.parametros(id, valores, materiales)
+    return client.parametros(id, valores, materiales, confirmar_script)
 
 
 def check_fdm(
@@ -405,6 +411,60 @@ def restaurar(id: str, snapshot: str) -> dict[str, Any]:
     snapshot antes de restaurar, asi que restaurar nunca es un camino sin
     vuelta atras. Devuelve el resumen actualizado del documento."""
     return client.restaurar(id, snapshot)
+
+
+def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = None,
+         a: str | None = None, piezas: list[str] | None = None, estrategia: str | None = None,
+         forzar: bool = False, simular: bool = False) -> Any:
+    """Ramas y pasos de un diseño (Plan G). Cada cambio aceptado deja un
+    «paso» con el estado COMPLETO (geometria, script con su texto,
+    parametros, materiales, notas, ensamble) en la rama activa.
+
+    accion:
+    - `listar`: `{activa, ramas: [{nombre, activa, pasos, ultimo}]}`.
+    - `crear`: rama `nombre` desde el estado actual o desde `desde`
+      (rama o sha_corto de un paso). No cambia de rama.
+    - `cambiar`: materializa la rama `nombre` en el documento (el estado
+      actual queda guardado; se deshace con `restaurar` o volviendo). Todo
+      o nada: si falla, el documento queda como estaba. `avisos` lista
+      `script_divergente: ...` si el script por `ruta` en disco no es el
+      de la rama (Forja no lo sobrescribe; ver `parametros`).
+    - `renombrar`: `nombre` -> `a` (main no). `borrar`: `nombre` (ni la
+      activa ni main).
+    - `pasos`: `[{sha_corto, fecha, autor, mensaje, revision}]` de la rama
+      `nombre` (por defecto la activa), mas reciente primero.
+    - `comparar`: diff de `desde` (A) contra `a` (B, por defecto la rama
+      activa); A/B = rama o sha_corto. Devuelve piezas
+      {nombre: añadida|quitada|cambiada|igual}, volumen {a,b,delta,pct},
+      bbox delta, parametros y materiales cambiados (antes/despues).
+    - `fusionar`: fusiona `desde` (rama o paso) en la rama activa con su
+      ancestro comun: parametros por clave, materiales por pieza, notas y
+      trazos por id, ensamble por articulacion, script con merge de 3 vias
+      y reconstruccion en el sandbox. Despues verifica validez y colisiones
+      contra las dos ramas. `resultado`: fusionada | simulada | conflicto
+      (lista `conflictos` en español, con `lineas` si es de texto del
+      script) | conflicto_geometrico (choques nuevos; no se confirma salvo
+      `forzar=true`) | ya_incluida. `simular=true` no escribe nada.
+      `estrategia`: auto (por defecto) | nuestra | suya para resolver
+      conflictos de datos/texto. Confirmada = paso con dos padres.
+    - `traer_pieza`: trae de `desde` las `piezas` (nombres) y sustituye o
+      añade solo esas (con sus materiales); el resto queda igual. Si el
+      documento tiene script, queda marcado `geometria_editada` (regenerar
+      parametros pedira confirmar_script=true). Misma verificacion.
+    - `restaurar_pieza`: devuelve UNA pieza (`piezas=[nombre]`) a como
+      estaba en el paso `desde` (sha_corto); el resto queda igual. Mismo
+      motor y verificacion que `traer_pieza`; deja un paso «restaurar
+      pieza X a <sha>». `resultado: sin_cambios` si ya era igual.
+    - `incorporar`: mete en ESTE documento (mismo id) la geometria del
+      documento `desde` (su id): todas sus piezas o las `piezas` indicadas.
+      Destino STL: concatena la malla. Destino STEP: añade los solidos con
+      su nombre (si choca, sufijo _2, _3...); un origen STL en destino STEP
+      es error. El origen no cambia; deja el paso «incorporar <piezas>
+      desde <nombre origen>» (se deshace con `restaurar` y `snapshot_previo`).
+    - `hito`: pone el hito `nombre` en el paso `desde` (por defecto el
+      ultimo de la rama activa), con descripcion `a`. `hitos`: lista.
+    Nombres de rama/hito: letras, numeros, - y _ (max 48)."""
+    return client.rama(id, accion, nombre, desde, a, piezas, estrategia, forzar, simular)
 
 
 def captura(

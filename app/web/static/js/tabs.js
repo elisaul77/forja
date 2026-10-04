@@ -1,9 +1,10 @@
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=12";
+import { ForjaViewer } from "./viewer.js?v=14";
 import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
-import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js";
+import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
+import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
 import { crearBotonCupon } from "./cupon.js?v=2";
@@ -12,6 +13,7 @@ import { renderPiecesPanel } from "./pieces.js?v=9";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
 import { construirAnclas } from "./orca.js?v=3";
 import { createRefreshScheduler } from "./live-core.js?v=11";
+import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=3";
 
 function formatoVolumen(mm3) {
   return `${mm3.toFixed(2)} mm³`;
@@ -40,6 +42,7 @@ export class TabManager {
     this.panel = document.getElementById("fj-panel-lateral");
     this.panelSeccionNotas = document.getElementById("fj-panel-notas");
     this.panelSeccionHistorial = document.getElementById("fj-panel-historial");
+    this.panelSeccionRamas = document.getElementById("fj-panel-ramas");
     this.panelSeccionParametros = document.getElementById("fj-panel-parametros");
     this.panelSeccionEnsamble = document.getElementById("fj-panel-ensamble");
     this.panelSeccionPiezas = document.getElementById("fj-panel-piezas");
@@ -67,6 +70,8 @@ export class TabManager {
     this.panelActivo = seccion;
     this.panelSeccionNotas.hidden = seccion !== "notas";
     this.panelSeccionHistorial.hidden = seccion !== "historial";
+    // Historial 2.0: «Ramas» vive en el cajón de la vista Historial.
+    this.panel.classList.toggle("fj-panel-lateral--historial", seccion === "historial");
     this.panelSeccionParametros.hidden = seccion !== "parametros";
     this.panelSeccionEnsamble.hidden = seccion !== "ensamble";
     this.panelSeccionPiezas.hidden = seccion !== "piezas";
@@ -78,6 +83,7 @@ export class TabManager {
 
   abrirPanel(seccion) {
     if (!this.activeId) return;
+    if (seccion === "ramas") seccion = "historial";
     if (this.panel.hidden) this.panelReturnFocus = document.activeElement;
     this.panel.hidden = false;
     this._mostrarSeccionPanel(seccion);
@@ -90,6 +96,10 @@ export class TabManager {
     if (!entrada) return;
     renderizarPanelNotas(entrada.notas);
     renderizarPanelHistorial(entrada.historial);
+    if (this.panelActivo === "historial") {
+      renderizarHistorial2(entrada.h2);
+      renderizarPanelRamas(entrada.ramas);
+    }
     renderizarPanelParametros(entrada.parametros);
     if (this.panelActivo === "ensamble") renderizarPanelEnsamble(entrada.ensamble);
     if (this.panelActivo === "piezas") renderPiecesPanel(entrada.viewer, entrada.ficha.nombre, entrada.materiales);
@@ -148,9 +158,21 @@ export class TabManager {
         const actual = this.tabs.get(ficha.id);
         renderPiecesPanel(viewer, actual.ficha.nombre, actual.materiales);
       }
+      if (this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "historial") {
+        renderizarHistorial2(this.tabs.get(ficha.id).h2);
+      }
     };
     const historial = new ForjaHistorialControlador(ficha.id, async (registroActualizado) => {
       await this._alRestaurar(ficha.id, registroActualizado);
+    });
+    const ramas = new ForjaRamasControlador(ficha.id, {
+      alCambiar: async (registro) => { this._salirComparacion(ficha.id); await this._alRestaurar(ficha.id, registro); },
+      alComparar: async (resumen, mallaA, mallaB) => this._mostrarComparacion(ficha.id, resumen, mallaA, mallaB),
+    });
+    const h2 = new ForjaHistorial2Controlador(ficha.id, {
+      alCambiar: async (registro) => { this._salirComparacion(ficha.id); await this._alRestaurar(ficha.id, registro); },
+      alComparar: async (resumen, mallaA, mallaB, opciones) => this._mostrarComparacion(ficha.id, resumen, mallaA, mallaB, opciones),
+      piezaSeleccionada: () => viewer.selectedPiece,
     });
     const parametros = new ForjaParametrosControlador(ficha.id, async (registroActualizado) => {
       await this._alCambiarParametros(ficha.id, registroActualizado);
@@ -243,19 +265,26 @@ export class TabManager {
     viewLabel.className = "fj-view-controls__label";
     viewLabel.textContent = "VISTA 3D";
     viewControls.append(viewLabel);
-    for (const [label, direction] of [["Isométrica", [1, -1, .75]], ["Superior", [0, 0, 1]], ["Frontal", [0, -1, 0]], ["Lateral", [1, 0, 0]]]) {
+    // Etiqueta larga + corta: con poco ancho (panel abierto) la barra usa la
+    // corta para caber en una fila; el nombre completo queda en title/aria.
+    const rotular = (button, largo, corto) => {
+      const l = document.createElement("span"); l.className = "fj-view-controls__largo"; l.textContent = largo;
+      const c = document.createElement("span"); c.className = "fj-view-controls__corto"; c.textContent = corto; c.setAttribute("aria-hidden", "true");
+      button.append(l, c); button.title = largo; button.setAttribute("aria-label", largo);
+    };
+    for (const [label, corto, direction] of [["Isométrica", "Iso", [1, -1, .75]], ["Superior", "Sup", [0, 0, 1]], ["Frontal", "Fren", [0, -1, 0]], ["Lateral", "Lat", [1, 0, 0]]]) {
       const button = document.createElement("button");
-      button.type = "button"; button.className = "fj-btn"; button.textContent = label;
+      button.type = "button"; button.className = "fj-btn"; rotular(button, label, corto);
       button.addEventListener("click", () => viewer.ajustarVista(direction));
       viewControls.append(button);
     }
     const fit = document.createElement("button");
-    fit.type = "button"; fit.className = "fj-btn"; fit.textContent = "Encuadrar";
+    fit.type = "button"; fit.className = "fj-btn"; rotular(fit, "Encuadrar", "⤢");
     fit.addEventListener("click", () => viewer.ajustarVista(viewer.direccionHaciaCamara()));
     viewControls.append(fit);
-    for (const [label, initial, action] of [["Cuadrícula", true, enabled => viewer.setGridVisible(enabled)], ["Malla", false, enabled => viewer.setWireframe(enabled)]]) {
+    for (const [label, corto, initial, action] of [["Cuadrícula", "▦", true, enabled => viewer.setGridVisible(enabled)], ["Malla", "◇", false, enabled => viewer.setWireframe(enabled)]]) {
       const toggle = document.createElement("button");
-      toggle.type = "button"; toggle.className = "fj-btn"; toggle.textContent = label;
+      toggle.type = "button"; toggle.className = "fj-btn"; rotular(toggle, label, corto);
       toggle.setAttribute("aria-pressed", String(initial));
       toggle.addEventListener("click", () => {
         const enabled = toggle.getAttribute("aria-pressed") !== "true";
@@ -273,8 +302,45 @@ export class TabManager {
     notice.textContent = "El modelo cambió; se actualizará al terminar";
     notice.hidden = true;
     contenedor.append(notice);
+    // G3: banda del modo Comparar (resumen numérico + volver).
+    const banda = document.createElement("div");
+    banda.className = "fj-comparar";
+    banda.hidden = true;
+    contenedor.append(banda);
 
-    const entry = { boton, contenedor, viewer, ficha, notas, historial, parametros, ensamble, btnParametros,
+    // Historial 2.0: divisor arrastrable de la vista antes/después.
+    const divisor = document.createElement("div");
+    divisor.className = "fj-divisor";
+    divisor.hidden = true;
+    divisor.tabIndex = 0;
+    divisor.setAttribute("role", "slider");
+    divisor.setAttribute("aria-label", "Deslizador antes / después");
+    divisor.setAttribute("aria-valuemin", "0");
+    divisor.setAttribute("aria-valuemax", "100");
+    divisor.innerHTML = '<span class="fj-divisor__etq fj-divisor__etq--a"></span><span class="fj-divisor__asa" aria-hidden="true">⟷</span><span class="fj-divisor__etq fj-divisor__etq--b"></span>';
+    const moverDivisor = fraccion => {
+      const f = Math.min(0.98, Math.max(0.02, fraccion));
+      divisor.style.left = `${f * 100}%`;
+      divisor.setAttribute("aria-valuenow", String(Math.round(f * 100)));
+      viewer.fijarDivision(f);
+    };
+    divisor._mover = moverDivisor;
+    divisor.addEventListener("pointerdown", ev => {
+      ev.preventDefault();
+      divisor.setPointerCapture(ev.pointerId);
+      const mover = e => { const r = contenedor.getBoundingClientRect(); moverDivisor((e.clientX - r.left) / r.width); };
+      const soltar = () => { divisor.removeEventListener("pointermove", mover); divisor.removeEventListener("pointerup", soltar); };
+      divisor.addEventListener("pointermove", mover);
+      divisor.addEventListener("pointerup", soltar);
+    });
+    divisor.addEventListener("keydown", ev => {
+      const actual = Number(divisor.getAttribute("aria-valuenow") || 50) / 100;
+      if (ev.key === "ArrowLeft") { ev.preventDefault(); moverDivisor(actual - 0.05); }
+      if (ev.key === "ArrowRight") { ev.preventDefault(); moverDivisor(actual + 0.05); }
+    });
+    contenedor.append(divisor);
+
+    const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, btnParametros,
       revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
     entry.materiales = {
       materiales: {},
@@ -310,7 +376,7 @@ export class TabManager {
     entry.scheduler.setShown(revision);
     this.tabs.set(ficha.id, entry);
     try {
-      await Promise.all([notas.cargarInicial(), historial.cargarInicial(), parametros.cargarInicial(), ensamble.cargarInicial(), this._cargarMateriales(entry)]);
+      await Promise.all([notas.cargarInicial(), historial.cargarInicial(), ramas.cargarInicial().catch(() => {}), parametros.cargarInicial(), ensamble.cargarInicial(), this._cargarMateriales(entry)]);
     } catch (error) {
       this.cerrar(ficha.id);
       throw error;
@@ -356,7 +422,7 @@ export class TabManager {
       entrada.viewer.cargarMallaSTL(malla.buffer);
       this._setRevision(entrada, malla.revision);
       entrada.notas.invalidarCaras();
-      await Promise.all([entrada.notas.recargar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
+      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       entrada.btnParametros.hidden = !entrada.parametros.tieneParametros();
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
@@ -385,7 +451,7 @@ export class TabManager {
       entrada.notas.invalidarCaras();
       const msMalla = performance.now() - inicio;
       entrada.ficha = registroActualizado;
-      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
+      await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         if (!this.panel.hidden && this.panelActivo !== "parametros") this._renderizarPanelPestanaActiva();
@@ -395,6 +461,60 @@ export class TabManager {
       entrada.localRefresh = false;
       entrada.scheduler.flush(true);
     }
+  }
+
+  /** G3: modo Comparar sobre el visor de la pestaña. */
+  _mostrarComparacion(docId, resumen, mallaA, mallaB, opciones = {}) {
+    const entry = this.tabs.get(docId);
+    if (!entry) return;
+    const dividida = opciones.modo === "dividida";
+    const [etqA, etqB] = opciones.etiquetas ?? [resumen.a.sha_corto.slice(0, 7), resumen.b.sha_corto.slice(0, 7)];
+    if (dividida) {
+      entry.viewer.mostrarComparacionDividida(mallaA, mallaB, resumen.piezas);
+      entry.divisor.querySelector(".fj-divisor__etq--a").textContent = `◀ ${etqA}`;
+      entry.divisor.querySelector(".fj-divisor__etq--b").textContent = `${etqB} ▶`;
+      entry.divisor.hidden = false;
+      entry.divisor._mover(0.5);
+    } else {
+      entry.viewer.mostrarComparacion(mallaA, mallaB, resumen.piezas);
+      entry.divisor.hidden = true;
+    }
+    entry.banda.textContent = "";
+    entry.banda.classList.toggle("is-dividida", dividida);
+    const titulo = document.createElement("strong");
+    titulo.textContent = `Comparar ${resumen.a.sha_corto.slice(0, 7)} → ${resumen.b.sha_corto.slice(0, 7)}`;
+    const modos = document.createElement("div");
+    modos.className = "fj-comparar__modos";
+    modos.setAttribute("role", "group");
+    modos.setAttribute("aria-label", "Modo de comparación");
+    for (const [modo, texto] of [["dividida", "Dividida"], ["superpuesta", "Superpuesta"]]) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "fj-btn fj-btn--ghost"; b.textContent = texto;
+      b.setAttribute("aria-pressed", String((modo === "dividida") === dividida));
+      b.addEventListener("click", () => this._mostrarComparacion(docId, resumen, mallaA, mallaB, { ...opciones, modo }));
+      modos.append(b);
+    }
+    const leyenda = document.createElement("div");
+    leyenda.className = "fj-comparar__leyenda";
+    leyenda.textContent = dividida ? "Arrastra el divisor · verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual" : "verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual";
+    const lista = document.createElement("ul");
+    for (const linea of textoResumen(resumen)) {
+      const li = document.createElement("li"); li.textContent = linea; lista.appendChild(li);
+    }
+    const volver = document.createElement("button");
+    volver.type = "button"; volver.className = "fj-btn"; volver.textContent = "Volver";
+    volver.addEventListener("click", () => this._salirComparacion(docId));
+    entry.banda.append(titulo, modos, leyenda, lista, volver);
+    entry.banda.hidden = false;
+  }
+
+  _salirComparacion(docId) {
+    const entry = this.tabs.get(docId);
+    if (!entry) return;
+    entry.viewer.salirComparacion();
+    entry.banda.hidden = true;
+    entry.divisor.hidden = true;
+    entry.ramas.comparando = null;
   }
 
   /** fdm-D: materiales por pieza (colores en el visor + panel Piezas).
@@ -424,11 +544,12 @@ export class TabManager {
   async _aplicarMalla(docId, ficha, mesh) {
     const entry = this.tabs.get(docId);
     if (!entry) return;
+    this._salirComparacion(docId);
     entry.viewer.cargarMallaSTL(mesh.buffer, { conservarVista: true });
     entry.notas.invalidarCaras();
     entry.ficha = ficha;
     this._setRevision(entry, mesh.revision);
-    await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
+    await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar(), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
     if (!entry.parametros.ocupado()) await entry.parametros.cargarInicial();
     if (this.tabs.get(docId) !== entry) return;
     entry.btnParametros.hidden = !entry.parametros.tieneParametros();
@@ -456,8 +577,9 @@ export class TabManager {
       if ((tag === "notas" && entry.notas.ocupado()) || (tag === "parametros" && entry.parametros.ocupado())) continue;
       entry.pendingPanels.delete(tag);
       if (tag === "notas") tasks.push(entry.notas.recargar());
-      if (tag === "historial") tasks.push(entry.historial.cargarInicial());
+      if (tag === "historial") tasks.push(entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar());
       if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial());
+      if (tag === "ramas") tasks.push(entry.ramas.cargarInicial(), entry.h2.invalidar());
       if (tag === "parametros") tasks.push(entry.parametros.cargarInicial());
       if (tag === "materiales") tasks.push(this._cargarMateriales(entry));
     }
@@ -476,8 +598,8 @@ export class TabManager {
     for (const [id, entry] of this.tabs) {
       if (!known.has(id)) this.documentoEliminado(id);
       else this.aplicarCambioExterno(id,
-        known.get(id) === entry.revision ? ["notas", "historial", "parametros", "ensamble", "materiales"]
-          : ["geometria", "notas", "historial", "parametros", "ensamble", "materiales"], known.get(id));
+        known.get(id) === entry.revision ? ["notas", "historial", "parametros", "ensamble", "materiales", "ramas"]
+          : ["geometria", "notas", "historial", "parametros", "ensamble", "materiales", "ramas"], known.get(id));
     }
   }
 

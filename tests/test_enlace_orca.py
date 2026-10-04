@@ -229,13 +229,13 @@ NOMBRES_20 = {  # fdm-B: + cupon
     "estado", "listar_documentos", "abrir_archivo", "resumen_documento", "ejecutar_script",
     "exportar", "captura", "check_colisiones", "percibir", "parametros", "check_fdm",
     "leer_notas", "crear_nota", "borrar_nota", "leer_historial", "restaurar", "ensamble",
-    "suspension", "puentes", "cupon",
+    "suspension", "puentes", "cupon", "rama",  # G2: + rama
 }
 
 
 def test_inventario_de_herramientas_no_cambia():
     registradas = {t.name for t in crear_servidor()._tool_manager.list_tools()}  # noqa: SLF001
-    assert registradas == NOMBRES_20 and len(registradas) == 20
+    assert registradas == NOMBRES_20 and len(registradas) == 21
 
 
 def test_docstring_documenta_los_campos():

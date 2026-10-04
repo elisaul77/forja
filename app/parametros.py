@@ -222,6 +222,7 @@ def guardar(
         meta.pop("timeout", None)
     meta["parametros"] = esquema
     meta["valores"] = valores
+    meta.pop("geometria_editada", None)  # G4: the script built everything again
     _ruta_meta(doc_id).write_text(json.dumps(meta))
 
 
@@ -263,7 +264,9 @@ def resumen_valores(valores: dict[str, float]) -> str:
 # `notas.json`/`solidos.json`.
 
 NOMBRE_SNAPSHOT = "parametros.json"
-_CLAVES_ESTADO = ("script", "variables", "timeout", "parametros", "valores")
+# G4: ``geometria_editada`` = the geometry no longer comes from the script
+# alone (a piece was brought from another branch); travels with the state.
+_CLAVES_ESTADO = ("script", "variables", "timeout", "parametros", "valores", "geometria_editada")
 
 
 def estado_para_snapshot(doc_id: str) -> bytes | None:
@@ -291,3 +294,10 @@ def restaurar_estado(doc_id: str, contenido: bytes | None) -> None:
         if isinstance(datos, dict):
             meta.update({k: datos[k] for k in _CLAVES_ESTADO if k in datos})
     _ruta_meta(doc_id).write_text(json.dumps(meta))
+
+
+def quitar_geometria_editada(doc_id: str) -> None:
+    """G4: the script rebuilt the whole geometry again -> drop the mark."""
+    meta = _leer_meta(doc_id)
+    if meta.pop("geometria_editada", None) is not None:
+        _ruta_meta(doc_id).write_text(json.dumps(meta))

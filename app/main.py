@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 import assembly_routes
@@ -19,6 +20,11 @@ import documents
 import eventos
 import notes
 import perfiles
+import ramas
+import fusion
+import historial_grafo
+import incorporar
+import versioning
 from mcp_server.http_app import app_mcp_http
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -44,6 +50,61 @@ app.include_router(assembly_routes.router)
 app.include_router(bridges.router)
 app.include_router(perfiles.router)
 app.include_router(cupon.router)
+app.include_router(fusion.router)
+app.include_router(historial_grafo.router)
+app.include_router(ramas.router)
+app.include_router(incorporar.router)
+
+
+class _OrigenDelCambio:
+    """Pure ASGI middleware (G1): tags the request with who caused it, so
+    the history commit gets a neutral author. ``X-Forja-Origen: agente``
+    (sent by the MCP client) or ``humano`` wins; otherwise a browser
+    (``Sec-Fetch-Site`` present) is ``humano``; anything else ``forja``.
+
+    G2: for mutating requests it also collects the snapshots taken while
+    handling it and, when the response starts with a status < 400, records
+    the complete post-change state on each document's active branch
+    BEFORE the response leaves (so the client's next request already sees
+    the step)."""
+
+    def __init__(self, app_asgi) -> None:
+        self.app = app_asgi
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        cabeceras = dict(scope.get("headers") or [])
+        origen = cabeceras.get(b"x-forja-origen", b"").decode("latin-1").strip().lower()
+        if origen not in ("agente", "humano"):
+            origen = "humano" if b"sec-fetch-site" in cabeceras else "forja"
+        marca = versioning.autor_actual.set(origen)
+        if scope.get("method") in ("GET", "HEAD", "OPTIONS"):
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                versioning.autor_actual.reset(marca)
+            return
+        pendientes: list = []
+        marca_p = versioning.cambios_pendientes.set(pendientes)
+
+        async def enviar(mensaje) -> None:
+            if mensaje["type"] == "http.response.start" and pendientes:
+                lote = pendientes[:]
+                pendientes.clear()
+                if mensaje.get("status", 500) < 400:
+                    await run_in_threadpool(ramas.registrar_pendientes, lote)
+            await send(mensaje)
+
+        try:
+            await self.app(scope, receive, enviar)
+        finally:
+            versioning.cambios_pendientes.reset(marca_p)
+            versioning.autor_actual.reset(marca)
+
+
+app.add_middleware(_OrigenDelCambio)
 
 
 @app.get("/eventos")

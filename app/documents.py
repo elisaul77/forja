@@ -8,6 +8,7 @@ never raw vertices (ADR-0001 kernel boundary).
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -30,6 +31,7 @@ import auth
 import materiales
 import eventos
 import export as export_solidos
+import git_store
 import naming
 import notes
 import parametros
@@ -639,6 +641,8 @@ def crear_documento_desde_script(body: _ScriptBody) -> dict[str, Any]:
             valores=valores,
         )
         ignorados[:] = materiales.aplicar_declaracion(doc_id_, declarados, _nombres_piezas(doc_id_))
+        # An explicit run re-establishes which script the document follows.
+        git_store.fijar_script_divergente(doc_id_, None, None)
 
     if body.documento_id is not None:
         # Validated *before* the lock (Phase 6.3): `parametros.bloqueo`
@@ -755,11 +759,49 @@ def obtener_parametros(doc_id: str) -> dict[str, Any]:
     if doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
     datos = parametros.cargar(doc_id)
-    return {"esquema": datos["parametros"], "valores": datos["valores"]}
+    respuesta: dict[str, Any] = {"esquema": datos["parametros"], "valores": datos["valores"]}
+    avisos = [a for a in (aviso_script_divergente(doc_id, datos["script"]),
+                          aviso_geometria_editada(doc_id)) if a]
+    if avisos:
+        respuesta["avisos"] = avisos
+    return respuesta
+
+
+def aviso_geometria_editada(doc_id: str) -> str | None:
+    """G4: ``geometria_editada: ...`` while the geometry carries pieces
+    brought from another branch (the script alone would not rebuild it)."""
+    marca = parametros._leer_meta(doc_id).get("geometria_editada")
+    if not isinstance(marca, dict):
+        return None
+    piezas = ", ".join(str(p) for p in (marca.get("piezas") or [])[:10])
+    return (f"geometria_editada: las piezas {piezas} vienen del paso {marca.get('desde')} de otra rama; "
+            "el script no las genera asi. Regenerar con parametros las sustituiria por lo que produce "
+            "el script (confirmar_script=true para hacerlo).")
+
+
+def aviso_script_divergente(doc_id: str, script: Any) -> str | None:
+    """G2 fix-review: ``script_divergente: ...`` when a branch switch left
+    this document following a ``ruta`` whose file on disk is not the text
+    that branch recorded (Forja never writes outside its data), else
+    ``None``. A file brought back to that text clears the mark."""
+    marca = git_store.leer_script_divergente(doc_id)
+    if not marca or not isinstance(script, dict) or script.get("ruta") != marca["ruta"]:
+        return None
+    try:
+        actual = hashlib.sha256(_validar_ruta_permitida(marca["ruta"]).read_bytes()).hexdigest()
+    except (HTTPException, OSError):
+        actual = None
+    if actual == marca["sha256"]:
+        git_store.fijar_script_divergente(doc_id, None, None)
+        return None
+    return (f"script_divergente: el archivo {marca['ruta']} no coincide con el script guardado en "
+            "esta rama; Forja no lo sobrescribe. Restaura ese archivo o regenera con "
+            "confirmar_script=true para usar el archivo tal como esta.")
 
 
 class _ParametrosBody(BaseModel):
     valores: dict[str, Any]
+    confirmar_script: bool = False
 
 
 @router.post("/documentos/{doc_id}/parametros", dependencies=[Depends(auth.requiere_token)])
@@ -787,6 +829,12 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
                 status_code=400, detail="documento sin script parametrico (crearlo con ejecutar_script)"
             )
         if "ruta" in script:
+            aviso = aviso_script_divergente(doc_id, script)
+            if aviso and not body.confirmar_script:
+                raise HTTPException(
+                    status_code=409,
+                    detail="no se regenera: " + aviso.split(": ", 1)[1],
+                )
             origen = _validar_ruta_permitida(script["ruta"])
             try:
                 codigo = origen.read_text()
@@ -794,6 +842,9 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
                 raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
         else:
             codigo = script["codigo"]
+        editada = aviso_geometria_editada(doc_id)
+        if editada and not body.confirmar_script:
+            raise HTTPException(status_code=409, detail="no se regenera: " + editada.split(": ", 1)[1])
         try:
             esquema = parametros.esquema_desde_codigo(codigo)
             valores = parametros.aplicar_valores(esquema, datos["valores"], body.valores)
@@ -812,6 +863,9 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
             ms = round((time.perf_counter() - inicio) * 1000)
             parametros.guardar_valores(doc_id, esquema, valores)
             materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
+            if "ruta" in script:  # confirmed (or matching) file: mark resolved
+                git_store.fijar_script_divergente(doc_id, None, None)
+            parametros.quitar_geometria_editada(doc_id)  # G4: script rebuilt everything
             confirmar_revision(doc_id)
     return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
 
@@ -1008,8 +1062,15 @@ def _guardar_cache_malla(doc_id: str, revision: str, components: bool, contenido
 
 
 def _borrar_cache_malla(doc_id: str) -> None:
-    for viejo in _CACHE_MALLAS.glob(f"{doc_id}.*"):
-        viejo.unlink(missing_ok=True)
+    # G3: the per-step meshes of the compare view live next door.
+    for cache in (_CACHE_MALLAS, _CACHE_MALLAS.parent / "comparar"):
+        for viejo in cache.glob(f"{doc_id}.*"):
+            viejo.unlink(missing_ok=True)
+    # Historial 2.0: per-step summaries and thumbnails (one dir per doc).
+    for sub in ("grafo", "miniaturas_pasos"):
+        destino = _CACHE_MALLAS.parent / sub / doc_id
+        if destino.is_dir() and destino.resolve().parent == (_CACHE_MALLAS.parent / sub).resolve():
+            shutil.rmtree(destino, ignore_errors=True)
 
 
 @router.get("/documentos/{doc_id}/malla")

@@ -1,7 +1,9 @@
 // Forja — panel de historial (snapshots) de un documento (Fase 4).
 import { obtenerHistorial, restaurarDocumento } from "./api.js";
 
-const panelHistorial = document.getElementById("fj-panel-historial");
+// Historial 2.0: la lista clásica de instantáneas G1 vive en el cajón
+// «Instantáneas» de la vista Historial.
+const panelHistorial = document.getElementById("fj-panel-instantaneas");
 
 export class ForjaHistorialControlador {
   constructor(docId, alRestaurar) {

@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![build123d](https://img.shields.io/badge/kernel-build123d%20%2F%20OpenCascade-f26b21.svg)](https://github.com/gumyr/build123d)
-[![MCP](https://img.shields.io/badge/MCP-19%20herramientas-6f42c1.svg)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-21%20herramientas-6f42c1.svg)](https://modelcontextprotocol.io/)
 [![Docker](https://img.shields.io/badge/runtime-Docker-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
 [![three.js](https://img.shields.io/badge/visor-three.js-000000.svg?logo=threedotjs)](https://threejs.org/)
 
@@ -21,14 +21,16 @@
 
 ## ✨ Qué puedes hacer
 
-- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (20 herramientas, respuestas compactas para gastar pocos tokens).
+- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (21 herramientas, respuestas compactas para gastar pocos tokens).
 - 👀 **Ver el diseño en vivo** — cuando el agente cambia un documento, el visor se actualiza solo, sin recargar y sin mover tu cámara.
 - 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
 - 🔍 **Verificar antes de imprimir** — colisiones y holguras, imprimibilidad FDM (voladizos, paredes finas, cama), percepción espacial en texto (`percibir`).
 - 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
-- 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable; las notas siguen a sus caras entre reconstrucciones.
+- 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable, con grafo de ramas, miniatura por paso, historial por pieza y «restaurar solo esta pieza»; las notas siguen a sus caras entre reconstrucciones.
 - 🛡️ **Ejecución aislada** — los scripts corren en un contenedor sandbox sin red, sin secretos y sin acceso a tus documentos.
+- 🌿 **Git para diseño** — cada documento es un repo git: ramas de diseño, comparar versiones pieza por pieza en 3D (verde añadida, rojo quitada, ámbar cambiada), fusión verificada con detección de choques, «traer pieza» desde otra rama e hitos.
+- 🧩 **Incorporar piezas** — mete la geometría de un documento dentro de otro en su sitio (por ejemplo, un soporte diseñado aparte dentro del modelo de un carro), con paso restaurable en el historial.
 - 📐 **Perfil de tolerancias de tu impresora** — imprime una probeta, anota tus medidas y los diseños compensan solos (`agujero(3)`, `ajuste("M3_pasante")`).
 - 🧪 **Cupones de prueba** — imprime en minutos solo la zona donde encajan las piezas antes de la impresión larga.
 - 🛠️ **Arreglos FDM automáticos** — agujeros en gota sin soporte, chaflán contra pata de elefante, puentes de sacrificio y partir piezas para la cama con pasadores o cola de milano.
@@ -50,9 +52,9 @@
 |:---:|:---:|
 | ![Corte](docs/img/corte.png) | ![Galería](docs/img/galeria.png) |
 
-| Tornillo M8 con rosca real y tuerca |
-|:---:|
-| ![Tornillo](docs/img/tornillo.png) |
+| Tornillo M8 con rosca real y tuerca | Historial: grafo de ramas con miniaturas por paso |
+|:---:|:---:|
+| ![Tornillo](docs/img/tornillo.png) | ![Historial](docs/img/historial.png) |
 
 ## 🚀 Inicio rápido
 
@@ -227,6 +229,60 @@ puede precargar ningún perfil** de máquina, proceso ni filamento (se elige en
 Orca); el 3MF no es idéntico byte a byte entre descargas (las marcas de tiempo
 del zip cambian, el contenido no); y `valido: true` **no detecta pérdida de
 geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
+
+### Ramas, pasos y comparar (Plan G · G2/G3)
+
+Cada documento tiene un repo git (`.repos/{id}.git`). `refs/heads/main` es el
+historial de instantáneas «antes del cambio» de siempre (`historial`/`restaurar`).
+Las ramas viven en `refs/forja/ramas/<nombre>`: cada cambio aceptado deja un
+**paso** con el estado COMPLETO (geometría, `meta.json`, notas, sólidos,
+materiales, ensamble y el texto del script aunque venga de `ruta`).
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /documentos/{id}/ramas` | `{activa, ramas:[{nombre, activa, pasos, ultimo}]}` (crea `main` la primera vez) |
+| `POST /documentos/{id}/ramas` 🔑 | `{nombre, desde?}` — rama desde el estado actual o un paso/rama |
+| `POST .../ramas/{rama}/activar` 🔑 | materializa la rama en el documento (+ evento en vivo) |
+| `POST .../ramas/{rama}/renombrar` 🔑 · `DELETE .../ramas/{rama}` 🔑 | ni `main` ni la activa |
+| `GET .../ramas/{rama}/pasos?limite=` | `[{sha_corto, fecha, autor, mensaje, revision}]` |
+| `GET /documentos/{id}/comparar?a=&b=` | diff por pieza (añadida/quitada/cambiada/igual), Δvolumen y %, Δbbox, parámetros, materiales |
+| `GET /documentos/{id}/comparar/malla?ref=` | malla FJP1 de un paso para la vista superpuesta |
+
+| `POST /documentos/{id}/ramas/fusionar` 🔑 | `{desde, piezas?, estrategia?, forzar?, simular?}` — fusión verificada o traer piezas (G4) |
+| `GET /documentos/{id}/hitos` · `POST` 🔑 · `DELETE .../hitos/{nombre}` 🔑 | hitos con nombre sobre pasos (G5) |
+| `GET .../ramas/{rama}/pasos_curados?vista=hitos\|visibles\|todos` · `POST .../pasos/ocultar` 🔑 | vista curada sin reescribir la historia |
+
+MCP: `rama(id, accion, nombre?, desde?, a?, piezas?, estrategia?, forzar?, simular?)` con `listar|crear|cambiar|renombrar|borrar|pasos|comparar|fusionar|traer_pieza|hito|hitos`.
+Visor: cajón «Ramas y fusiones» de la pestaña Historial y modo «Comparar» (verde añadida, rojo quitada, ámbar cambiada, gris igual); «Fusionar en esta rama», «Traer pieza…», «Solo hitos».
+
+### Historial 2.0 (grafo, miniaturas e historial por pieza)
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /documentos/{id}/grafo?limite=&pieza=` | todos los pasos de todas las ramas en orden topológico: `padres` (2 en fusiones), `ramas` que lo contienen, `puntas`, `hitos`, autor, fecha, mensaje, revisión, `fusion`, `desde` y `cambios` respecto al primer padre (piezas +/−/~, Δvolumen %, parámetros, materiales, script). Resumen cacheado por sha en `.cache/grafo/`. Con `pieza`, solo los pasos que la tocaron y `padres` reescritos al antepasado conservado más cercano |
+| `GET /documentos/{id}/pasos/{sha}/miniatura.png?pieza=` | PNG 256×192 renderizado en el servidor, cacheado por revisión en `.cache/miniaturas_pasos/` (sin token; `sha` = 7–40 hex) |
+| `POST /documentos/{id}/piezas/{pieza}/restaurar` 🔑 | `{desde, forzar?, simular?}` — devuelve UNA pieza a ese paso con el motor de «traer pieza» (verificación, todo o nada); `resultado` también `sin_cambios` |
+| `POST /documentos/{id}/pasos/{sha}/restaurar` 🔑 | todo el documento a ese paso como paso NUEVO de la rama activa (`restaurado`/`sin_cambios`) |
+
+MCP: acción `restaurar_pieza` en `rama` (`desde` + `piezas=[nombre]`).
+Visor: pestaña **Historial** = grafo SVG con carriles de color por rama (curvas de
+fusión, pastillas de rama/hito, rama activa resaltada), tarjetas con miniatura,
+autor (🤖/👤/⚙), fecha relativa, sha y chips de cambio; detalle con piezas tocadas
+(↺ restaurar cada una), parámetros antes→después, «Antes / después» en el visor con
+**vista dividida y deslizador** (o superpuesta), comparar con el actual, restaurar
+todo, crear rama, marcar hito y cambiar de rama. Filtro por pieza (al seleccionarla
+en el visor o con ⌕) con tira de miniaturas de esa pieza; búsqueda, autor, «Solo
+hitos» y rama. La gestión de ramas/fusiones y las instantáneas clásicas quedan en
+los cajones de abajo.
+
+Fusión (ADR-0015): datos a 3 vías con el ancestro común, script con `git merge-file`
+y reconstrucción; después validez + colisiones contra las dos ramas. Choques nuevos →
+`conflicto_geometrico` (no se confirma salvo `forzar`). Traer una pieza a un documento
+con script lo marca `geometria_editada`.
+
+### Incorporar un documento en otro
+
+`POST /documentos/{id}/incorporar` (token) con `{desde, piezas?}` mete en su sitio la geometría del documento `desde` dentro de `id`: destino STL → mallas concatenadas; destino STEP → sólidos con nombre añadidos sin pisar nombres. Deja instantánea restaurable y paso en el historial; el origen no cambia. Por MCP: `rama(id, accion="incorporar", desde=..., piezas=[...])`.
 
 ### MCP
 
