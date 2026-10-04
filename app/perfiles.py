@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import auth
 import perfil_fdm
@@ -137,7 +137,7 @@ def resolver_para_script(valor: Any) -> dict[str, Any]:
 
 class _PerfilBody(BaseModel):
     nombre: str
-    material: str | None = None
+    material: str | None = Field(default=None, max_length=40)
     boquilla: float | None = None
     altura_capa: float | None = None
     mediciones: dict[str, Any] | None = None

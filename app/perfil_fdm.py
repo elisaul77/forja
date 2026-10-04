@@ -128,20 +128,41 @@ def _pares(lista: Any, campo: str) -> list[tuple[float, float]]:
     return pares
 
 
+CLAVES_MEDICIONES = (
+    "agujeros", "agujeros_horizontales", "ejes", "ranuras", "holgura_deslizante", "holgura_presion",
+)
+MAX_COEF_A = 2.0
+MAX_COEF_B = 0.5
+
+
 def perfil_desde_mediciones(base: dict[str, Any], mediciones: dict[str, Any]) -> dict[str, Any]:
     """New profile = ``base`` with every measured group refitted. Groups:
     ``agujeros``, ``agujeros_horizontales``, ``ejes``, ``ranuras`` (lists of
     ``{nominal, medido}``) and scalars ``holgura_deslizante``/``holgura_presion``."""
+    if not isinstance(mediciones, dict):
+        raise ValueError("'mediciones' debe ser un objeto")
+    # Unknown keys are dropped, never stored (the profile is persisted).
+    mediciones = {k: v for k, v in mediciones.items() if k in CLAVES_MEDICIONES}
     perfil = {**base, "mediciones": dict(mediciones)}
     medido = False
     for campo, clave in (("agujeros", "agujero"), ("agujeros_horizontales", "agujero_horizontal"), ("ejes", "eje")):
         pares = _pares(mediciones.get(campo), campo)
         if pares:
-            perfil[clave] = ajustar_lineal(pares)
+            ajuste = ajustar_lineal(pares)
+            # A printer error is a fraction of a mm with a small slope; a
+            # fit outside these bounds is a typo, not a printer.
+            if abs(ajuste["a"]) >= MAX_COEF_A or abs(ajuste["b"]) >= MAX_COEF_B:
+                raise ValueError(
+                    f"ajuste de '{campo}' fuera de rango (|a| < {MAX_COEF_A} mm, |b| < {MAX_COEF_B}): {ajuste}"
+                )
+            perfil[clave] = ajuste
             medido = True
     pares = _pares(mediciones.get("ranuras"), "ranuras")
     if pares:
-        perfil["ranura_offset"] = round(sum(m - n for n, m in pares) / len(pares), 4)
+        offset = round(sum(m - n for n, m in pares) / len(pares), 4)
+        if abs(offset) >= MAX_COEF_A:
+            raise ValueError(f"ajuste de 'ranuras' fuera de rango (|offset| < {MAX_COEF_A} mm): {offset}")
+        perfil["ranura_offset"] = offset
         medido = True
     for clave in ("holgura_deslizante", "holgura_presion"):
         if mediciones.get(clave) is not None:

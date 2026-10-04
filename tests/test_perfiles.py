@@ -173,3 +173,29 @@ def test_probeta_crea_documento_compacto():
         assert "probeta" in json.dumps(detalle) and "pin_5mm" in json.dumps(detalle)
     finally:
         client.delete(f"/documentos/{doc['id']}", headers=_headers())
+
+
+# ---------------------------------------------------------------- fdm-B: A review fix
+
+
+def test_mediciones_coeficientes_acotados():
+    absurdo = {"agujeros": [{"nominal": 3, "medido": 9}, {"nominal": 8, "medido": 9.5}]}
+    with pytest.raises(ValueError):
+        perfil_fdm.perfil_desde_mediciones(perfil_fdm.SEMILLA, absurdo)
+    with pytest.raises(ValueError):
+        perfil_fdm.perfil_desde_mediciones(perfil_fdm.SEMILLA, {"ejes": [{"nominal": 5, "medido": 8}]})
+    with pytest.raises(ValueError):
+        perfil_fdm.perfil_desde_mediciones(perfil_fdm.SEMILLA, {"ranuras": [{"nominal": 2, "medido": 5}]})
+    malo = {"nombre": "ok", "mediciones": absurdo}
+    assert client.post("/perfiles", json=malo, headers=_headers()).status_code == 422
+
+
+def test_mediciones_descarta_claves_desconocidas_y_material_largo():
+    perfil = perfil_fdm.perfil_desde_mediciones(
+        perfil_fdm.SEMILLA, {"ejes": [{"nominal": 5, "medido": 4.9}], "basura": "x" * 1000}
+    )
+    assert "basura" not in perfil["mediciones"] and "ejes" in perfil["mediciones"]
+    largo = {"nombre": "ok", "material": "P" * 41}
+    assert client.post("/perfiles", json=largo, headers=_headers()).status_code == 422
+    corto = {"nombre": "ok", "material": "PETG"}
+    assert client.post("/perfiles", json=corto, headers=_headers()).status_code == 200
