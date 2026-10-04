@@ -246,8 +246,17 @@ materiales, ensamble y el texto del script aunque venga de `ruta`).
 | `GET /documentos/{id}/comparar?a=&b=` | diff por pieza (añadida/quitada/cambiada/igual), Δvolumen y %, Δbbox, parámetros, materiales |
 | `GET /documentos/{id}/comparar/malla?ref=` | malla FJP1 de un paso para la vista superpuesta |
 
-MCP: `rama(id, accion, nombre?, desde?, a?)` con `listar|crear|cambiar|renombrar|borrar|pasos|comparar`.
-Visor: pestaña «Ramas» del panel lateral y modo «Comparar» (verde añadida, rojo quitada, ámbar cambiada, gris igual).
+| `POST /documentos/{id}/ramas/fusionar` 🔑 | `{desde, piezas?, estrategia?, forzar?, simular?}` — fusión verificada o traer piezas (G4) |
+| `GET /documentos/{id}/hitos` · `POST` 🔑 · `DELETE .../hitos/{nombre}` 🔑 | hitos con nombre sobre pasos (G5) |
+| `GET .../ramas/{rama}/pasos_curados?vista=hitos\|visibles\|todos` · `POST .../pasos/ocultar` 🔑 | vista curada sin reescribir la historia |
+
+MCP: `rama(id, accion, nombre?, desde?, a?, piezas?, estrategia?, forzar?, simular?)` con `listar|crear|cambiar|renombrar|borrar|pasos|comparar|fusionar|traer_pieza|hito|hitos`.
+Visor: pestaña «Ramas» del panel lateral y modo «Comparar» (verde añadida, rojo quitada, ámbar cambiada, gris igual); «Fusionar en esta rama», «Traer pieza…», «Solo hitos».
+
+Fusión (ADR-0015): datos a 3 vías con el ancestro común, script con `git merge-file`
+y reconstrucción; después validez + colisiones contra las dos ramas. Choques nuevos →
+`conflicto_geometrico` (no se confirma salvo `forzar`). Traer una pieza a un documento
+con script lo marca `geometria_editada`.
 
 ### MCP
 

@@ -7,6 +7,16 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (G4/G5 — fusión verificada, traer pieza e hitos, ADR-0015)
+
+- `app/fusion.py`: `POST /documentos/{id}/ramas/fusionar` 🔑 `{desde, piezas?, estrategia?, forzar?, simular?}`. Fusión a 3 vías con el ancestro común: parámetros por clave, materiales por pieza, notas/trazos por id, ensamble por articulación, script con `git merge-file` y reconstrucción en el sandbox; sin script, geometría por pieza. Conflictos listados en español (con líneas si son de texto). Verificación obligatoria (validez + colisiones contra los dos padres): choques nuevos → `conflicto_geometrico` salvo `forzar`. `simular` no escribe. Confirmada = todo o nada, commit con dos padres, instantánea G1 y evento SSE.
+- Traer pieza (`piezas`): sustituye/añade/quita solo esas piezas y sus materiales; commit de un padre (`Forja-Desde`). Documentos con script quedan marcados `geometria_editada` (aviso en `GET /parametros`, 409 en `POST /parametros` salvo `confirmar_script`; regenerar lo borra).
+- G5: hitos `refs/forja/hitos/<nombre>` (`GET|POST /documentos/{id}/hitos`, `DELETE /hitos/{nombre}` 🔑), pasos ocultos (`POST /pasos/ocultar` 🔑) y vista curada `GET /ramas/{rama}/pasos_curados?vista=hitos|visibles|todos` (metadatos en `forja-curacion.json`, historia intacta).
+- `git_store`: `escribir_commit(padres_extra=...)`, `base_comun`, `fusionar_texto`, hitos y curación.
+- MCP `rama`: acciones `fusionar`, `traer_pieza`, `hito`, `hitos` y parámetros `piezas/estrategia/forzar/simular` (sin herramientas nuevas).
+- Visor (pestaña Ramas): «Fusionar en esta rama» y «Traer pieza…» (piezas con estado igual/cambiada/añadida/quitada), vista previa con el modo comparar, conflictos y verificación, «Confirmar» / «Confirmar de todos modos» / «Quedarme con lo mío» / «Tomar lo de la otra»; casilla «Solo hitos» y botón «Hito…». `ramas.js?v=3`, `tabs.js?v=22`, `app.js?v=24`.
+- Pruebas: `tests/test_fusion.py` (12).
+
 ### Fixed (G2/G3 — revisión)
 
 - Cambiar de rama es todo o nada: temporales primero y renombrado después; cualquier fallo hasta `confirmar_revision` restaura los archivos del paso recién registrado, la rama activa, el registro, la revisión y la marca de script, y relanza.
