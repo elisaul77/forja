@@ -451,6 +451,10 @@ def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = No
       añade solo esas (con sus materiales); el resto queda igual. Si el
       documento tiene script, queda marcado `geometria_editada` (regenerar
       parametros pedira confirmar_script=true). Misma verificacion.
+    - `restaurar_pieza`: devuelve UNA pieza (`piezas=[nombre]`) a como
+      estaba en el paso `desde` (sha_corto); el resto queda igual. Mismo
+      motor y verificacion que `traer_pieza`; deja un paso «restaurar
+      pieza X a <sha>». `resultado: sin_cambios` si ya era igual.
     - `hito`: pone el hito `nombre` en el paso `desde` (por defecto el
       ultimo de la rama activa), con descripcion `a`. `hitos`: lista.
     Nombres de rama/hito: letras, numeros, - y _ (max 48)."""

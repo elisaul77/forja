@@ -602,9 +602,10 @@ def _nombre_ref(referencia: str) -> str:
 
 
 def fusionar(doc_id: str, desde: str, piezas: list[str] | None = None, estrategia: str | None = None,
-             forzar: bool = False, simular: bool = False) -> dict[str, Any]:
+             forzar: bool = False, simular: bool = False, mensaje: str | None = None) -> dict[str, Any]:
     """Merge ``desde`` into the active branch (or bring ``piezas`` from it).
-    Caller holds `parametros.bloqueo(doc_id)`."""
+    ``mensaje`` overrides the step message (Historial 2.0: «restaurar
+    pieza»). Caller holds `parametros.bloqueo(doc_id)`."""
     if estrategia not in ESTRATEGIAS:
         raise FusionInvalida("estrategia: auto | nuestra | suya")
     if piezas is not None:
@@ -638,12 +639,13 @@ def fusionar(doc_id: str, desde: str, piezas: list[str] | None = None, estrategi
         return {**publico, "resultado": "conflicto_geometrico", "confirmada": False}
     if simular:
         return {**publico, "resultado": "simulada", "confirmada": False}
-    return {**publico, **_confirmar(doc_id, ruta, activa, tip_a, sha_b, desde, plan, piezas),
+    return {**publico, **_confirmar(doc_id, ruta, activa, tip_a, sha_b, desde, plan, piezas, mensaje),
             "resultado": "fusionada", "confirmada": True, "forzada": bool(forzar and not verif.get("ok"))}
 
 
 def _confirmar(doc_id: str, ruta: Path, activa: str, tip_a: str, sha_b: str, desde: str,
-               plan: dict[str, Any], piezas: list[str] | None) -> dict[str, Any]:
+               plan: dict[str, Any], piezas: list[str] | None,
+               mensaje_propio: str | None = None) -> dict[str, Any]:
     """All-or-nothing write of the merged state + its commit (two parents
     for a merge, one for a cherry-pick), mirroring `ramas.cambiar`."""
     archivos = plan["archivos"]
@@ -652,6 +654,8 @@ def _confirmar(doc_id: str, ruta: Path, activa: str, tip_a: str, sha_b: str, des
         mensaje = f"fusionar {_nombre_ref(desde)} en {activa}"
     else:
         mensaje = f"traer {', '.join(piezas[:6])} de {_nombre_ref(desde)}"
+    if mensaje_propio:
+        mensaje = mensaje_propio
     versioning.crear_snapshot(doc_id, f"antes de {mensaje}", ramas._snapshot_actual(doc_id, ruta), pendiente=False)
     registro_previo = documents._registry[doc_id]
     tenia_revision = doc_id in documents._revisiones

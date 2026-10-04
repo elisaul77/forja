@@ -585,3 +585,42 @@ def guardar_curacion(doc_id: str, datos: dict[str, Any]) -> None:
     temporal = destino.with_name(destino.name + ".tmp")
     temporal.write_text(json.dumps(datos, ensure_ascii=False))
     os.replace(temporal, destino)
+
+
+# ------------------------------------------------------------ Historial 2.0: grafo
+
+def log_grafo(doc_id: str, tips: list[str], limite: int) -> list[dict[str, Any]]:
+    """Forja commits reachable from any of ``tips`` in topological order
+    (children before parents, newest first), each with ``padres`` (full
+    shas, merge commits have two) and the raw ``trailers`` dict."""
+    tips = [validar_sha(t) for t in tips]
+    if not tips or not existe(doc_id):
+        return []
+    salida = _git(ruta_repo(doc_id), "log", "--topo-order", f"--max-count={int(limite)}",
+                  "--format=%H%x00%P%x00%an%x00%B%x1e", "--end-of-options", *tips)
+    entradas = []
+    for bloque in salida.decode("utf-8", errors="surrogateescape").split("\x1e"):
+        bloque = bloque.lstrip("\n")
+        if not bloque:
+            continue
+        sha_c, padres, autor, cuerpo = bloque.split("\x00", 3)
+        datos = _parsear(sha_c, cuerpo, autor)
+        if datos is None:
+            continue
+        datos["padres"] = [p for p in padres.split() if _RE_SHA.match(p)]
+        pos = cuerpo.rfind(_SEPARADOR)
+        trailers = {}
+        for linea in cuerpo[pos + len(_SEPARADOR):].split("\n")[1:]:
+            clave, sep, valor = linea.partition(": ")
+            if sep and clave.startswith("Forja-"):
+                trailers[clave[len("Forja-"):]] = valor.strip()
+        datos["trailers"] = trailers
+        entradas.append(datos)
+    return entradas
+
+
+def contar_varios(doc_id: str, tips: list[str]) -> int:
+    tips = [validar_sha(t) for t in tips]
+    if not tips:
+        return 0
+    return int(_git(ruta_repo(doc_id), "rev-list", "--count", "--end-of-options", *tips).decode().strip() or 0)

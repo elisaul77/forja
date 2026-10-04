@@ -1066,6 +1066,11 @@ def _borrar_cache_malla(doc_id: str) -> None:
     for cache in (_CACHE_MALLAS, _CACHE_MALLAS.parent / "comparar"):
         for viejo in cache.glob(f"{doc_id}.*"):
             viejo.unlink(missing_ok=True)
+    # Historial 2.0: per-step summaries and thumbnails (one dir per doc).
+    for sub in ("grafo", "miniaturas_pasos"):
+        destino = _CACHE_MALLAS.parent / sub / doc_id
+        if destino.is_dir() and destino.resolve().parent == (_CACHE_MALLAS.parent / sub).resolve():
+            shutil.rmtree(destino, ignore_errors=True)
 
 
 @router.get("/documentos/{doc_id}/malla")

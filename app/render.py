@@ -311,6 +311,7 @@ def _rasterizar(
     colores: np.ndarray,
     ancho_px: int,
     alto_px: int,
+    fondo: tuple[float, float, float] = _FONDO,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Software z-buffer rasterizer. ``triangulos_px`` is ``(N, 3, 2)``
     ``(columna, fila)`` pixel coordinates (float, not yet rounded),
@@ -328,7 +329,7 @@ def _rasterizar(
     """
     zbuffer = np.full((alto_px, ancho_px), _SENTINEL_Z, dtype=np.float64)
     color_buffer = np.empty((alto_px, ancho_px, 3), dtype=np.float64)
-    color_buffer[:, :] = _FONDO
+    color_buffer[:, :] = fondo
 
     # Pull per-triangle scalars into plain Python lists up front: repeated
     # scalar access into a numpy array (`triangulos_px[i, 0, 0]` etc, tens
@@ -463,6 +464,8 @@ def renderizar_png(
     ancho: int = 800,
     alto: int = 800,
     colores_por_solido: bool = True,
+    leyenda_visible: bool = True,
+    fondo: tuple[float, float, float] | None = None,
 ) -> tuple[bytes, str]:
     """Render ``grupos`` (``{nombre: Trimesh}``, already tessellated — see
     `grupos_desde_shape`/`grupo_desde_malla`) to a small PNG via a software
@@ -542,7 +545,8 @@ def renderizar_png(
     pixel_y = despl_y + (max_y - proyeccion_y) * escala
     triangulos_px = np.stack([pixel_x, pixel_y], axis=-1)  # (N, 3, 2)
 
-    color_buffer, zbuffer = _rasterizar(triangulos_px, profundidad, color_sombreado, ancho_ss, alto_ss)
+    color_buffer, zbuffer = _rasterizar(triangulos_px, profundidad, color_sombreado, ancho_ss, alto_ss,
+                                        fondo if fondo is not None else _FONDO)
     _dibujar_bordes(color_buffer, zbuffer, diagonal_escena)
 
     imagen_ss = np.clip(color_buffer, 0.0, 1.0).reshape(alto, _SS, ancho, _SS, 3).mean(axis=(1, 3))
@@ -551,7 +555,8 @@ def renderizar_png(
     from PIL import Image
 
     imagen = Image.fromarray(imagen_u8, mode="RGB")
-    _dibujar_leyenda(imagen, leyenda)
+    if leyenda_visible:
+        _dibujar_leyenda(imagen, leyenda)
 
     buffer = io.BytesIO()
     imagen.save(buffer, format="png")
