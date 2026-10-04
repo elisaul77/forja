@@ -7,6 +7,14 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (G0/G1 — git como historial, ADR-0014)
+
+- G0: reconstrucción determinista verificada en los 5 documentos con script (2 builds, STEP normalizado idéntico byte a byte); regla de comparación para G3 en `plans/maestro/fases/G0-resultados.md`.
+- `app/git_store.py`: un repo git bare por documento en `.repos/{id}.git`, solo plumbing, sin shell, sin hooks, sin red, `safe.directory` acotado, timeouts, nombres validados. `git` en la imagen.
+- `app/versioning.py` usa git por debajo con el mismo contrato (`{id, fecha, mensaje}`, mismos ids de 12 hex, mismos bytes); autor neutro `agente`/`humano`/`forja` por la cabecera `X-Forja-Origen` (el cliente MCP envía `agente`) o `Sec-Fetch-Site`; nuevo `versioning.listar_commits`.
+- `python -m migrar_historial [--aplicar]`: migra `.historial/` a commits (dry-run, idempotente, verificación byte a byte, marcador, mueve a `.historial.migrado/`). Aplicado: 122 instantáneas de 11 documentos, 1,40 GB → 156 MB.
+- ADR-0014 sustituye a ADR-0006. Pruebas: `tests/test_git_store.py` (31).
+
 ### Added (fdm-D — material/filamento por pieza con nombre)
 
 - Scripts: dict literal `MATERIALES = {"tapa": "PETG negro", "junta": {"material": "TPU", "color": "#202020", "extrusor": 2}}` a nivel de módulo, leído con `ast.literal_eval` (nunca se ejecuta en el proceso web) y validado antes de correr (texto 1–64, color `#RRGGBB`, extrusor 1..16; 422 sin crear nada). Nombres que el script no produce se descartan y se informan en `materiales_ignorados` (aditivo).
