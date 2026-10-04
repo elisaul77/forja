@@ -25,6 +25,13 @@ Checks (all on the tessellation, `kernel.mesh`, tolerance 0.1 mm):
 - ``base``: first-layer contact area (downward triangles on the bed);
   flagged below ``UMBRAL_BASE_MM2`` (0 = nothing flat touches the bed).
 - ``diminuto``: a bbox dimension smaller than the nozzle.
+
+fdm-C: ``sugerencias`` (only when there is one) names the script function
+(`app/fdm_ops.py`) that fixes a reliably detected problem: a horizontal
+round hole (B-rep cylinder, axis within ~6 degrees of horizontal, concave,
+round up to its top -- a teardrop's arc is not)
+-> ``agujero_gota``; a piece that fits the bed in no orientation ->
+``partir_para_cama``.
 """
 from __future__ import annotations
 
@@ -158,6 +165,45 @@ def _check_pared_fina(
     }
 
 
+_TOPE_SUGERENCIAS = 20
+
+
+def _agujeros_horizontales(solidos: list[Any]) -> int:
+    """Count concave cylindrical faces (holes) with a horizontal axis."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+    from OCP.GeomAbs import GeomAbs_Cylinder
+
+    total = 0
+    for solido in solidos:
+        for cara in solido.faces():
+            try:
+                superficie = BRepAdaptor_Surface(cara.wrapped)
+                if superficie.GetType() != GeomAbs_Cylinder:
+                    continue
+                cilindro = superficie.Cylinder()
+                eje = cilindro.Axis()
+                direccion = eje.Direction()
+                if abs(direccion.Z()) > 0.1:
+                    continue
+                punto = cara.position_at(0.5, 0.5)
+                normal = cara.normal_at(0.5, 0.5)
+                origen = eje.Location()
+                o = np.array([origen.X(), origen.Y(), origen.Z()])
+                d = np.array([direccion.X(), direccion.Y(), direccion.Z()])
+                v = np.array([punto.X, punto.Y, punto.Z]) - o
+                radial = v - d * float(v @ d)
+                # A hole (concave) whose round surface reaches the top of
+                # the circle: a teardrop's arc stops at 45 degrees.
+                techo = origen.Z() + cilindro.Radius() * 0.98
+                if float(radial @ np.array([normal.X, normal.Y, normal.Z])) < 0 and (
+                    cara.bounding_box().max.Z >= techo
+                ):
+                    total += 1
+            except Exception:  # noqa: BLE001 - a hint, never a failure
+                continue
+    return total
+
+
 def verificar(
     shape: Any,
     entradas: list[dict[str, Any]],
@@ -184,6 +230,7 @@ def verificar(
     presupuesto = min(_MUESTRAS_TOTAL_MAX, _MUESTRAS_POR_SOLIDO_MAX * len(mallas))
 
     problemas: dict[str, dict[str, Any]] = {}
+    sugerencias: list[dict[str, str]] = []
     for nombre, malla in mallas.items():
         if len(malla.faces) == 0:
             continue
@@ -212,6 +259,18 @@ def verificar(
         if propios:
             problemas[nombre] = propios
 
+        if "cama" in propios and propios["cama"]["sugerencia"].startswith("no cabe"):
+            sugerencias.append({
+                "pieza": nombre, "funcion": "partir_para_cama",
+                "motivo": "no cabe en la cama en ninguna orientacion",
+            })
+        n_agujeros = _agujeros_horizontales(por_nombre.get(nombre, []))
+        if n_agujeros:
+            sugerencias.append({
+                "pieza": nombre, "funcion": "agujero_gota",
+                "motivo": f"{n_agujeros} cara(s) de agujero redondo horizontal: techo con soporte o caido",
+            })
+
     salida: dict[str, Any] = {
         "ok": not problemas,
         "boquilla": boquilla,
@@ -224,4 +283,6 @@ def verificar(
         salida["problemas_mas"] = len(nombres) - _TOPE_PIEZAS
     if nombres_inciertos:
         salida["nombres_inciertos"] = True
+    if sugerencias:
+        salida["sugerencias"] = sugerencias[:_TOPE_SUGERENCIAS]
     return salida
