@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# FreeCAD backups (from pilot STEP generation via freecadcmd)
+*.FCBak
+
+# Runtime data (documentos storage root, generated meshes/exports)
+documentos_data/
+*.log
+
+# Phase evidence renders/dumps (kept on disk for the Conductor, never committed)
+plans/evidencia/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Local configuration and private working notes
+.env
+plans/
+.claude/

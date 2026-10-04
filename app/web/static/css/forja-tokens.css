@@ -1,0 +1,133 @@
+/* ============================================================
+   Forja — Tokens CSS ("Forge" oscuro)
+   Portados de kybercore docs/design-system.md (--kc-*) a --fj-*.
+   El sistema de diseño Forge aún no define una variante oscura
+   oficial (ver design-system.md §8, "Tema oscuro (futuro)"), así
+   que aquí se invierte la misma escala de tokens (superficies/tinta
+   invertidas, acentos con menor saturación de fondo) manteniendo
+   nombres y estructura 1:1 con --kc-*.
+   NOTA: cero valores hardcodeados en otros archivos; todo aquí.
+   ============================================================ */
+
+:root {
+
+  /* ----------------------------------------------------------
+     Superficies y fondos (escala invertida sobre stone)
+     ---------------------------------------------------------- */
+  --fj-bg:          #1c1917;   /* Fondo de la app */
+  --fj-surface:     #262220;   /* Tarjetas, paneles, barras */
+  --fj-sunk:        #14110f;   /* Zonas hundidas, inputs, viewport */
+  --fj-grid:        #211c19;   /* Líneas de cuadrícula 2D (no confundir con la rejilla 3D del visor) */
+
+  /* Líneas y bordes */
+  --fj-line:        #3a3532;   /* Bordes / hairlines por defecto */
+  --fj-line-strong: #4a443f;   /* Bordes de énfasis */
+
+  /* ----------------------------------------------------------
+     Tinta (texto) — jerarquía 5 niveles (invertida)
+     ---------------------------------------------------------- */
+  --fj-ink-1: #fafaf9;   /* Títulos, texto principal */
+  --fj-ink-2: #e7e5e4;   /* Texto de cuerpo */
+  --fj-ink-3: #a8a29e;   /* Texto secundario, labels */
+  --fj-ink-4: #a19a94;   /* Ayuda y metadatos legibles sobre superficies oscuras */
+  --fj-ink-5: #4a443f;   /* Iconos sutiles, separadores */
+
+  /* ----------------------------------------------------------
+     Marca y acento
+     ---------------------------------------------------------- */
+  --fj-primary:      var(--fj-ink-1);          /* Acciones primarias (botones) */
+  --fj-accent:       oklch(0.68 0.18 45);       /* Naranja Forge — firma de marca */
+  --fj-accent-soft:  oklch(0.28 0.06 60);       /* Fondo suave del acento (sobre oscuro) */
+
+  /* ----------------------------------------------------------
+     Semánticos de estado (color + variante soft oscura)
+     ---------------------------------------------------------- */
+  --fj-run:        oklch(0.68 0.14 155);
+  --fj-run-soft:   oklch(0.28 0.06 155);
+
+  --fj-hot:        oklch(0.68 0.18 45);
+  --fj-hot-soft:   oklch(0.28 0.06 60);
+
+  --fj-idle:       oklch(0.62 0.02 80);
+  --fj-idle-soft:  oklch(0.26 0.01 80);
+
+  --fj-warn:       oklch(0.78 0.16 85);
+  --fj-warn-soft:  oklch(0.3 0.06 85);
+
+  --fj-err:        oklch(0.62 0.22 25);
+  --fj-err-soft:   oklch(0.28 0.08 25);
+
+  --fj-info:       oklch(0.55 0.18 240);
+  --fj-info-soft:  oklch(0.26 0.07 240);
+
+  --fj-ai:         oklch(0.62 0.22 320);
+  --fj-ai-soft:    oklch(0.28 0.08 320);
+
+  /* ----------------------------------------------------------
+     Tipografía
+     ---------------------------------------------------------- */
+  --fj-sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+  --fj-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --fj-text-xs:   0.75rem;
+  --fj-text-sm:   0.875rem;
+  --fj-text-base: 1rem;
+  --fj-text-lg:   1.25rem;
+  --fj-text-xl:   1.5rem;
+  --fj-text-2xl:  2rem;
+
+  --fj-lh-xs:   1.4;
+  --fj-lh-sm:   1.5;
+  --fj-lh-base: 1.5;
+  --fj-lh-lg:   1.35;
+  --fj-lh-xl:   1.25;
+  --fj-lh-2xl:  1.2;
+
+  /* ----------------------------------------------------------
+     Espaciado (base 4px)
+     ---------------------------------------------------------- */
+  --fj-space-1: 4px;
+  --fj-space-2: 8px;
+  --fj-space-3: 12px;
+  --fj-space-4: 16px;
+  --fj-space-5: 24px;
+  --fj-space-6: 32px;
+  --fj-space-7: 48px;
+  --fj-space-8: 64px;
+
+  /* ----------------------------------------------------------
+     Radios
+     ---------------------------------------------------------- */
+  --fj-r-sm:   4px;
+  --fj-r-md:   6px;
+  --fj-r-lg:   10px;
+  --fj-r-xl:   14px;
+  --fj-r-full: 9999px;
+
+  /* ----------------------------------------------------------
+     Utilidades de color fijo
+     ---------------------------------------------------------- */
+  --fj-white:   #ffffff;
+  --fj-black:   #000000;
+  --fj-overlay: rgba(0, 0, 0, 0.6);
+
+  /* ----------------------------------------------------------
+     Sombras (más opacas que en el tema claro para ser visibles
+     sobre superficies oscuras)
+     ---------------------------------------------------------- */
+  --fj-shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+  --fj-shadow-md: 0 4px 12px rgba(0, 0, 0, .4), 0 1px 2px rgba(0, 0, 0, .3);
+  --fj-shadow-lg: 0 12px 32px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .3);
+
+  /* ----------------------------------------------------------
+     Movimiento
+     ---------------------------------------------------------- */
+  --fj-ease: cubic-bezier(.4, 0, .2, 1);
+  --fj-inspector-width: 360px;
+  --fj-library-width: 380px;
+  --fj-welcome-width: 580px;
+  --fj-button-height: 38px;
+  --fj-grid-size: 36px;
+  --fj-shell-gradient: radial-gradient(ellipse at 50% 40%, #302721 0%, #191613 70%);
+
+}

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forja</title>
+<link rel="stylesheet" href="/static/css/forja-tokens.css?v=7">
+<link rel="stylesheet" href="/static/css/forja-base.css?v=10">
+<script type="importmap">
+{
+  "imports": {
+    "three": "/static/vendor/three/build/three.module.js",
+    "three/addons/": "/static/vendor/three/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div class="fj-app">
+  <header class="fj-topbar">
+    <div class="fj-brand"><h1 class="fj-topbar__title"><span class="fj-accent-dot" aria-hidden="true">◈</span> Forja</h1><span class="fj-topbar__subtitle">Taller de diseño 3D</span></div>
+    <div class="fj-topbar__actions">
+      <button id="fj-btn-abrir-archivo" class="fj-btn fj-btn--primary" type="button">Abrir archivo</button>
+      <input id="fj-input-archivo" type="file" accept=".step,.stp,.stl" hidden>
+      <button id="fj-btn-documentos" class="fj-btn" type="button" aria-haspopup="true" aria-expanded="false">
+        Lista de documentos
+      </button>
+      <div id="fj-dropdown-documentos" class="fj-dropdown" hidden>
+        <div class="fj-library-heading"><strong>Biblioteca de documentos</strong><span>Guardados en este servidor</span></div>
+        <label class="fj-library-search" for="fj-document-search">Buscar documento<input id="fj-document-search" class="fj-input" type="search" placeholder="Nombre del documento…" autocomplete="off"></label>
+        <div id="fj-lista-documentos"></div>
+      </div>
+      <button id="fj-btn-galeria" class="fj-btn" type="button">Galería</button>
+    </div>
+  </header>
+
+  <nav id="fj-tabs" class="fj-tabs" role="tablist" aria-label="Documentos abiertos"></nav>
+  <div id="fj-feedback" class="fj-feedback" role="status" aria-live="polite" hidden></div>
+  <div id="fj-live-status" class="fj-live-status" role="status" aria-live="polite" hidden></div>
+
+  <div class="fj-workspace">
+    <main id="fj-main" class="fj-main">
+      <div id="fj-main-vacio" class="fj-main__vacio">
+        <div class="fj-welcome">
+          <div class="fj-welcome__mark" aria-hidden="true">◈</div>
+          <span class="fj-eyebrow">TU ESPACIO DE TRABAJO</span>
+          <h2>De la idea a la pieza.</h2>
+          <p>Abre un modelo para explorar su geometría, ajustar sus parámetros y revisar cada detalle.</p>
+          <div class="fj-welcome__actions"><button id="fj-empty-open" class="fj-btn fj-btn--primary" type="button">Abrir archivo</button><button id="fj-empty-documents" class="fj-btn" type="button">Explorar biblioteca</button></div>
+          <span class="fj-welcome__formats">STEP · STP · STL <span aria-hidden="true">/</span> Modelos guardados en tu servidor</span>
+          <div class="fj-welcome__steps"><span><b>01</b> Explora el modelo</span><span><b>02</b> Ajusta y ensambla</span><span><b>03</b> Anota tus ideas</span></div>
+        </div>
+      </div>
+    </main>
+
+    <aside id="fj-panel-lateral" class="fj-panel-lateral" hidden>
+      <div class="fj-panel-lateral__header">
+        <div class="fj-panel-lateral__tabs">
+          <button type="button" class="fj-panel-lateral__tab" data-panel="piezas">Piezas</button>
+          <button type="button" class="fj-panel-lateral__tab is-active" data-panel="notas">Notas</button>
+          <button type="button" class="fj-panel-lateral__tab" data-panel="historial">Historial</button>
+          <button type="button" class="fj-panel-lateral__tab" data-panel="parametros">Parámetros</button>
+          <button type="button" class="fj-panel-lateral__tab" data-panel="ensamble">Ensamble</button>
+        </div>
+        <button type="button" id="fj-panel-lateral-cerrar" class="fj-btn fj-btn--ghost fj-btn--icon" aria-label="Cerrar panel">×</button>
+      </div>
+      <div id="fj-panel-notas" class="fj-panel-lateral__seccion"></div>
+      <div id="fj-panel-historial" class="fj-panel-lateral__seccion" hidden></div>
+      <div id="fj-panel-parametros" class="fj-panel-lateral__seccion" hidden></div>
+      <div id="fj-panel-ensamble" class="fj-panel-lateral__seccion" hidden></div>
+      <div id="fj-panel-piezas" class="fj-panel-lateral__seccion" hidden></div>
+    </aside>
+  </div>
+
+  <dialog id="fj-dialogo-comentario" class="fj-dialogo">
+    <form method="dialog" class="fj-dialogo__form">
+      <h3 id="fj-dialogo-comentario-titulo">Comentario</h3>
+      <textarea id="fj-dialogo-comentario-texto" class="fj-textarea" rows="3" maxlength="2000" placeholder="¿Qué quieres indicar al asistente sobre este punto?"></textarea>
+      <div class="fj-dialogo__acciones">
+        <button type="button" id="fj-dialogo-comentario-cancelar" class="fj-btn fj-btn--ghost">Cancelar</button>
+        <button type="submit" id="fj-dialogo-comentario-guardar" class="fj-btn fj-btn--primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="fj-dialogo-pizarra" class="fj-dialogo">
+    <form method="dialog" class="fj-dialogo__form">
+      <h3>Pizarra para el asistente</h3>
+      <label class="fj-campo">Plano de dibujo
+        <select id="fj-pizarra-modo" class="fj-select">
+          <option value="vista">Sobre lo que veo (clic donde dibujar)</option>
+          <option value="cara">Sobre una cara (clic en la cara)</option>
+          <option value="xy">XY (planta)</option>
+          <option value="xz">XZ (frente)</option>
+          <option value="yz">YZ (lado)</option>
+        </select>
+      </label>
+      <label class="fj-campo">Desplazamiento (mm)
+        <input id="fj-pizarra-offset" class="fj-input" type="number" value="0" step="1">
+      </label>
+      <label class="fj-campo">Qué significa el trazo
+        <select id="fj-pizarra-tipo" class="fj-select">
+          <option value="quitar">Quitar material</option>
+          <option value="anadir">Añadir material</option>
+          <option value="medida">Medida / referencia</option>
+          <option value="comentario">Comentario</option>
+        </select>
+      </label>
+      <label class="fj-campo">Comentario (opcional)
+        <input id="fj-pizarra-comentario" class="fj-input" type="text" maxlength="2000">
+      </label>
+      <p class="fj-dialogo__ayuda">Al guardar, arrastra con el botón izquierdo sobre la vista 3D para dibujar. Suelta el botón para terminar el trazo.</p>
+      <div class="fj-dialogo__acciones">
+        <button type="button" id="fj-pizarra-cancelar" class="fj-btn fj-btn--ghost">Cancelar</button>
+        <button type="submit" id="fj-pizarra-colocar" class="fj-btn fj-btn--primary">Colocar plano y dibujar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <footer class="fj-statusbar">
+    <div class="fj-statusbar__item">
+      <span class="fj-statusbar__label">Nombre</span>
+      <span id="fj-status-nombre" class="fj-statusbar__valor">—</span>
+    </div>
+    <div class="fj-statusbar__item">
+      <span class="fj-statusbar__label">Volumen</span>
+      <span id="fj-status-volumen" class="fj-statusbar__valor">—</span>
+    </div>
+    <div class="fj-statusbar__item">
+      <span class="fj-statusbar__label">Dimensiones</span>
+      <span id="fj-status-bbox" class="fj-statusbar__valor">—</span>
+    </div>
+    <div class="fj-statusbar__item">
+      <span class="fj-statusbar__label">Sólidos</span>
+      <span id="fj-status-solidos" class="fj-statusbar__valor">—</span>
+    </div>
+    <div class="fj-statusbar__item">
+      <span class="fj-statusbar__label">Válido</span>
+      <span id="fj-status-valido" class="fj-badge">—</span>
+    </div>
+  </footer>
+</div>
+
+<script type="module" src="/static/js/app.js?v=17"></script>
+</body>
+</html>

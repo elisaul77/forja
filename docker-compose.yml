@@ -1,0 +1,68 @@
+services:
+  forja:
+    build:
+      context: .
+      network: host
+    image: forja-forja:latest
+    container_name: forja
+    ports: ["8710:8000"]
+    environment:
+      # Max size (MB) accepted by POST /documentos; reject with 413 above it.
+      FORJA_MAX_UPLOAD_MB: "100"
+      # Base URL the host's OrcaSlicer uses to download exports (MCP `exportar` links).
+      FORJA_PUBLIC_URL: "http://localhost:8710"
+    # The read-only local-service bridges dial the host under this name
+    # (suspension-sim :8683, Blender :9877, kybercore :8100); without the
+    # mapping it does not resolve inside the container. User scripts never
+    # run here (F0.2): they go to forja-sandbox, which has no network.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./app:/app
+      - ./mcp_server:/app/mcp_server
+      - ./tests:/tests
+      - ./documentos_data:/data/documentos
+      - ${FORJA_FUENTES:-./fuentes}:/data/fuentes:ro
+      # F0.2 (ADR-0013): job exchange with forja-sandbox, and the token as a
+      # server-only secret (0400, uid 1000), moved there once by entrypoint.sh.
+      - staging:/staging
+      - secretos:/run/secrets
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/salud', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+
+  # Untrusted user scripts (F0.2, ADR-0013): same image, its own /app (the
+  # image's, not the bind mount: rebuild after changing app/sandbox/), no
+  # network, read-only root, no data/fonts/secret, only the staging volume.
+  forja-sandbox:
+    image: forja-forja:latest
+    pull_policy: never
+    container_name: forja-sandbox
+    entrypoint: ["python", "-P", "-m", "sandbox.ejecutor"]
+    working_dir: /app
+    user: "65534:65534"
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - staging:/staging
+    depends_on:
+      - forja
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(socket.AF_UNIX); s.settimeout(3); s.connect('/staging/ejecutor/ejecutor.sock'); s.sendall(b'{\"op\": \"ping\"}\\n'); assert b'true' in s.recv(64)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  staging:
+  secretos:
