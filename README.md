@@ -1,53 +1,116 @@
-# Forja
+# 🔥 Forja — CAD 3D nativo para agentes de IA
 
-La biblioteca ofrece **Galería** con tarjetas y miniaturas, además de la
-**Lista de documentos** para apertura rápida. Ambas permiten eliminar con
-confirmación y clave de edición: el borrado incluye notas, historial,
-ensamble y exportaciones, y no puede deshacerse. No elimina el archivo original
-externo importado. Al entrar sin `?abrir=`, se carga el STEP creado o modificado
-más recientemente.
+![Banner](docs/img/banner.png)
 
-Editor CAD 3D nativo para IA. Forja combina un kernel de geometría (build123d /
-OpenCascade) con un visor web ligero y un servidor MCP, para que un agente de
-IA pueda crear, inspeccionar y versionar piezas paramétricas igual que lo
-haría un diseñador humano en FreeCAD o Fusion 360 — pero hablando con Claude.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![build123d](https://img.shields.io/badge/kernel-build123d%20%2F%20OpenCascade-f26b21.svg)](https://github.com/gumyr/build123d)
+[![MCP](https://img.shields.io/badge/MCP-19%20herramientas-6f42c1.svg)](https://modelcontextprotocol.io/)
+[![Docker](https://img.shields.io/badge/runtime-Docker-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
+[![three.js](https://img.shields.io/badge/visor-three.js-000000.svg?logo=threedotjs)](https://threejs.org/)
 
-## Qué hace
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsors-pink?style=for-the-badge&logo=githubsponsors)](https://github.com/sponsors/elisaul77)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?style=for-the-badge&logo=paypal)](https://paypal.me/eflorezp)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow?style=for-the-badge&logo=buymeacoffee)](https://buymeacoffee.com/elisaul77)
 
-- Importa/exporta STEP, STL y 3MF conservando volumen y topología.
-- Visor web con pestañas independientes (cámara y selección por pestaña).
-- Notas, pines y pizarra sobre la geometría (inspirado en el add-on
-  ClaudeNotas de FreeCAD), con versionado automático y nombrado estable de
-  caras/aristas entre reconstrucciones.
-- Scripts paramétricos (`construir(params) -> Shape`) con checks de
-  imprimibilidad FDM y detección de colisiones/holguras.
-- Ensambles de piezas móviles: articulaciones `fijo`/`giro`/`deslizamiento`
-  entre sólidos con nombre, pose absoluta por números (sin re-ejecutar el
-  script) y un puente de solo lectura hacia `suspension-sim` para validar
-  cinemática real (piloto: mostertruck).
-- Abrir el modelo en OrcaSlicer con un clic desde el visor (botones **Abrir en
-  Orca**, **Descargar 3MF** y **Descargar STL**), como en Printables.
-- Servidor MCP para que Claude opere el editor directamente (herramientas a
-  nivel de script, respuestas compactas).
+**Forja es un taller de diseño 3D pensado para que un agente de IA (Claude, por MCP) diseñe contigo.** El agente escribe la pieza en Python con [build123d](https://github.com/gumyr/build123d), Forja la construye con un kernel CAD real (OpenCascade), la verifica y la muestra **en vivo** en el navegador. Tú la ves, la marcas, dibujas indicaciones encima y la mandas a imprimir en OrcaSlicer con un clic.
 
-## Stack
+> Nada de mallas aproximadas ni "text-to-3D": geometría B-rep exacta, sólidos con nombre, historial de versiones y verificaciones medibles — en un solo contenedor Docker.
 
-Python 3.12, build123d, cadquery-ocp (OpenCascade), manifold3d, python-fcl,
-trimesh, FastAPI, three.js (vendorizado, sin CDN), MCP. Todo corre dentro de
-Docker — sin dependencias de Python en el host.
+---
 
-Ver `.claude/project-context.md` y `docs/decisions/` para el detalle de stack,
-convenciones y decisiones (ADRs).
+## ✨ Qué puedes hacer
 
-## Quickstart
+- 🤖 **Diseñar hablando con Claude** — el agente crea y modifica piezas paramétricas por MCP (19 herramientas, respuestas compactas para gastar pocos tokens).
+- 👀 **Ver el diseño en vivo** — cuando el agente cambia un documento, el visor se actualiza solo, sin recargar y sin mover tu cámara.
+- 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
+- ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
+- 🔍 **Verificar antes de imprimir** — colisiones y holguras, imprimibilidad FDM (voladizos, paredes finas, cama), percepción espacial en texto (`percibir`).
+- 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
+- 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable; las notas siguen a sus caras entre reconstrucciones.
+- 🛡️ **Ejecución aislada** — los scripts corren en un contenedor sandbox sin red, sin secretos y sin acceso a tus documentos.
+
+## 📸 Capturas
+
+| Diseño de un agente (F1 a escala 1:10) | Juego de ajedrez paramétrico |
+|:---:|:---:|
+| ![F1](docs/img/formula.png) | ![Ajedrez](docs/img/ajedrez.png) |
+
+| Ensamble de 91 piezas con nombre | Árbol de piezas |
+|:---:|:---:|
+| ![Ensamble](docs/img/ensamble.png) | ![Piezas](docs/img/pieza.png) |
+
+| Pizarra sobre plano con corte en vivo | Galería de documentos |
+|:---:|:---:|
+| ![Corte](docs/img/corte.png) | ![Galería](docs/img/galeria.png) |
+
+| Tornillo M8 con rosca real y tuerca |
+|:---:|
+| ![Tornillo](docs/img/tornillo.png) |
+
+## 🚀 Inicio rápido
 
 ```bash
+git clone https://github.com/elisaul77/forja.git
+cd forja
+cp .env.example .env          # opcional: carpeta de modelos en solo lectura
 docker compose up -d --build
 ```
 
-Luego abrir: http://localhost:8710
+Abre **http://localhost:8710**.
 
-## Árbol de piezas
+### Conectar Claude Code (MCP por HTTP)
+
+Forja genera un token al primer arranque y lo guarda como secreto del contenedor. Regístralo **una sola vez** en Claude Code (cabecera `X-Forja-Token`) apuntando a `http://localhost:8710/mcp`. Nunca lo pegues en chats ni lo pases por la línea de comandos.
+
+## 🧠 Cómo trabaja el agente
+
+```python
+# El agente envía un script build123d con ejecutar_script(...)
+from build123d import *
+
+caja  = Box(60, 40, 30)
+hueco = Cylinder(10, 40)
+
+resultado = {                      # sólidos con nombre
+    "cuerpo": caja - hueco,
+}
+```
+
+1. **`ejecutar_script`** construye la pieza en el sandbox (para editar, pasa `documento_id` o reutiliza el mismo `nombre`).
+2. **`percibir`** / **`check_colisiones`** / **`check_fdm`** devuelven números, no imágenes.
+3. Tú lo ves en vivo, dejas notas o dibujas indicaciones; el agente las lee con **`leer_notas`**.
+4. **`exportar`** devuelve el enlace para **abrir en OrcaSlicer**.
+
+## 🏗️ Arquitectura
+
+```mermaid
+flowchart LR
+  A[Agente / Claude] -- MCP HTTP --> F
+  N[Navegador · visor three.js] -- REST + SSE en vivo --> F
+  subgraph Docker
+    F[forja · FastAPI uid 1000] -- socket --> S[forja-sandbox<br/>sin red · sin secretos]
+    F --> D[(documentos_data<br/>STEP · historial · caché de mallas)]
+  end
+  N -- orcaslicer:// --> O[OrcaSlicer]
+```
+
+Stack: Python 3.12, build123d, cadquery-ocp (OpenCascade), manifold3d, python-fcl, trimesh, FastAPI, three.js (vendorizado), MCP. Decisiones de diseño en [`docs/decisions/`](docs/decisions/).
+
+## ❤️ Apoya el proyecto
+
+Si Forja te sirve, puedes apoyar su desarrollo:
+
+- ⭐ Dale una estrella al repo
+- 💖 [GitHub Sponsors](https://github.com/sponsors/elisaul77)
+- ☕ [Buy Me A Coffee](https://buymeacoffee.com/elisaul77)
+- 💸 [PayPal](https://paypal.me/eflorezp)
+
+---
+
+## 📚 Referencia técnica
+
+### Árbol de piezas
 
 Abre un documento y pulsa **Piezas**. Puedes buscar por nombre, seleccionar
 una pieza en la lista o en la vista 3D, cambiar su visibilidad y encuadrarla.
@@ -59,7 +122,7 @@ Los STEP con sólidos identificados muestran sus nombres. Si los nombres no
 se pueden confirmar, Forja avisa y usa identificadores genéricos. Un STL se
 presenta como una malla completa. Estas acciones solo cambian la vista.
 
-## Abrir en OrcaSlicer (Fase 10)
+### Abrir en OrcaSlicer (Fase 10)
 
 En la barra de herramientas de cada documento hay tres botones:
 
@@ -96,7 +159,7 @@ Orca); el 3MF no es idéntico byte a byte entre descargas (las marcas de tiempo
 del zip cambian, el contenido no); y `valido: true` **no detecta pérdida de
 geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
 
-## MCP
+### MCP
 
 Forja expone un servidor MCP (`mcp_server/`, `mcp` 2.2.0) que corre
 **dentro** del contenedor `forja`, con dos transportes y las mismas
@@ -200,7 +263,7 @@ Los scripts del usuario no corren en `forja`: van al contenedor
 fuentes y sin secretos), comunicado solo por el volumen `staging`; Forja
 trata todo lo que devuelve como dato no confiable.
 
-## Estado
+### Estado
 
 Proyecto en construcción por fases (ver `plans/forja-plan.md` y
 `plans/forja-plan-detail.md`). Fase 5 (5A/5B/5C/5D/5E) completada:
