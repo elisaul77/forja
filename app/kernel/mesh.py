@@ -113,11 +113,16 @@ def to_stl_bytes(mesh_: trimesh.Trimesh) -> bytes:
 def _mesh_info(mesh_: trimesh.Trimesh) -> MeshInfo:
     xmin, ymin, zmin = mesh_.bounds[0]
     xmax, ymax, zmax = mesh_.bounds[1]
-    solidos = mesh_.split(only_watertight=False)
+    # Count connected bodies with scipy (networkx is not in the image), without
+    # materialising one Trimesh per body.
+    componentes = trimesh.graph.connected_components(
+        mesh_.face_adjacency, nodes=np.arange(len(mesh_.faces)), min_len=1, engine="scipy"
+    )
+    solidos = len(componentes)
     return MeshInfo(
         volumen=float(abs(mesh_.volume)),
         bbox=(float(xmin), float(xmax), float(ymin), float(ymax), float(zmin), float(zmax)),
-        solidos=len(solidos) or 1,
+        solidos=solidos or 1,
         valido=bool(mesh_.is_watertight),
     )
 
