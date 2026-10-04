@@ -27,7 +27,7 @@
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
 - 🔍 **Verificar antes de imprimir** — colisiones y holguras, imprimibilidad FDM (voladizos, paredes finas, cama), percepción espacial en texto (`percibir`).
 - 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
-- 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable; las notas siguen a sus caras entre reconstrucciones.
+- 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable, con grafo de ramas, miniatura por paso, historial por pieza y «restaurar solo esta pieza»; las notas siguen a sus caras entre reconstrucciones.
 - 🛡️ **Ejecución aislada** — los scripts corren en un contenedor sandbox sin red, sin secretos y sin acceso a tus documentos.
 - 📐 **Perfil de tolerancias de tu impresora** — imprime una probeta, anota tus medidas y los diseños compensan solos (`agujero(3)`, `ajuste("M3_pasante")`).
 - 🧪 **Cupones de prueba** — imprime en minutos solo la zona donde encajan las piezas antes de la impresión larga.
@@ -50,9 +50,9 @@
 |:---:|:---:|
 | ![Corte](docs/img/corte.png) | ![Galería](docs/img/galeria.png) |
 
-| Tornillo M8 con rosca real y tuerca |
-|:---:|
-| ![Tornillo](docs/img/tornillo.png) |
+| Tornillo M8 con rosca real y tuerca | Historial: grafo de ramas con miniaturas por paso |
+|:---:|:---:|
+| ![Tornillo](docs/img/tornillo.png) | ![Historial](docs/img/historial.png) |
 
 ## 🚀 Inicio rápido
 
@@ -251,7 +251,27 @@ materiales, ensamble y el texto del script aunque venga de `ruta`).
 | `GET .../ramas/{rama}/pasos_curados?vista=hitos\|visibles\|todos` · `POST .../pasos/ocultar` 🔑 | vista curada sin reescribir la historia |
 
 MCP: `rama(id, accion, nombre?, desde?, a?, piezas?, estrategia?, forzar?, simular?)` con `listar|crear|cambiar|renombrar|borrar|pasos|comparar|fusionar|traer_pieza|hito|hitos`.
-Visor: pestaña «Ramas» del panel lateral y modo «Comparar» (verde añadida, rojo quitada, ámbar cambiada, gris igual); «Fusionar en esta rama», «Traer pieza…», «Solo hitos».
+Visor: cajón «Ramas y fusiones» de la pestaña Historial y modo «Comparar» (verde añadida, rojo quitada, ámbar cambiada, gris igual); «Fusionar en esta rama», «Traer pieza…», «Solo hitos».
+
+### Historial 2.0 (grafo, miniaturas e historial por pieza)
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /documentos/{id}/grafo?limite=&pieza=` | todos los pasos de todas las ramas en orden topológico: `padres` (2 en fusiones), `ramas` que lo contienen, `puntas`, `hitos`, autor, fecha, mensaje, revisión, `fusion`, `desde` y `cambios` respecto al primer padre (piezas +/−/~, Δvolumen %, parámetros, materiales, script). Resumen cacheado por sha en `.cache/grafo/`. Con `pieza`, solo los pasos que la tocaron y `padres` reescritos al antepasado conservado más cercano |
+| `GET /documentos/{id}/pasos/{sha}/miniatura.png?pieza=` | PNG 256×192 renderizado en el servidor, cacheado por revisión en `.cache/miniaturas_pasos/` (sin token; `sha` = 7–40 hex) |
+| `POST /documentos/{id}/piezas/{pieza}/restaurar` 🔑 | `{desde, forzar?, simular?}` — devuelve UNA pieza a ese paso con el motor de «traer pieza» (verificación, todo o nada); `resultado` también `sin_cambios` |
+| `POST /documentos/{id}/pasos/{sha}/restaurar` 🔑 | todo el documento a ese paso como paso NUEVO de la rama activa (`restaurado`/`sin_cambios`) |
+
+MCP: acción `restaurar_pieza` en `rama` (`desde` + `piezas=[nombre]`).
+Visor: pestaña **Historial** = grafo SVG con carriles de color por rama (curvas de
+fusión, pastillas de rama/hito, rama activa resaltada), tarjetas con miniatura,
+autor (🤖/👤/⚙), fecha relativa, sha y chips de cambio; detalle con piezas tocadas
+(↺ restaurar cada una), parámetros antes→después, «Antes / después» en el visor con
+**vista dividida y deslizador** (o superpuesta), comparar con el actual, restaurar
+todo, crear rama, marcar hito y cambiar de rama. Filtro por pieza (al seleccionarla
+en el visor o con ⌕) con tira de miniaturas de esa pieza; búsqueda, autor, «Solo
+hitos» y rama. La gestión de ramas/fusiones y las instantáneas clásicas quedan en
+los cajones de abajo.
 
 Fusión (ADR-0015): datos a 3 vías con el ancestro común, script con `git merge-file`
 y reconstrucción; después validez + colisiones contra las dos ramas. Choques nuevos →
