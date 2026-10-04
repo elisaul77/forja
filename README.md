@@ -29,6 +29,12 @@
 - 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
 - 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable; las notas siguen a sus caras entre reconstrucciones.
 - 🛡️ **Ejecución aislada** — los scripts corren en un contenedor sandbox sin red, sin secretos y sin acceso a tus documentos.
+- 📐 **Perfil de tolerancias de tu impresora** — imprime una probeta, anota tus medidas y los diseños compensan solos (`agujero(3)`, `ajuste("M3_pasante")`).
+- 🧪 **Cupones de prueba** — imprime en minutos solo la zona donde encajan las piezas antes de la impresión larga.
+- 🛠️ **Arreglos FDM automáticos** — agujeros en gota sin soporte, chaflán contra pata de elefante, puentes de sacrificio y partir piezas para la cama con pasadores o cola de milano.
+- 🎨 **Material por pieza** — filamento, color y extrusor por pieza con nombre, listos en el 3MF para Orca y el MMU.
+
+> 📘 Cómo usar las funciones FDM: [Manual del ciclo FDM](docs/MANUAL-FDM.md).
 
 ## 📸 Capturas
 
@@ -47,8 +53,6 @@
 | Tornillo M8 con rosca real y tuerca |
 |:---:|
 | ![Tornillo](docs/img/tornillo.png) |
-
-> 📘 **¿Imprimes en FDM?** Lee el [Manual del ciclo FDM](docs/MANUAL-FDM.md): perfil de tolerancias, cupones de prueba, arreglos FDM y material por pieza.
 
 ## 🚀 Inicio rápido
 
