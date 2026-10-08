@@ -9,6 +9,7 @@ import { ForjaParametrosControlador, renderizarPanelParametros } from "./paramet
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
 import { crearBotonCupon } from "./cupon.js?v=2";
 import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js";
+import { AnimationView } from "./animation.js?v=1";
 import { renderPiecesPanel } from "./pieces.js?v=9";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
 import { construirAnclas } from "./orca.js?v=3";
@@ -152,7 +153,7 @@ export class TabManager {
     viewer.cargarMallaSTL(mallaArrayBuffer);
 
     const notas = new ForjaNotasControlador(viewer, ficha.id);
-    viewer.canSelectPiece = () => !notas.modo;
+    viewer.canSelectPiece = () => !notas.modo && animation.mode === "cad";
     viewer.onPieceSelection = () => {
       if (this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "piezas") {
         const actual = this.tabs.get(ficha.id);
@@ -256,6 +257,20 @@ export class TabManager {
     toolbar.append(btnCupon);
     viewer.onSeleccion = () => anclasOrca.refrescar?.();
     contenedor.appendChild(toolbar);
+    const animation = new AnimationView(contenedor, viewer, toolbar, () => {
+      if (notas.ocupado()) {
+        const feedback = document.getElementById("fj-feedback");
+        feedback.hidden = false;
+        feedback.textContent = "Termina la nota o el trazo antes de abrir la animación.";
+        return false;
+      }
+      this._salirComparacion(ficha.id);
+      notas.modo = null;
+      btnNota.classList.remove("is-active");
+      btnPizarra.classList.remove("is-active");
+      viewer.ocultarPlanoPizarra();
+      return true;
+    });
 
     const viewControls = document.createElement("div");
     viewControls.className = "fj-view-controls";
@@ -340,7 +355,7 @@ export class TabManager {
     });
     contenedor.append(divisor);
 
-    const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, btnParametros,
+    const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, animation, btnParametros,
       revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
     entry.materiales = {
       materiales: {},
@@ -382,6 +397,7 @@ export class TabManager {
       throw error;
     }
     btnParametros.hidden = !parametros.tieneParametros();
+    animation.setAssembly(ensamble.data);
     this.activar(ficha.id);
     viewer.ajustarVista();
   }
@@ -389,6 +405,7 @@ export class TabManager {
   activar(docId) {
     const entrada = this.tabs.get(docId);
     if (!entrada) return;
+    if (this.activeId !== docId) this.tabs.get(this.activeId)?.animation.pause();
 
     for (const [id, t] of this.tabs) {
       const activa = id === docId;
@@ -419,11 +436,14 @@ export class TabManager {
       if (this.tabs.get(docId) !== entrada) return;
       entrada.ficha = registroActualizado;
       entrada.boton.querySelector(".fj-tab__nombre").textContent = registroActualizado.nombre;
+      entrada.animation.pause();
+      entrada.animation.resetPose();
       entrada.viewer.cargarMallaSTL(malla.buffer);
       this._setRevision(entrada, malla.revision);
       entrada.notas.invalidarCaras();
       await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       entrada.btnParametros.hidden = !entrada.parametros.tieneParametros();
+      entrada.animation.setAssembly(entrada.ensamble.data);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         this._renderizarPanelPestanaActiva();
@@ -446,12 +466,15 @@ export class TabManager {
       await entrada.scheduler.cancelAndWait();
       const malla = await obtenerMallaConRevision(docId);
       if (this.tabs.get(docId) !== entrada) return 0;
+      entrada.animation.pause();
+      entrada.animation.resetPose();
       entrada.viewer.cargarMallaSTL(malla.buffer, { conservarVista: true });
       this._setRevision(entrada, malla.revision);
       entrada.notas.invalidarCaras();
       const msMalla = performance.now() - inicio;
       entrada.ficha = registroActualizado;
       await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
+      entrada.animation.setAssembly(entrada.ensamble.data);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         if (!this.panel.hidden && this.panelActivo !== "parametros") this._renderizarPanelPestanaActiva();
@@ -467,6 +490,7 @@ export class TabManager {
   _mostrarComparacion(docId, resumen, mallaA, mallaB, opciones = {}) {
     const entry = this.tabs.get(docId);
     if (!entry) return;
+    entry.animation.setMode("cad");
     const dividida = opciones.modo === "dividida";
     const [etqA, etqB] = opciones.etiquetas ?? [resumen.a.sha_corto.slice(0, 7), resumen.b.sha_corto.slice(0, 7)];
     if (dividida) {
@@ -545,11 +569,14 @@ export class TabManager {
     const entry = this.tabs.get(docId);
     if (!entry) return;
     this._salirComparacion(docId);
+    entry.animation.pause();
+    entry.animation.resetPose();
     entry.viewer.cargarMallaSTL(mesh.buffer, { conservarVista: true });
     entry.notas.invalidarCaras();
     entry.ficha = ficha;
     this._setRevision(entry, mesh.revision);
     await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar(), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
+    entry.animation.setAssembly(entry.ensamble.data);
     if (!entry.parametros.ocupado()) await entry.parametros.cargarInicial();
     if (this.tabs.get(docId) !== entry) return;
     entry.btnParametros.hidden = !entry.parametros.tieneParametros();
@@ -578,7 +605,7 @@ export class TabManager {
       entry.pendingPanels.delete(tag);
       if (tag === "notas") tasks.push(entry.notas.recargar());
       if (tag === "historial") tasks.push(entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar());
-      if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial());
+      if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial().then(() => entry.animation.setAssembly(entry.ensamble.data)));
       if (tag === "ramas") tasks.push(entry.ramas.cargarInicial(), entry.h2.invalidar());
       if (tag === "parametros") tasks.push(entry.parametros.cargarInicial());
       if (tag === "materiales") tasks.push(this._cargarMateriales(entry));
@@ -635,6 +662,7 @@ export class TabManager {
 
     entrada.notas.destruir();
     entrada.parametros.destruir();
+    entrada.animation.dispose();
     entrada.viewer.dispose();
     entrada.contenedor.remove();
     entrada.boton.remove();

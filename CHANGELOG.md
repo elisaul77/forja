@@ -7,6 +7,12 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (Vista de animación de ensambles)
+
+- El visor ofrece modos **CAD** y **Animación** por documento. La animación usa las articulaciones existentes, sus ejes, centros, jerarquía y límites para transformar las mallas de piezas entre dos valores sin escribir el STEP ni crear pasos de historial.
+- Reproducción, pausa y avance manual con lectura de posición. Cada cuadro informa superposiciones de cajas envolventes como cribado preliminar; la interfaz aclara que todavía no calcula contactos exactos, fuerzas, rozamiento o deformación. La vista CAD restablece la posición guardada.
+- Pruebas de cinemática para giro sobre origen desplazado, deslizamiento bajo un ancestro giratorio y rechazo de ensambles incompletos.
+
 ### Added (Historial 2.0 — grafo, miniaturas por paso, historial por pieza)
 
 - `app/historial_grafo.py`: `GET /documentos/{id}/grafo` (todas las ramas, orden topológico, padres incl. fusiones de 2 padres, ramas que contienen cada paso, puntas, hitos, autor/fecha/mensaje/revisión, `fusion`, `desde` y resumen de cambios respecto al primer padre con la regla G0/G3; caché por sha en `.cache/grafo/`; `limite` ≤ 300, `truncado`). `?pieza=` filtra a los pasos que la tocaron y reescribe los padres (simplificación de historia).
