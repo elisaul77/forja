@@ -58,6 +58,16 @@ def ensambles_dir(doc_id):
     return documents.DOCUMENTOS_DIR / ".ensambles" / doc_id
 
 
+def test_read_revision_header_matches_component_mesh(document):
+    client, doc_id, url = document
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["X-Forja-Revision"] == client.get(f"/documentos/{doc_id}").json()["revision"]
+    post(client, url, {"articulaciones": [JOINT]})
+    posed = post(client, url + "/pose", {"valores": {"slide": 2}})
+    assert client.get(url).headers["X-Forja-Revision"] == posed["revision"]
+
+
 def pre_63_state(state):
     """The same persisted state as a pre-6.3 build wrote it: `version: 1` and
     the English joint vocabulary. The one real instance on disk is the orphan

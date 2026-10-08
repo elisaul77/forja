@@ -1,12 +1,12 @@
 // Articulaciones y puente de suspensión: comparte la API utilizada por MCP.
 import { obtenerTokenSesion } from "./api.js";
 
-async function request(path, method = "GET", data) {
+async function request(path, method = "GET", data, withRevision = false) {
   const headers = method === "GET" ? {} : { "Content-Type": "application/json", "X-Forja-Token": obtenerTokenSesion() };
   const response = await fetch(path, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
   const result = await response.json();
   if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : JSON.stringify(result.detail));
-  return result;
+  return withRevision ? { data: result, revision: response.headers.get("X-Forja-Revision") } : result;
 }
 
 function element(tag, text, className) {
@@ -37,14 +37,17 @@ function select(parent, title, choices, value) {
 }
 
 export class ForjaEnsambleControlador {
-  constructor(docId, onChange) {
-    this.docId = docId; this.onChange = onChange;
+  constructor(docId, onChange, onPreviewChange = () => {}) {
+    this.docId = docId; this.onChange = onChange; this.onPreviewChange = onPreviewChange;
     this.data = { piezas: [], articulaciones: [], valores: {} };
+    this.revision = null;
     this.error = ""; this.busy = false;
   }
   async cargarInicial() {
-    try { this.data = await request(`/documentos/${this.docId}/ensamble`); this.error = ""; }
-    catch (error) { this.error = error.message; }
+    try {
+      const result = await request(`/documentos/${this.docId}/ensamble`, "GET", undefined, true);
+      this.data = result.data; this.revision = result.revision; this.error = "";
+    } catch (error) { this.revision = null; this.error = error.message; }
   }
   async run(action, status) {
     if (this.busy) return;
@@ -94,7 +97,8 @@ export function renderizarPanelEnsamble(controller) {
     }, status);
     const clear = element("button", "Quitar articulaciones; conservar posición", "fj-btn");
     clear.onclick = () => controller.run(async () => {
-      controller.data = await request(`/documentos/${controller.docId}/ensamble`, "DELETE"); refresh();
+      controller.data = await request(`/documentos/${controller.docId}/ensamble`, "DELETE");
+      await controller.cargarInicial(); controller.onPreviewChange(); refresh();
     }, status);
     panel.append(apply, clear);
   } else if (data.piezas.length > 1) {
@@ -128,7 +132,8 @@ export function renderizarPanelEnsamble(controller) {
         const articulaciones = rows.map(r => ({ id: r.name.value, padre: r.parent.value, hijo: r.child.value,
           tipo: r.type.value, origen: vector(r.origin), eje: vector(r.axis),
           limites: r.type.value === "fijo" ? [0, 0] : [Number(r.minimum.value), Number(r.maximum.value)], valor: 0 }));
-        controller.data = await request(`/documentos/${controller.docId}/ensamble`, "POST", { articulaciones }); refresh();
+        controller.data = await request(`/documentos/${controller.docId}/ensamble`, "POST", { articulaciones });
+        await controller.cargarInicial(); controller.onPreviewChange(); refresh();
       }, status);
     };
     panel.append(form, add); form.append(save);
