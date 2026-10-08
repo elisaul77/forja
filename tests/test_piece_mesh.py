@@ -193,3 +193,22 @@ def test_uncertain_solid_names_are_explicitly_marked():
     assert manifest["piezas"][0]["nombre"] == "solido_1"
     assert "identificadores genéricos" in manifest["aviso"]
     _assert_ranges_cover_mesh(manifest)
+
+
+def test_invalid_step_preview_reports_omitted_faces(monkeypatch):
+    shape = Box(5, 5, 5)
+    entries = solids.construir_entradas(shape)
+    normal = mesh.tessellate_to_trimesh_con_caras(shape)
+    monkeypatch.setattr(
+        mesh, "tessellate_to_trimesh_con_caras_tolerante",
+        lambda _shape: (*normal, [2]),
+    )
+    payload = piece_mesh.from_step(
+        shape, entries, metadata_available=True,
+        bbox=[-2.5, 2.5, -2.5, 2.5, -2.5, 2.5], volume=125,
+        allow_invalid_preview=True,
+    )
+    manifest, _stl = _read_fjp1(payload)
+    assert manifest["malla_incompleta"] is True
+    assert "1 cara" in manifest["aviso"]
+    assert "CAD original se conserva" in manifest["aviso"]

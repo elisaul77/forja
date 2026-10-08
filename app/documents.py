@@ -1116,6 +1116,7 @@ def _calcular_malla(doc_id: str, components: bool) -> bytes:
                     metadata_available=entries is not None,
                     bbox=registro["bbox"],
                     volume=registro["volumen"],
+                    allow_invalid_preview=not registro["valido"],
                 )
                 return content
             tri_mesh = mesh.tessellate_to_trimesh(shape)

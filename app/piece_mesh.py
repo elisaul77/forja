@@ -16,6 +16,11 @@ from kernel import mesh as kernel_mesh
 _MAGIC = b"FJP1"
 
 
+def _omitted_notice(count: int) -> str:
+    unit = "cara" if count == 1 else "caras"
+    return f"Vista incompleta: {count} {unit} del STEP no pudieron dibujarse. El CAD original se conserva."
+
+
 def _serialize(manifest: dict[str, Any], stl_bytes: bytes) -> bytes:
     header = json.dumps(
         manifest, ensure_ascii=False, separators=(",", ":"), allow_nan=False
@@ -47,7 +52,10 @@ def _whole_model(
     fragments: int,
     notice: str,
     names_uncertain: bool = True,
+    omitted_faces: int = 0,
 ) -> bytes:
+    if omitted_faces:
+        notice = _omitted_notice(omitted_faces) + " " + notice
     ranges = [[0, triangle_count]] if triangle_count else []
     manifest = {
         "version": 1,
@@ -63,6 +71,8 @@ def _whole_model(
             "rangos": ranges,
         }],
     }
+    if omitted_faces:
+        manifest["malla_incompleta"] = True
     return _serialize(manifest, stl_bytes)
 
 
@@ -73,6 +83,7 @@ def from_step(
     metadata_available: bool,
     bbox: list[float],
     volume: float,
+    allow_invalid_preview: bool = False,
 ) -> bytes:
     """Build the FJP1 envelope for a STEP shape, tessellating it once.
 
@@ -80,7 +91,11 @@ def from_step(
     manifest marks them uncertain. If topology cannot prove a unique owner
     for every face, the full model is returned as one safe component.
     """
-    tri_mesh, triangle_faces = kernel_mesh.tessellate_to_trimesh_con_caras(shape)
+    if allow_invalid_preview:
+        tri_mesh, triangle_faces, omitted = kernel_mesh.tessellate_to_trimesh_con_caras_tolerante(shape)
+    else:
+        tri_mesh, triangle_faces = kernel_mesh.tessellate_to_trimesh_con_caras(shape)
+        omitted = []
     stl_bytes = kernel_mesh.to_stl_bytes(tri_mesh)
     triangle_count = len(tri_mesh.faces)
     fallback_fragments = max(1, len(shape.solids()))
@@ -95,6 +110,7 @@ def from_step(
         return _whole_model(
             stl_bytes, triangle_count, bbox, volume, fallback_fragments,
             "No se pudo confirmar la correspondencia entre nombres y geometría; se muestra el modelo completo.",
+            omitted_faces=len(omitted),
         )
 
     solid_indices = [item[2] for item in indexed_solids]
@@ -108,12 +124,14 @@ def from_step(
         return _whole_model(
             stl_bytes, triangle_count, bbox, volume, fallback_fragments,
             "Hay caras compartidas o sin una pieza propietaria inequívoca; se muestra el modelo completo.",
+            omitted_faces=len(omitted),
         )
 
     if triangle_count == 0:
         return _whole_model(
             stl_bytes, 0, bbox, volume, fallback_fragments,
             "El modelo no produjo triángulos; se muestra como una sola pieza.",
+            omitted_faces=len(omitted),
         )
 
     owners_by_triangle = face_owners[triangle_faces]
@@ -121,6 +139,7 @@ def from_step(
         return _whole_model(
             stl_bytes, triangle_count, bbox, volume, fallback_fragments,
             "No se pudo confirmar el orden de las caras; se muestra el modelo completo.",
+            omitted_faces=len(omitted),
         )
 
     names = [item[0] for item in indexed_solids]
@@ -128,6 +147,7 @@ def from_step(
         return _whole_model(
             stl_bytes, triangle_count, bbox, volume, fallback_fragments,
             "No se pudo confirmar la identidad de las piezas; se muestra el modelo completo.",
+            omitted_faces=len(omitted),
         )
 
     order: list[str] = []
@@ -164,12 +184,14 @@ def from_step(
             return _whole_model(
                 stl_bytes, triangle_count, bbox, volume, fallback_fragments,
                 "Los rangos de triángulos no se pudieron confirmar; se muestra el modelo completo.",
+                omitted_faces=len(omitted),
             )
         cursor += count
     if cursor != triangle_count or any(not ranges_by_name[name] for name in order):
         return _whole_model(
             stl_bytes, triangle_count, bbox, volume, fallback_fragments,
             "No todas las piezas tienen una región de malla confirmada; se muestra el modelo completo.",
+            omitted_faces=len(omitted),
         )
 
     pieces = [
@@ -193,6 +215,10 @@ def from_step(
         manifest["aviso"] = (
             "Los nombres originales no se pudieron confirmar; las piezas se muestran con identificadores genéricos."
         )
+    if omitted:
+        warning = _omitted_notice(len(omitted))
+        manifest["aviso"] = warning + (" " + manifest["aviso"] if "aviso" in manifest else "")
+        manifest["malla_incompleta"] = True
     return _serialize(manifest, stl_bytes)
 
 
