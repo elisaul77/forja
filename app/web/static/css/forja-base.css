@@ -1061,5 +1061,11 @@ a.fj-btn { text-decoration: none; }
 .fj-animation__scrub { flex: 1; min-width: 0; accent-color: var(--fj-accent); }
 .fj-animation__state { color: var(--fj-ink-1); font-family: var(--fj-mono); font-size: var(--fj-text-sm); }
 .fj-animation__screen { color: var(--fj-ink-3); font-size: var(--fj-text-xs); }
+.fj-animation__check { margin: 0; color: var(--fj-ink-2); font-size: var(--fj-text-xs); line-height: var(--fj-lh-base); }
+.fj-animation__spring { border-top: 1px solid var(--fj-line); padding-top: var(--fj-space-2); }
+.fj-animation__spring summary { cursor: pointer; color: var(--fj-ink-2); font-size: var(--fj-text-xs); }
+.fj-animation__spring-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--fj-space-2); padding-top: var(--fj-space-2); }
+.fj-animation__spring-fields .fj-animation__field:last-child { grid-column: 1 / -1; }
+.fj-animation__spring-fields .fj-input, .fj-animation__spring-fields .fj-select { width: 100%; min-width: 0; }
 .fj-viewport--animation .fj-view-help { display: none; }
 @container fjvp (max-width: 600px) { .fj-animation { bottom: var(--fj-space-2); left: var(--fj-space-2); width: min(360px, calc(100% - 2 * var(--fj-space-2))); } .fj-mode-switch { left: var(--fj-space-2); } .fj-viewport--animation .fj-view-controls { top: calc(var(--fj-space-3) + var(--fj-space-7)); } }

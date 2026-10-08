@@ -1,5 +1,6 @@
 import { poseDeltas, validateMotionAssembly } from "./assembly-motion.js?v=1";
 import { overlapPairs, transformedBounds } from "./motion-overlaps.js?v=1";
+import { springForce } from "./motion-physics.js?v=1";
 
 function make(tag, className, text) {
   const node = document.createElement(tag);
@@ -9,11 +10,12 @@ function make(tag, className, text) {
 }
 
 export class AnimationView {
-  constructor(container, viewer, cadToolbar, beforeAnimation = () => true) {
+  constructor(container, viewer, cadToolbar, beforeAnimation = () => true, docId = null) {
     this.container = container;
     this.viewer = viewer;
     this.cadToolbar = cadToolbar;
     this.beforeAnimation = beforeAnimation;
+    this.docId = docId;
     this.mode = "cad";
     this.assembly = null;
     this.fraction = 0;
@@ -59,10 +61,37 @@ export class AnimationView {
     this.scrub.oninput = () => { this.pause(); this.setFraction(Number(this.scrub.value) / 1000); };
     playback.append(this.playButton, this.scrub);
     this.panel.append(playback);
+    this.checkButton = make("button", "fj-btn", "Comprobar posición");
+    this.checkButton.type = "button";
+    this.checkButton.onclick = () => this.checkPosition();
+    this.checkResult = make("p", "fj-animation__check");
+    this.checkResult.setAttribute("role", "status");
+    this.panel.append(this.checkButton, this.checkResult);
+    this.spring = make("details", "fj-animation__spring");
+    this.spring.append(make("summary", "", "Resorte de compresión (opcional)"));
+    const springFields = make("div", "fj-animation__spring-fields");
+    const springField = (label, type = "number") => {
+      const wrapper = make("label", "fj-animation__field", label);
+      const input = make("input", "fj-input"); input.type = type; input.step = "any"; input.min = "0";
+      wrapper.append(input); springFields.append(wrapper);
+      return input;
+    };
+    this.stiffness = springField("Rigidez (N/mm)");
+    this.referenceForce = springField("Fuerza en «Desde» (N)");
+    const directionLabel = make("label", "fj-animation__field", "Se comprime cuando el valor");
+    this.springDirection = make("select", "fj-select");
+    for (const [value, text] of [["", "Selecciona"], ["1", "Aumenta"], ["-1", "Disminuye"]]) {
+      const option = make("option", "", text); option.value = value; this.springDirection.append(option);
+    }
+    directionLabel.append(this.springDirection); springFields.append(directionLabel);
+    this.springResult = make("p", "fj-animation__check");
+    this.spring.append(springFields, this.springResult);
+    for (const input of [this.stiffness, this.referenceForce, this.springDirection]) input.oninput = () => this.updateSpring();
+    this.panel.append(this.spring);
     this.state = make("p", "fj-animation__state");
     this.screen = make("p", "fj-animation__screen");
     this.panel.append(this.state, this.screen,
-      make("p", "fj-animation__disclaimer", "Vista cinemática del CAD. Las cajas envolventes solo señalan posibles cruces nuevos; no calculan contacto, fuerza, rozamiento ni deformación."));
+      make("p", "fj-animation__disclaimer", "La comprobación exacta solo evalúa esta posición y las piezas que cruzan el grupo móvil a 1 mm o menos. El resorte usa tus datos y la ley de Hooke; no simula rozamiento, flexión, inercia ni todo el recorrido."));
     this.jointSelect.onchange = () => this.selectJoint();
     this.from.onchange = () => { this.pause(); this.setFraction(0); };
     this.to.onchange = () => { this.pause(); this.setFraction(0); };
@@ -76,6 +105,7 @@ export class AnimationView {
     this.assembly = data;
     this.assemblyRevision = assemblyRevision;
     this.meshRevision = meshRevision;
+    this.clearCheck();
     const previous = this.jointSelect.value;
     this.jointSelect.replaceChildren();
     for (const joint of data?.articulaciones ?? []) {
@@ -100,6 +130,7 @@ export class AnimationView {
       this.from.title = this.to.title = joint.tipo === "giro" ? "grados" : "milímetros";
     }
     this.setFraction(0);
+    this.spring.hidden = joint?.tipo !== "deslizamiento";
   }
 
   currentJoint() {
@@ -117,7 +148,7 @@ export class AnimationView {
 
   setMode(mode) {
     if (mode === "animation" && !this.beforeAnimation()) return;
-    if (mode === "cad") { this.pause(); this.resetPose(); }
+    if (mode === "cad") { this.pause(); this.clearCheck(); this.resetPose(); }
     this.mode = mode;
     this.cadToolbar.hidden = mode !== "cad";
     this.panel.hidden = mode !== "animation";
@@ -146,6 +177,7 @@ export class AnimationView {
   }
 
   setFraction(fraction, analyze = true) {
+    this.clearCheck();
     this.fraction = Math.max(0, Math.min(1, fraction));
     this.scrub.value = String(Math.round(this.fraction * 1000));
     const error = this.available();
@@ -153,6 +185,7 @@ export class AnimationView {
     const endpoints = this.endpoints();
     this.playButton.disabled = Boolean(error || !endpoints || endpoints.from === endpoints.to);
     this.scrub.disabled = Boolean(error || !endpoints);
+    this.checkButton.disabled = Boolean(error || !endpoints || !this.docId);
     for (const control of [this.jointSelect, this.from, this.to]) control.disabled = Boolean(error);
     if (this.mode !== "animation") { this.resetPose(); return; }
     if (error || !endpoints) {
@@ -173,6 +206,7 @@ export class AnimationView {
     }
     this.viewer.render();
     this.state.textContent = `${joint.id}: ${value.toFixed(2)} ${joint.tipo === "giro" ? "°" : "mm"} · ${Math.round(this.fraction * 100)} %`;
+    this.updateSpring();
     if (analyze) {
       const overlaps = this.overlapPairs();
       if (this.fraction === 0) this.baseOverlaps = overlaps;
@@ -190,6 +224,58 @@ export class AnimationView {
       id++;
     }
     return overlapPairs(boxes).pairs;
+  }
+
+  clearCheck() {
+    this.checkController?.abort();
+    this.checkController = null;
+    if (this.checkResult) this.checkResult.textContent = "";
+  }
+
+  updateSpring() {
+    if (!this.springResult || this.spring.hidden) return;
+    const endpoints = this.endpoints();
+    const stiffness = this.stiffness.value === "" ? NaN : Number(this.stiffness.value);
+    const referenceForce = this.referenceForce.value === "" ? NaN : Number(this.referenceForce.value);
+    const direction = Number(this.springDirection.value);
+    const force = endpoints && springForce({ stiffness, referenceForce,
+      referencePosition: endpoints.from,
+      position: endpoints.from + (endpoints.to - endpoints.from) * this.fraction,
+      direction });
+    this.springResult.textContent = force === null ? "Introduce los tres datos para calcular la fuerza." :
+      `Fuerza del resorte: ${force.toFixed(3)} N (estimación estática).`;
+  }
+
+  async checkPosition() {
+    if (this.available() || !this.endpoints() || !this.docId) return;
+    this.pause();
+    this.clearCheck();
+    const { joint, from, to } = this.endpoints();
+    const value = from + (to - from) * this.fraction;
+    const controller = new AbortController();
+    this.checkController = controller;
+    this.checkButton.disabled = true;
+    this.checkResult.textContent = "Comprobando sólidos exactos…";
+    const params = new URLSearchParams({ articulacion: joint.id, valor: String(value), revision: this.meshRevision });
+    try {
+      const response = await fetch(`/documentos/${encodeURIComponent(this.docId)}/ensamble/comprobar-posicion?${params}`, {
+        signal: controller.signal, cache: "no-store",
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "No se pudo comprobar la posición.");
+      if (this.checkController !== controller) return;
+      const collision = result.choques.length;
+      const gap = result.holgura_minima_mm === null ? "sin holgura medida dentro de 1 mm" :
+        `holgura mínima ${result.holgura_minima_mm.toFixed(3)} mm`;
+      const status = result.completo ? "Muestra completa" : "Muestra incompleta";
+      this.checkResult.textContent = `${status}: ${collision} choques mayores de ${result.umbral_choque_mm3} mm³; ${result.contactos.length} contactos; ${gap}. ${result.pares_comprobados}/${result.pares_en_radio} pares cercanos comprobados.` +
+        (result.errores.length ? ` ${result.errores.length} errores de geometría.` : "") +
+        (result.choques.length ? ` Primer choque: ${result.choques[0].a} × ${result.choques[0].b}.` : "");
+    } catch (error) {
+      if (error.name !== "AbortError" && this.checkController === controller) this.checkResult.textContent = error.message;
+    } finally {
+      if (this.checkController === controller) { this.checkController = null; this.checkButton.disabled = false; }
+    }
   }
 
   play() {
@@ -224,5 +310,5 @@ export class AnimationView {
     this.playButton.textContent = "Reproducir";
   }
 
-  dispose() { this.pause(); this.resetPose(); this.switch.remove(); this.panel.remove(); }
+  dispose() { this.pause(); this.clearCheck(); this.resetPose(); this.switch.remove(); this.panel.remove(); }
 }

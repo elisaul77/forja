@@ -9,7 +9,7 @@ import { ForjaParametrosControlador, renderizarPanelParametros } from "./paramet
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
 import { crearBotonCupon } from "./cupon.js?v=2";
 import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=2";
-import { AnimationView } from "./animation.js?v=2";
+import { AnimationView } from "./animation.js?v=3";
 import { renderPiecesPanel } from "./pieces.js?v=9";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
 import { construirAnclas } from "./orca.js?v=3";
@@ -273,7 +273,7 @@ export class TabManager {
       btnPizarra.classList.remove("is-active");
       viewer.ocultarPlanoPizarra();
       return true;
-    });
+    }, ficha.id);
 
     const viewControls = document.createElement("div");
     viewControls.className = "fj-view-controls";

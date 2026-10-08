@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import assemblies
@@ -33,6 +33,7 @@ import notes
 import parametros
 import solids
 import versioning
+from checks import pose_clearance
 from kernel import b123d_kernel as kernel
 
 router = APIRouter(prefix="/documentos/{doc_id}/ensamble")
@@ -131,6 +132,41 @@ def get_assembly(doc_id: str, response: Response):
         response.headers["X-Forja-Revision"] = documents._revisiones.get(doc_id, "")
         response.headers["Cache-Control"] = "no-store"
         return payload
+
+
+@router.get("/comprobar-posicion")
+def check_assembly_position(
+    doc_id: str,
+    response: Response,
+    articulacion: str = Query(min_length=1),
+    valor: float = Query(),
+    revision: str = Query(min_length=1),
+):
+    """Exact local collision/clearance at a sampled pose, without writes.
+
+    Client supplies the geometry revision it previewed. The check uses the
+    same immutable rest geometry and joint transform as `/pose`, under the
+    document lock, but never exports STEP or creates a history entry.
+    """
+    _path(doc_id)
+    with parametros.bloqueo(doc_id):
+        _path(doc_id)
+        if revision != documents._revisiones.get(doc_id):
+            raise HTTPException(409, "la geometría cambió; actualiza la vista")
+        state = _estado_actual(doc_id)
+        if state is None:
+            raise HTTPException(422, "el documento no tiene ensamble")
+        if assemblies.is_stale(doc_id):
+            raise HTTPException(409, "el ensamble está desactualizado")
+        try:
+            moving = pose_clearance.moving_names(state["articulaciones"], articulacion)
+            named = assemblies.pose_shapes(doc_id, {articulacion: valor})
+            result = pose_clearance.check_pose(named, moving)
+        except (ValueError, OverflowError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Forja-Revision"] = revision
+        return {"articulacion": articulacion, "valor": valor, **result}
 
 
 @router.post("", dependencies=[Depends(auth.requiere_token)])

@@ -7,6 +7,11 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (Comprobación física de una posición)
+
+- La vista Animación puede comprobar una posición del ensamble con distancias e intersecciones exactas de OpenCascade entre piezas móviles y fijas cercanas. El resultado identifica contactos, choques y comprobaciones incompletas; corresponde a una posición muestreada, no a todo el recorrido.
+- Un panel opcional calcula la fuerza estática de un resorte de compresión con rigidez, precarga y sentido introducidos por el usuario.
+
 ### Added (Vista de animación de ensambles)
 
 - El visor ofrece modos **CAD** y **Animación** por documento. La animación usa las articulaciones existentes, sus ejes, centros, jerarquía y límites para transformar las mallas de piezas entre dos valores sin escribir el STEP ni crear pasos de historial.
