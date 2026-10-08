@@ -49,6 +49,21 @@ class Pose(BaseModel):
     valores: dict[str, float]
 
 
+class SceneCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    revision: str = Field(min_length=1)
+    valores: dict[str, float]
+    articulaciones_activas: list[str] = Field(min_length=1, max_length=60)
+
+
+class MotionCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    revision: str = Field(min_length=1)
+    valores_desde: dict[str, float]
+    valores_hasta: dict[str, float]
+    muestras: int = Field(default=12, ge=2, le=24)
+
+
 # The wire shape of a joint: exactly these keys, in this vocabulary, plus a
 # sanitized reference per side when the definition carried one.
 _CLAVES_ARTICULACION = ("id", "tipo", "padre", "hijo", "origen", "eje", "limites", "valor")
@@ -167,6 +182,102 @@ def check_assembly_position(
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Forja-Revision"] = revision
         return {"articulacion": articulacion, "valor": valor, **result}
+
+
+def _scene_context(doc_id: str, revision: str):
+    _path(doc_id)
+    if revision != documents._revisiones.get(doc_id):
+        raise HTTPException(409, "la geometría cambió; actualiza la vista")
+    if assemblies.is_stale(doc_id):
+        raise HTTPException(409, "el ensamble está desactualizado")
+    try:
+        return assemblies.rest_shapes(doc_id)
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _moving_for(state: dict, joint_ids: list[str]) -> set[str]:
+    if len(set(joint_ids)) != len(joint_ids):
+        raise ValueError("articulaciones repetidas")
+    moving: set[str] = set()
+    for joint_id in joint_ids:
+        moving.update(pose_clearance.moving_names(state["articulaciones"], joint_id))
+    return moving
+
+
+@router.post("/comprobar-escena")
+def check_assembly_scene(doc_id: str, body: SceneCheck, response: Response):
+    """Read-only exact check of one pose with several driven joints."""
+    _path(doc_id)
+    with parametros.bloqueo(doc_id):
+        state, rest = _scene_context(doc_id, body.revision)
+        try:
+            moving = _moving_for(state, body.articulaciones_activas)
+            named = assemblies.pose_shapes_from_rest(state, rest, body.valores)
+            result = pose_clearance.check_scene(named, moving)
+        except (ValueError, OverflowError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Forja-Revision"] = body.revision
+        return result
+
+
+@router.post("/comprobar-recorrido")
+def check_assembly_motion(doc_id: str, body: MotionCheck, response: Response):
+    """Sample a coordinated rigid motion; report the first NEW penetration.
+
+    A clean result covers only these discrete samples, never continuous time.
+    No STEP is modified and the rest geometry is imported just once.
+    """
+    _path(doc_id)
+    with parametros.bloqueo(doc_id):
+        state, rest = _scene_context(doc_id, body.revision)
+        if not body.valores_desde or set(body.valores_desde) != set(body.valores_hasta):
+            raise HTTPException(422, "elige las mismas articulaciones para inicio y fin")
+        try:
+            moving = _moving_for(state, list(body.valores_desde))
+            start = assemblies._values(state, body.valores_desde)
+            end = assemblies._values(state, body.valores_hasta)
+            baseline = None
+            last_safe = 0.0
+            first_hit = None
+            checked = 0
+            complete = True
+            initial_hits = 0
+            last_result = None
+            for index in range(body.muestras + 1):
+                fraction = index / body.muestras
+                values = {joint_id: start[joint_id] + (end[joint_id] - start[joint_id]) * fraction
+                          for joint_id in start}
+                scene = assemblies.pose_shapes_from_rest(state, rest, values)
+                result = pose_clearance.check_scene(scene, moving, max_exact_pairs=100)
+                last_result = result
+                checked += 1
+                if not result["completo"] or result["choques_mas"]:
+                    complete = False
+                    break
+                volumes = {tuple(sorted((hit["a"], hit["b"]))): hit["volumen_mm3"]
+                           for hit in result["choques"]}
+                if baseline is None:
+                    baseline = volumes
+                    initial_hits = len(volumes)
+                else:
+                    new_hits = [hit for hit in result["choques"]
+                                if hit["volumen_mm3"] > baseline.get(
+                                    tuple(sorted((hit["a"], hit["b"]))), 0.0
+                                ) + pose_clearance.colisiones.TOLERANCIA_MM3_POR_DEFECTO]
+                    if new_hits:
+                        first_hit = {"fraccion": fraction, "par": new_hits[0]}
+                        break
+                    last_safe = fraction
+        except (ValueError, OverflowError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Forja-Revision"] = body.revision
+        return {"completo": complete, "muestras_solicitadas": body.muestras + 1,
+                "muestras_comprobadas": checked, "primer_choque": first_hit,
+                "fraccion_segura_muestreada": last_safe,
+                "choques_iniciales": initial_hits, "ultima_posicion": last_result}
 
 
 @router.post("", dependencies=[Depends(auth.requiere_token)])
