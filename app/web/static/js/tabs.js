@@ -8,8 +8,8 @@ import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.j
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
 import { crearBotonCupon } from "./cupon.js?v=2";
-import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js";
-import { AnimationView } from "./animation.js?v=1";
+import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=2";
+import { AnimationView } from "./animation.js?v=2";
 import { renderPiecesPanel } from "./pieces.js?v=9";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
 import { construirAnclas } from "./orca.js?v=3";
@@ -180,6 +180,9 @@ export class TabManager {
     });
     const ensamble = new ForjaEnsambleControlador(ficha.id, async (registroActualizado) => {
       await this._alCambiarParametros(ficha.id, registroActualizado);
+    }, () => {
+      const current = this.tabs.get(ficha.id);
+      if (current) current.animation.setAssembly(ensamble.data, ensamble.revision, current.revision);
     });
 
     const toolbar = document.createElement("div");
@@ -397,7 +400,7 @@ export class TabManager {
       throw error;
     }
     btnParametros.hidden = !parametros.tieneParametros();
-    animation.setAssembly(ensamble.data);
+    animation.setAssembly(ensamble.data, ensamble.revision, entry.revision);
     this.activar(ficha.id);
     viewer.ajustarVista();
   }
@@ -443,7 +446,7 @@ export class TabManager {
       entrada.notas.invalidarCaras();
       await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       entrada.btnParametros.hidden = !entrada.parametros.tieneParametros();
-      entrada.animation.setAssembly(entrada.ensamble.data);
+      entrada.animation.setAssembly(entrada.ensamble.data, entrada.ensamble.revision, entrada.revision);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         this._renderizarPanelPestanaActiva();
@@ -474,7 +477,7 @@ export class TabManager {
       const msMalla = performance.now() - inicio;
       entrada.ficha = registroActualizado;
       await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
-      entrada.animation.setAssembly(entrada.ensamble.data);
+      entrada.animation.setAssembly(entrada.ensamble.data, entrada.ensamble.revision, entrada.revision);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         if (!this.panel.hidden && this.panelActivo !== "parametros") this._renderizarPanelPestanaActiva();
@@ -576,7 +579,7 @@ export class TabManager {
     entry.ficha = ficha;
     this._setRevision(entry, mesh.revision);
     await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar(), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
-    entry.animation.setAssembly(entry.ensamble.data);
+    entry.animation.setAssembly(entry.ensamble.data, entry.ensamble.revision, entry.revision);
     if (!entry.parametros.ocupado()) await entry.parametros.cargarInicial();
     if (this.tabs.get(docId) !== entry) return;
     entry.btnParametros.hidden = !entry.parametros.tieneParametros();
@@ -605,7 +608,9 @@ export class TabManager {
       entry.pendingPanels.delete(tag);
       if (tag === "notas") tasks.push(entry.notas.recargar());
       if (tag === "historial") tasks.push(entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar());
-      if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial().then(() => entry.animation.setAssembly(entry.ensamble.data)));
+      if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial().then(() => {
+        if (this.tabs.get(docId) === entry) entry.animation.setAssembly(entry.ensamble.data, entry.ensamble.revision, entry.revision);
+      }));
       if (tag === "ramas") tasks.push(entry.ramas.cargarInicial(), entry.h2.invalidar());
       if (tag === "parametros") tasks.push(entry.parametros.cargarInicial());
       if (tag === "materiales") tasks.push(this._cargarMateriales(entry));

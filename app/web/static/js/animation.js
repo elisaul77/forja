@@ -1,4 +1,5 @@
 import { poseDeltas, validateMotionAssembly } from "./assembly-motion.js?v=1";
+import { overlapPairs, transformedBounds } from "./motion-overlaps.js?v=1";
 
 function make(tag, className, text) {
   const node = document.createElement(tag);
@@ -17,6 +18,7 @@ export class AnimationView {
     this.assembly = null;
     this.fraction = 0;
     this.baseOverlaps = new Set();
+    this.lastScreenAt = 0;
     this.playing = false;
     this.frame = null;
 
@@ -68,10 +70,12 @@ export class AnimationView {
     this.setMode("cad");
   }
 
-  setAssembly(data) {
+  setAssembly(data, assemblyRevision, meshRevision) {
     this.pause();
     this.resetPose();
     this.assembly = data;
+    this.assemblyRevision = assemblyRevision;
+    this.meshRevision = meshRevision;
     const previous = this.jointSelect.value;
     this.jointSelect.replaceChildren();
     for (const joint of data?.articulaciones ?? []) {
@@ -104,7 +108,11 @@ export class AnimationView {
 
   available() {
     const error = validateMotionAssembly(this.assembly, new Set(this.viewer.pieces.keys()));
-    return error || (!this.currentJoint() ? "El ensamble solo tiene uniones fijas." : "");
+    if (error) return error;
+    if (!this.assemblyRevision || !this.meshRevision || this.assemblyRevision !== this.meshRevision) {
+      return "La malla y las articulaciones tienen revisiones distintas. Espera a que se actualice el documento.";
+    }
+    return !this.currentJoint() ? "El ensamble solo tiene uniones fijas." : "";
   }
 
   setMode(mode) {
@@ -137,7 +145,7 @@ export class AnimationView {
     return { joint, from, to };
   }
 
-  setFraction(fraction) {
+  setFraction(fraction, analyze = true) {
     this.fraction = Math.max(0, Math.min(1, fraction));
     this.scrub.value = String(Math.round(this.fraction * 1000));
     const error = this.available();
@@ -165,19 +173,23 @@ export class AnimationView {
     }
     this.viewer.render();
     this.state.textContent = `${joint.id}: ${value.toFixed(2)} ${joint.tipo === "giro" ? "°" : "mm"} · ${Math.round(this.fraction * 100)} %`;
-    const overlaps = this.overlapPairs();
-    if (this.fraction === 0) this.baseOverlaps = overlaps;
-    const newCount = [...overlaps].filter(pair => !this.baseOverlaps.has(pair)).length;
-    this.screen.textContent = `${newCount} pares nuevos de cajas envolventes superpuestas (cribado preliminar).`;
+    if (analyze) {
+      const overlaps = this.overlapPairs();
+      if (this.fraction === 0) this.baseOverlaps = overlaps;
+      const newCount = [...overlaps].filter(pair => !this.baseOverlaps.has(pair)).length;
+      this.screen.textContent = `${newCount} pares nuevos de cajas envolventes superpuestas (muestreo espacial preliminar).`;
+    }
   }
 
   overlapPairs() {
-    const pieces = [...this.viewer.pieces].map(([name, data]) => [name, data.mesh.geometry.boundingBox?.clone().applyMatrix4(data.mesh.matrixWorld)]);
-    const pairs = new Set();
-    for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
-      if (pieces[i][1] && pieces[j][1] && pieces[i][1].intersectsBox(pieces[j][1])) pairs.add(`${pieces[i][0]}\0${pieces[j][0]}`);
+    const boxes = [];
+    let id = 0;
+    for (const data of this.viewer.pieces.values()) {
+      const mesh = data.mesh;
+      if (mesh.geometry.boundingBox) boxes.push(transformedBounds(mesh.geometry.boundingBox, mesh.matrixWorld.elements, id));
+      id++;
     }
-    return pairs;
+    return overlapPairs(boxes).pairs;
   }
 
   play() {
@@ -192,7 +204,12 @@ export class AnimationView {
     let last = null;
     const tick = now => {
       if (!this.playing) return;
-      if (last !== null) this.setFraction(this.fraction + Math.min(now - last, 100) / 4000);
+      if (last !== null) {
+        const next = Math.min(1, this.fraction + Math.min(now - last, 100) / 4000);
+        const analyze = now - this.lastScreenAt >= 100 || next === 1;
+        this.setFraction(next, analyze);
+        if (analyze) this.lastScreenAt = now;
+      }
       last = now;
       if (this.fraction >= 1) this.pause();
       else this.frame = requestAnimationFrame(tick);

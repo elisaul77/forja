@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import assemblies
@@ -108,9 +108,7 @@ def _files(doc_id: str, path: Path) -> dict[str, bytes]:
     return result
 
 
-@router.get("")
-def get_assembly(doc_id: str):
-    _path(doc_id)
+def _assembly_payload(doc_id: str):
     state = _estado_actual(doc_id)
     entries = solids.cargar(doc_id) or []
     return {"id": doc_id, "piezas": list(dict.fromkeys(e["nombre"] for e in entries)),
@@ -120,6 +118,19 @@ def get_assembly(doc_id: str):
             ),
             "valores": state["valores"] if state else {},
             "obsoleto": assemblies.is_stale(doc_id) if state else False}
+
+
+@router.get("")
+def get_assembly(doc_id: str, response: Response):
+    _path(doc_id)  # unknown ids never create a lock entry
+    with parametros.bloqueo(doc_id):
+        _path(doc_id)
+        payload = _assembly_payload(doc_id)
+        # The viewer only previews a pose when this revision matches the
+        # component mesh. Keep the body stable for existing REST/MCP clients.
+        response.headers["X-Forja-Revision"] = documents._revisiones.get(doc_id, "")
+        response.headers["Cache-Control"] = "no-store"
+        return payload
 
 
 @router.post("", dependencies=[Depends(auth.requiere_token)])
@@ -140,7 +151,7 @@ def define_assembly(doc_id: str, body: Definition):
             assemblies.restore_files(doc_id, before)
             raise
         eventos.publicar("ensamble_actualizado", doc_id, cambios=["ensamble", "historial"])
-        return get_assembly(doc_id)
+        return _assembly_payload(doc_id)
 
 
 @router.delete("", dependencies=[Depends(auth.requiere_token)])
@@ -151,7 +162,7 @@ def clear_assembly(doc_id: str):
         versioning.crear_snapshot(doc_id, "antes de quitar articulaciones (conservar posición)", _files(doc_id, path))
         assemblies.clear(doc_id)
         eventos.publicar("ensamble_actualizado", doc_id, cambios=["ensamble", "historial"])
-        return get_assembly(doc_id)
+        return _assembly_payload(doc_id)
 
 
 @router.post("/pose", dependencies=[Depends(auth.requiere_token)])
