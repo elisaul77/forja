@@ -7,6 +7,11 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (phase 15 — large STEP import)
+
+- STEP upload and `abrir_archivo` now derive the document summary and per-solid metadata from a single OpenCascade import. The import is staged outside the startup document scan until validation succeeds, so a parse interrupted before validation cannot expose an unfinished document.
+- Regression tests cover both entry points, unchanged volume/solid metadata, one import per request, and cleanup after a failed path import.
+
 ### Added (Historial 2.0 — grafo, miniaturas por paso, historial por pieza)
 
 - `app/historial_grafo.py`: `GET /documentos/{id}/grafo` (todas las ramas, orden topológico, padres incl. fusiones de 2 padres, ramas que contienen cada paso, puntas, hitos, autor/fecha/mensaje/revisión, `fusion`, `desde` y resumen de cambios respecto al primer padre con la regla G0/G3; caché por sha en `.cache/grafo/`; `limite` ≤ 300, `truncado`). `?pieza=` filtra a los pasos que la tocaron y reescribe los padres (simplificación de historia).
