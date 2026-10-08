@@ -44,12 +44,36 @@ def tessellate_to_trimesh_con_caras(
     lack of vertex sharing (`Trimesh.volume` sums signed per-triangle
     contributions, it does not require watertight-by-shared-vertex mesh).
     """
+    tri_mesh, indices, _omitted = _tessellate_faces(shape, tolerance, skip_invalid=False)
+    return tri_mesh, indices
+
+
+def tessellate_to_trimesh_con_caras_tolerante(
+    shape: Shape, tolerance: float = 0.1
+) -> tuple[trimesh.Trimesh, np.ndarray, list[int]]:
+    """Preview invalid STEP geometry, reporting every face that could not mesh.
+
+    The caller must show the omitted-face count. This never changes the B-rep.
+    """
+    return _tessellate_faces(shape, tolerance, skip_invalid=True)
+
+
+def _tessellate_faces(
+    shape: Shape, tolerance: float, *, skip_invalid: bool
+) -> tuple[trimesh.Trimesh, np.ndarray, list[int]]:
     vertices_por_cara: list[np.ndarray] = []
     triangulos_por_cara: list[np.ndarray] = []
     indice_cara: list[int] = []
+    omitted: list[int] = []
     offset = 0
     for i, face in enumerate(shape.faces()):
-        vertices, triangulos = face.tessellate(tolerance)
+        try:
+            vertices, triangulos = face.tessellate(tolerance)
+        except (AttributeError, RuntimeError, ValueError):
+            if not skip_invalid:
+                raise
+            omitted.append(i)
+            continue
         if not triangulos:
             continue
         verts = np.array([(v.X, v.Y, v.Z) for v in vertices], dtype=float)
@@ -62,7 +86,7 @@ def tessellate_to_trimesh_con_caras(
     verts_totales = np.concatenate(vertices_por_cara) if vertices_por_cara else np.zeros((0, 3))
     tris_totales = np.concatenate(triangulos_por_cara) if triangulos_por_cara else np.zeros((0, 3), dtype=int)
     tri_mesh = trimesh.Trimesh(vertices=verts_totales, faces=tris_totales, process=False)
-    return tri_mesh, np.array(indice_cara, dtype=np.uint32)
+    return tri_mesh, np.array(indice_cara, dtype=np.uint32), omitted
 
 
 def solid_indices_by_face(shape: Shape, solids: list[Shape]) -> np.ndarray | None:

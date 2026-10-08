@@ -7,6 +7,10 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (vista de STEP importado con caras defectuosas)
+
+- La vista 3D puede omitir caras que OpenCascade no logra triangular en un STEP ya marcado como no válido. Muestra cuántas caras faltan y conserva intacto el CAD importado; los STEP válidos mantienen el comportamiento estricto.
+
 ### Added (Vista de animación de ensambles)
 
 - El visor ofrece modos **CAD** y **Animación** por documento. La animación usa las articulaciones existentes, sus ejes, centros, jerarquía y límites para transformar las mallas de piezas entre dos valores sin escribir el STEP ni crear pasos de historial.
