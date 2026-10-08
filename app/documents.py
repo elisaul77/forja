@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import unicodedata
 import time
 import uuid
@@ -295,12 +296,22 @@ def _analizar_con_solidos(
 
     Callers persist the returned entries via ``solids.guardar`` when not
     ``None``."""
-    analisis = _analyze(path, ext)
-    if ext in _STEP_EXTS:
-        shape = b123d_kernel.import_from_step(path)
-        entradas: list[dict[str, Any]] | None = solids.construir_entradas(shape, nombres_ordenados)
-    else:
-        entradas = None
+    if ext not in _STEP_EXTS:
+        return _analyze(path, ext), None
+
+    # STEP parsing is the dominant cost for large assemblies. Keep the same
+    # analytic summary and per-solid entries, but derive both from one import.
+    shape = b123d_kernel.import_from_step(path)
+    info = b123d_kernel.analyze(shape)
+    if info.solidos == 0:
+        raise ValueError("archivo STEP sin solidos")
+    analisis = {
+        "bbox": list(info.bbox),
+        "volumen": info.volumen,
+        "solidos": info.solidos,
+        "valido": info.valido,
+    }
+    entradas = solids.construir_entradas(shape, nombres_ordenados)
     return analisis, entradas
 
 
@@ -378,8 +389,14 @@ async def crear_documento(request: Request, file: UploadFile = File(...)) -> dic
     destino = DOCUMENTOS_DIR / f"{doc_id}{ext}"
 
     try:
-        destino.write_bytes(contenido)
-        analisis, entradas = _analizar_con_solidos(destino, ext)
+        # A slow import must not expose an unvalidated file to startup reload.
+        # Stage in a directory that recargar_documentos ignores, then publish
+        # the exact source bytes on the same filesystem after analysis succeeds.
+        with tempfile.TemporaryDirectory(prefix=".importando-", dir=DOCUMENTOS_DIR) as staging:
+            temporal = Path(staging) / f"{doc_id}{ext}"
+            temporal.write_bytes(contenido)
+            analisis, entradas = _analizar_con_solidos(temporal, ext)
+            os.replace(temporal, destino)
     except HTTPException:
         destino.unlink(missing_ok=True)
         raise
@@ -422,8 +439,11 @@ def crear_documento_desde_ruta(body: _DesdeRutaBody) -> dict[str, Any]:
     destino = DOCUMENTOS_DIR / f"{doc_id}{ext}"
 
     try:
-        shutil.copyfile(origen, destino)
-        analisis, entradas = _analizar_con_solidos(destino, ext)
+        with tempfile.TemporaryDirectory(prefix=".importando-", dir=DOCUMENTOS_DIR) as staging:
+            temporal = Path(staging) / f"{doc_id}{ext}"
+            shutil.copyfile(origen, temporal)
+            analisis, entradas = _analizar_con_solidos(temporal, ext)
+            os.replace(temporal, destino)
     except Exception as exc:  # noqa: BLE001 - unparsable geometry is a client error
         destino.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=f"archivo invalido: {exc}") from exc
