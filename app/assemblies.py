@@ -249,8 +249,8 @@ def _values(state: dict, values: dict) -> dict[str, float]:
     return merged
 
 
-def pose_shapes(doc_id: str, values: dict[str, float]) -> dict[str, Any]:
-    """Return a fresh absolute pose, without changing any persisted state."""
+def rest_shapes(doc_id: str) -> tuple[dict, dict[str, Any]]:
+    """Validate and load the immutable rest geometry once for sampled motion."""
     state = load(doc_id)
     if state is None:
         raise ValueError("el documento no tiene ensamble")
@@ -260,6 +260,11 @@ def pose_shapes(doc_id: str, values: dict[str, float]) -> dict[str, Any]:
     if _digest(base.read_bytes()) != state["base_sha256"]:
         raise ValueError("la geometría de reposo del ensamble está dañada")
     named = _named(kernel.import_from_step(base), state["entries"])
+    return state, named
+
+
+def pose_shapes_from_rest(state: dict, named: dict[str, Any], values: dict[str, float]) -> dict[str, Any]:
+    """Pose independent copies of the same rest solids for one animation frame."""
     values = _values(state, values)
     by_child = {j["hijo"]: j for j in state["articulaciones"]}
     posed = {}
@@ -277,6 +282,12 @@ def pose_shapes(doc_id: str, values: dict[str, float]) -> dict[str, Any]:
             cursor = joint["padre"]
         posed[name] = shape
     return posed
+
+
+def pose_shapes(doc_id: str, values: dict[str, float]) -> dict[str, Any]:
+    """Return a fresh absolute pose, without changing any persisted state."""
+    state, named = rest_shapes(doc_id)
+    return pose_shapes_from_rest(state, named, values)
 
 
 def set_revision(doc_id: str, current_step_bytes: bytes, values: dict | None = None) -> dict:

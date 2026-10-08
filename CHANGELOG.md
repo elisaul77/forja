@@ -7,6 +7,12 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (movimiento coordinado de varias piezas)
+
+- La vista Animación permite activar varias articulaciones de un ensamble y asignar a cada una posiciones de inicio y fin. La jerarquía existente propaga el movimiento a las piezas hijas sin modificar el STEP.
+- «Comprobar posición» evalúa choques y contactos exactos también entre dos grupos móviles. «Reproducir con contacto» comprueba 13 posiciones del recorrido y detiene la animación en la última posición muestreada antes de una penetración nueva. La interfaz aclara que el barrido es discreto y que no calcula fuerzas ni deformaciones.
+- El motor de ensamble reutiliza la geometría de reposo durante el muestreo; pruebas con un brazo de ejemplo cubren movimientos simultáneos y parada por colisión.
+
 ### Fixed (vista de STEP importado con caras defectuosas)
 
 - La vista 3D puede omitir caras que OpenCascade no logra triangular en un STEP ya marcado como no válido. Muestra cuántas caras faltan y conserva intacto el CAD importado; los STEP válidos mantienen el comportamiento estricto.

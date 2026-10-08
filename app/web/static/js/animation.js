@@ -1,6 +1,7 @@
 import { poseDeltas, validateMotionAssembly } from "./assembly-motion.js?v=1";
 import { overlapPairs, transformedBounds } from "./motion-overlaps.js?v=1";
 import { springForce } from "./motion-physics.js?v=1";
+import { interpolateTracks } from "./motion-tracks.js?v=1";
 
 function make(tag, className, text) {
   const node = document.createElement(tag);
@@ -23,6 +24,8 @@ export class AnimationView {
     this.lastScreenAt = 0;
     this.playing = false;
     this.frame = null;
+    this.multiRows = new Map();
+    this.motionLimit = 1;
 
     this.switch = make("div", "fj-mode-switch");
     this.switch.setAttribute("role", "group");
@@ -51,14 +54,30 @@ export class AnimationView {
     this.to = make("input", "fj-input"); this.to.type = "number"; this.to.step = "any";
     fromLabel.append(this.from); toLabel.append(this.to); limits.append(fromLabel, toLabel);
     this.panel.append(limits);
+    this.singleControls = [jointLabel, limits];
+    const multiLabel = make("label", "fj-animation__multi-toggle");
+    this.multiToggle = make("input", ""); this.multiToggle.type = "checkbox";
+    multiLabel.append(this.multiToggle, document.createTextNode(" Coordinar varias articulaciones"));
+    this.panel.append(multiLabel);
+    this.multiPanel = make("div", "fj-animation__multi");
+    this.multiPanel.hidden = true;
+    this.panel.append(this.multiPanel);
+    this.multiToggle.onchange = () => {
+      this.pause(); this.motionLimit = 1;
+      this.motionResult.textContent = "";
+      for (const control of this.singleControls) control.hidden = this.multiToggle.checked;
+      this.multiPanel.hidden = !this.multiToggle.checked;
+      this.spring.hidden = this.multiToggle.checked || this.currentJoint()?.tipo !== "deslizamiento";
+      this.setFraction(0);
+    };
     const playback = make("div", "fj-animation__playback");
     this.playButton = make("button", "fj-btn fj-btn--primary", "Reproducir");
     this.playButton.type = "button";
-    this.playButton.onclick = () => this.playing ? this.pause() : this.play();
+    this.playButton.onclick = () => { if (this.playing) this.pause(); else { this.motionLimit = 1; this.play(); } };
     this.scrub = make("input", "fj-animation__scrub");
     this.scrub.type = "range"; this.scrub.min = "0"; this.scrub.max = "1000"; this.scrub.value = "0";
     this.scrub.setAttribute("aria-label", "Posición del movimiento");
-    this.scrub.oninput = () => { this.pause(); this.setFraction(Number(this.scrub.value) / 1000); };
+    this.scrub.oninput = () => { this.pause(); this.motionLimit = 1; this.setFraction(Number(this.scrub.value) / 1000); };
     playback.append(this.playButton, this.scrub);
     this.panel.append(playback);
     this.checkButton = make("button", "fj-btn", "Comprobar posición");
@@ -67,6 +86,12 @@ export class AnimationView {
     this.checkResult = make("p", "fj-animation__check");
     this.checkResult.setAttribute("role", "status");
     this.panel.append(this.checkButton, this.checkResult);
+    this.motionButton = make("button", "fj-btn", "Reproducir con contacto");
+    this.motionButton.type = "button";
+    this.motionButton.onclick = () => this.checkMotion();
+    this.motionResult = make("p", "fj-animation__check");
+    this.motionResult.setAttribute("role", "status");
+    this.panel.append(this.motionButton, this.motionResult);
     this.spring = make("details", "fj-animation__spring");
     this.spring.append(make("summary", "", "Resorte de compresión (opcional)"));
     const springFields = make("div", "fj-animation__spring-fields");
@@ -91,10 +116,10 @@ export class AnimationView {
     this.state = make("p", "fj-animation__state");
     this.screen = make("p", "fj-animation__screen");
     this.panel.append(this.state, this.screen,
-      make("p", "fj-animation__disclaimer", "La comprobación exacta solo evalúa esta posición y las piezas que cruzan el grupo móvil a 1 mm o menos. El resorte usa tus datos y la ley de Hooke; no simula rozamiento, flexión, inercia ni todo el recorrido."));
+      make("p", "fj-animation__disclaimer", "Los cuerpos son rígidos. «Reproducir con contacto» examina 13 posiciones y se detiene antes del primer choque nuevo observado; puede haber choques entre muestras. No calcula fuerzas de contacto, rozamiento, flexión ni inercia."));
     this.jointSelect.onchange = () => this.selectJoint();
-    this.from.onchange = () => { this.pause(); this.setFraction(0); };
-    this.to.onchange = () => { this.pause(); this.setFraction(0); };
+    this.from.onchange = () => { this.pause(); this.motionLimit = 1; this.motionResult.textContent = ""; this.setFraction(0); };
+    this.to.onchange = () => { this.pause(); this.motionLimit = 1; this.motionResult.textContent = ""; this.setFraction(0); };
     container.append(this.panel);
     this.setMode("cad");
   }
@@ -103,6 +128,8 @@ export class AnimationView {
     this.pause();
     this.resetPose();
     this.assembly = data;
+    this.motionLimit = 1;
+    this.motionResult.textContent = "";
     this.assemblyRevision = assemblyRevision;
     this.meshRevision = meshRevision;
     this.clearCheck();
@@ -114,12 +141,34 @@ export class AnimationView {
       option.value = joint.id;
       this.jointSelect.append(option);
     }
+    this.multiRows.clear();
+    this.multiPanel.replaceChildren();
+    for (const joint of data?.articulaciones ?? []) {
+      if (joint.tipo === "fijo") continue;
+      const row = make("div", "fj-animation__multi-row");
+      const label = make("label", "fj-animation__multi-name");
+      const enabled = make("input", ""); enabled.type = "checkbox";
+      label.append(enabled, document.createTextNode(` ${joint.id} (${joint.tipo === "giro" ? "°" : "mm"})`));
+      const from = make("input", "fj-input"); from.type = "number"; from.step = "any";
+      const to = make("input", "fj-input"); to.type = "number"; to.step = "any";
+      for (const input of [from, to]) { input.min = String(joint.limites[0]); input.max = String(joint.limites[1]); }
+      const current = Number(data.valores[joint.id] ?? 0);
+      from.value = String(current);
+      to.value = String(current === joint.limites[1] ? joint.limites[0] : joint.limites[1]);
+      from.setAttribute("aria-label", `${joint.id}: desde`);
+      to.setAttribute("aria-label", `${joint.id}: hasta`);
+      row.append(label, from, to); this.multiPanel.append(row);
+      this.multiRows.set(joint.id, { enabled, from, to });
+      for (const input of [enabled, from, to]) input.onchange = () => { this.pause(); this.motionLimit = 1; this.motionResult.textContent = ""; this.setFraction(0); };
+    }
     if ([...this.jointSelect.options].some(option => option.value === previous)) this.jointSelect.value = previous;
     this.selectJoint();
   }
 
   selectJoint() {
     this.pause();
+    this.motionLimit = 1;
+    this.motionResult.textContent = "";
     const joint = this.currentJoint();
     if (joint) {
       const current = Number(this.assembly.valores[joint.id] ?? 0);
@@ -130,7 +179,7 @@ export class AnimationView {
       this.from.title = this.to.title = joint.tipo === "giro" ? "grados" : "milímetros";
     }
     this.setFraction(0);
-    this.spring.hidden = joint?.tipo !== "deslizamiento";
+    this.spring.hidden = this.multiToggle.checked || joint?.tipo !== "deslizamiento";
   }
 
   currentJoint() {
@@ -176,27 +225,43 @@ export class AnimationView {
     return { joint, from, to };
   }
 
+  tracks() {
+    if (!this.multiToggle.checked) {
+      const endpoints = this.endpoints();
+      return endpoints ? { [endpoints.joint.id]: { from: endpoints.from, to: endpoints.to } } : null;
+    }
+    const selected = {};
+    for (const [id, row] of this.multiRows) {
+      if (!row.enabled.checked) continue;
+      if (row.from.value === "" || row.to.value === "") return null;
+      selected[id] = { from: Number(row.from.value), to: Number(row.to.value) };
+    }
+    return Object.keys(selected).length && interpolateTracks(this.assembly, selected, 0) ? selected : null;
+  }
+
   setFraction(fraction, analyze = true) {
     this.clearCheck();
     this.fraction = Math.max(0, Math.min(1, fraction));
     this.scrub.value = String(Math.round(this.fraction * 1000));
     const error = this.available();
-    this.hint.textContent = error || "Mueve una articulación; las demás conservan su posición actual.";
-    const endpoints = this.endpoints();
-    this.playButton.disabled = Boolean(error || !endpoints || endpoints.from === endpoints.to);
-    this.scrub.disabled = Boolean(error || !endpoints);
-    this.checkButton.disabled = Boolean(error || !endpoints || !this.docId);
+    this.hint.textContent = error || (this.multiToggle.checked ?
+      "Marca varias articulaciones y asigna sus posiciones de inicio y fin." :
+      "Mueve una articulación; las demás conservan su posición actual.");
+    const tracks = this.tracks();
+    const changes = tracks && Object.values(tracks).some(track => track.from !== track.to);
+    this.playButton.disabled = Boolean(error || !tracks || !changes);
+    this.scrub.disabled = Boolean(error || !tracks);
+    this.checkButton.disabled = Boolean(error || !tracks || !this.docId);
+    this.motionButton.disabled = Boolean(error || !tracks || !changes || !this.docId);
     for (const control of [this.jointSelect, this.from, this.to]) control.disabled = Boolean(error);
     if (this.mode !== "animation") { this.resetPose(); return; }
-    if (error || !endpoints) {
-      this.state.textContent = endpoints ? "" : "Introduce valores dentro de los límites de la articulación.";
+    if (error || !tracks) {
+      this.state.textContent = error || "Selecciona articulaciones y valores dentro de sus límites.";
       this.screen.textContent = "";
       this.resetPose();
       return;
     }
-    const { joint, from, to } = endpoints;
-    const value = from + (to - from) * this.fraction;
-    const targetValues = { ...this.assembly.valores, [joint.id]: value };
+    const targetValues = interpolateTracks(this.assembly, tracks, this.fraction);
     const deltas = poseDeltas(this.assembly, targetValues);
     for (const [name, matrix] of deltas) {
       const mesh = this.viewer.pieces.get(name).mesh;
@@ -205,7 +270,7 @@ export class AnimationView {
       mesh.updateMatrixWorld(true);
     }
     this.viewer.render();
-    this.state.textContent = `${joint.id}: ${value.toFixed(2)} ${joint.tipo === "giro" ? "°" : "mm"} · ${Math.round(this.fraction * 100)} %`;
+    this.state.textContent = `${Object.entries(tracks).map(([id]) => `${id}: ${targetValues[id].toFixed(2)}`).join(" · ")} · ${Math.round(this.fraction * 100)} %`;
     this.updateSpring();
     if (analyze) {
       const overlaps = this.overlapPairs();
@@ -247,19 +312,20 @@ export class AnimationView {
   }
 
   async checkPosition() {
-    if (this.available() || !this.endpoints() || !this.docId) return;
+    if (this.available() || !this.tracks() || !this.docId) return;
     this.pause();
     this.clearCheck();
-    const { joint, from, to } = this.endpoints();
-    const value = from + (to - from) * this.fraction;
+    const tracks = this.tracks();
+    const values = interpolateTracks(this.assembly, tracks, this.fraction);
     const controller = new AbortController();
     this.checkController = controller;
     this.checkButton.disabled = true;
     this.checkResult.textContent = "Comprobando sólidos exactos…";
-    const params = new URLSearchParams({ articulacion: joint.id, valor: String(value), revision: this.meshRevision });
     try {
-      const response = await fetch(`/documentos/${encodeURIComponent(this.docId)}/ensamble/comprobar-posicion?${params}`, {
-        signal: controller.signal, cache: "no-store",
+      const response = await fetch(`/documentos/${encodeURIComponent(this.docId)}/ensamble/comprobar-escena`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        cache: "no-store", body: JSON.stringify({ revision: this.meshRevision, valores: values,
+          articulaciones_activas: Object.keys(tracks) }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "No se pudo comprobar la posición.");
@@ -278,26 +344,63 @@ export class AnimationView {
     }
   }
 
+  async checkMotion() {
+    const tracks = this.tracks();
+    if (this.available() || !tracks || !this.docId) return;
+    this.pause();
+    this.clearCheck();
+    this.motionResult.textContent = "Comprobando 13 posiciones del recorrido…";
+    this.motionButton.disabled = true;
+    const controller = new AbortController();
+    this.checkController = controller;
+    const from = Object.fromEntries(Object.entries(tracks).map(([id, track]) => [id, track.from]));
+    const to = Object.fromEntries(Object.entries(tracks).map(([id, track]) => [id, track.to]));
+    try {
+      const response = await fetch(`/documentos/${encodeURIComponent(this.docId)}/ensamble/comprobar-recorrido`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        cache: "no-store", body: JSON.stringify({ revision: this.meshRevision,
+          valores_desde: from, valores_hasta: to, muestras: 12 }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "No se pudo comprobar el recorrido.");
+      if (this.checkController !== controller) return;
+      if (!result.completo) {
+        this.motionResult.textContent = `Comprobación incompleta en ${result.muestras_comprobadas} posiciones; revisa la geometría antes de reproducir con contacto.`;
+        return;
+      }
+      this.motionLimit = result.primer_choque ? result.fraccion_segura_muestreada : 1;
+      this.motionResult.textContent = result.primer_choque ?
+        `Choque nuevo entre ${result.primer_choque.par.a} y ${result.primer_choque.par.b} cerca del ${Math.round(result.primer_choque.fraccion * 100)} %. Se reproduce hasta el ${Math.round(this.motionLimit * 100)} % seguro muestreado.` :
+        `Sin choques nuevos en ${result.muestras_comprobadas} posiciones comprobadas. ${result.choques_iniciales} choques ya presentes al inicio.`;
+      this.setFraction(0);
+      if (this.motionLimit > 0) this.play();
+    } catch (error) {
+      if (error.name !== "AbortError" && this.checkController === controller) this.motionResult.textContent = error.message;
+    } finally {
+      if (this.checkController === controller) { this.checkController = null; this.motionButton.disabled = false; }
+    }
+  }
+
   play() {
-    if (this.available() || !this.endpoints()) return;
+    if (this.available() || !this.tracks()) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      this.setFraction(1);
+      this.setFraction(this.motionLimit);
       return;
     }
-    if (this.fraction >= 1) this.setFraction(0);
+    if (this.fraction >= this.motionLimit) this.setFraction(0);
     this.playing = true;
     this.playButton.textContent = "Pausar";
     let last = null;
     const tick = now => {
       if (!this.playing) return;
       if (last !== null) {
-        const next = Math.min(1, this.fraction + Math.min(now - last, 100) / 4000);
-        const analyze = now - this.lastScreenAt >= 100 || next === 1;
+        const next = Math.min(this.motionLimit, this.fraction + Math.min(now - last, 100) / 4000);
+        const analyze = now - this.lastScreenAt >= 100 || next === this.motionLimit;
         this.setFraction(next, analyze);
         if (analyze) this.lastScreenAt = now;
       }
       last = now;
-      if (this.fraction >= 1) this.pause();
+      if (this.fraction >= this.motionLimit) this.pause();
       else this.frame = requestAnimationFrame(tick);
     };
     this.frame = requestAnimationFrame(tick);
