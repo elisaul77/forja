@@ -160,6 +160,11 @@ def exportar(id: str, formato: str, por_solido: bool = False) -> dict[str, Any]:
     cada solido con nombre (lo que OrcaSlicer quiere), tanto con
     `por_solido=false` como `true`; responde
     `{ruta, tamano_bytes, objetos: [nombres][, objetos_mas]}`.
+    Las mallas de `stl`/`3mf` son estancas (cada solido se tesela entero, ADR-0016).
+    Si alguna malla exportada queda abierta (p.ej. un STL importado con huecos),
+    la respuesta trae `advertencia_malla_abierta: {piezas: [nombres], mensaje}`;
+    el campo falta cuando todas las mallas son cerradas. Es solo un aviso: el
+    archivo se escribe igual.
 
     `por_solido=true` (Fase 5B, solo documentos STEP con solidos con
     nombre; para `stl`/`step`): exporta UN archivo por pieza nombrada en vez de un unico

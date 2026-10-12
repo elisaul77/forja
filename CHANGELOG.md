@@ -7,6 +7,11 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (exportación estanca)
+
+- Los STL y 3MF exportados (`exportar`, descargas e `incorporar`) se teselan como un solo sólido, así las caras comparten aristas y la malla queda cerrada. Antes, las uniones entre caras dejaban grietas (4680 aristas abiertas en la tuerca P5) que el laminador rellenaba. El volumen coincide con el B-rep. La vista 3D no cambia. Decisión en `docs/decisions/0016-exportacion-estanca.md`.
+- `exportar` añade `advertencia_malla_abierta` (piezas y mensaje) solo cuando alguna malla exportada sigue abierta, por ejemplo una malla STL importada con huecos. El aviso no bloquea la exportación.
+
 ### Added (movimiento coordinado de varias piezas)
 
 - La vista Animación permite activar varias articulaciones de un ensamble y asignar a cada una posiciones de inicio y fin. La jerarquía existente propaga el movimiento a las piezas hijas sin modificar el STEP.

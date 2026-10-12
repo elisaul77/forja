@@ -5,12 +5,14 @@ code paths stay easy to tell apart (ADR-0001).
 """
 from __future__ import annotations
 
+import math
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import trimesh
-from build123d import Shape
+from build123d import Shape, export_stl
 
 
 @dataclass
@@ -87,6 +89,87 @@ def _tessellate_faces(
     tris_totales = np.concatenate(triangulos_por_cara) if triangulos_por_cara else np.zeros((0, 3), dtype=int)
     tri_mesh = trimesh.Trimesh(vertices=verts_totales, faces=tris_totales, process=False)
     return tri_mesh, np.array(indice_cara, dtype=np.uint32), omitted
+
+
+# Export-only tessellation (ADR-0016). Linear deflection = bbox diagonal times
+# TOLERANCIA_EXPORT_FRACCION_DIAGONAL, clamped to [MIN, MAX] mm. Angular in rad.
+TOLERANCIA_EXPORT_MIN_MM = 0.005
+TOLERANCIA_EXPORT_MAX_MM = 0.05
+TOLERANCIA_EXPORT_FRACCION_DIAGONAL = 5e-5
+TOLERANCIA_ANGULAR_EXPORT = 0.1
+
+
+def tolerancia_exportacion(shape: Shape) -> float:
+    """Linear deflection used for export of ``shape`` (ADR-0016)."""
+    caja = shape.bounding_box()
+    diagonal = math.dist(
+        (caja.min.X, caja.min.Y, caja.min.Z), (caja.max.X, caja.max.Y, caja.max.Z)
+    )
+    return min(
+        max(diagonal * TOLERANCIA_EXPORT_FRACCION_DIAGONAL, TOLERANCIA_EXPORT_MIN_MM),
+        TOLERANCIA_EXPORT_MAX_MM,
+    )
+
+
+def tessellate_para_exportar(
+    shape: Shape,
+    tolerance: float | None = None,
+    angular: float = TOLERANCIA_ANGULAR_EXPORT,
+) -> trimesh.Trimesh:
+    """Watertight mesh of a whole B-rep shape, for STL/3MF export (ADR-0016).
+
+    The shape is tessellated once as a whole, so faces that share an edge
+    share its nodes (face-by-face tessellation leaves T-junction cracks, see
+    :func:`tessellate_to_trimesh_con_caras`). The STL round trip merges the
+    coincident vertices (``process=True``; no networkx/shapely needed).
+
+    Works on a copy: ``BRepTools.Clean_s`` drops the triangulation cached on
+    the shape (imported STEPs may carry a coarser or finer one), and that cache
+    belongs to the viewer.
+    """
+    solidos = shape.solids()
+    if len(solidos) <= 1:
+        return _tesela_solido_exportar(shape, _tolerancia_lineal(shape, tolerance), angular)
+    # Several solids (a compound): each one is tessellated on its own, with its
+    # own tolerance, and the meshes are concatenated without merging. Touching
+    # solids then keep their own closed shells instead of sharing nodes (which
+    # trimesh reads as non-manifold edges), and a tolerance that suits a big
+    # neighbour cannot open a small solid.
+    return trimesh.util.concatenate(
+        [_tesela_solido_exportar(s, _tolerancia_lineal(s, tolerance), angular) for s in solidos]
+    )
+
+
+def _tolerancia_lineal(shape: Shape, tolerance: float | None) -> float:
+    return tolerancia_exportacion(shape) if tolerance is None else tolerance
+
+
+def _tesela_solido_exportar(shape: Shape, tolerance: float, angular: float) -> trimesh.Trimesh:
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
+    from OCP.BRepTools import BRepTools
+
+    copia_occ = BRepBuilderAPI_Copy(shape.wrapped, True, False).Shape()
+    BRepTools.Clean_s(copia_occ)
+    copia = Shape.cast(copia_occ)
+    with tempfile.TemporaryDirectory(prefix="forja-export-") as directorio:
+        ruta = Path(directorio) / "malla.stl"
+        export_stl(copia, ruta, tolerance=tolerance, angular_tolerance=angular)
+        malla = trimesh.load(str(ruta), file_type="stl", process=True, force="mesh")
+    # OCC emits zero-area triangles at sphere poles; their doubled edges would
+    # make an otherwise closed shell read as open.
+    malla.update_faces(malla.nondegenerate_faces())
+    malla.remove_unreferenced_vertices()
+    return malla
+
+
+def malla_abierta(malla: trimesh.Trimesh) -> bool:
+    """True when ``malla`` has faces and is not watertight. Empty meshes are not open."""
+    return len(malla.faces) > 0 and not malla.is_watertight
+
+
+def mallas_abiertas(objetos: list[tuple[str, trimesh.Trimesh]]) -> list[str]:
+    """Names of the meshes in ``objetos`` that are open (ADR-0016)."""
+    return [nombre for nombre, malla in objetos if malla_abierta(malla)]
 
 
 def solid_indices_by_face(shape: Shape, solids: list[Shape]) -> np.ndarray | None:

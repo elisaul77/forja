@@ -1281,7 +1281,7 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                     else export_solidos.bytes_3mf(objetos, materiales.cargar(doc_id))
                 )
             elif formato == "stl":
-                tri_mesh = shape if ext_origen in _STL_EXTS else mesh.tessellate_to_trimesh(shape)
+                tri_mesh = shape if ext_origen in _STL_EXTS else mesh.tessellate_para_exportar(shape)
                 if len(tri_mesh.faces) > MAX_TRIANGULOS_DESCARGA:
                     raise too_big
                 contenido = mesh.to_stl_bytes(tri_mesh)
@@ -1394,8 +1394,9 @@ def exportar_documento(
             )
         shape = b123d_kernel.import_from_step(ruta)
         directorio = EXPORTADOS_DIR / doc_id
+        abiertas: list[str] = []
         mapa, nombres_inciertos = export_solidos.exportar_por_solido(
-            shape, entradas, formato, directorio
+            shape, entradas, formato, directorio, abiertas=abiertas
         )
         respuesta: dict[str, Any] = {"directorio": str(directorio), "archivos": mapa}
         if nombres_inciertos:
@@ -1404,17 +1405,24 @@ def exportar_documento(
             # this reimport's geometry) — the filenames above ARE those
             # `solido_N` names, never a silently mislabeled piece.
             respuesta["nombres_inciertos"] = True
+        if abiertas:
+            # ADR-0016: an open mesh is reported, never repaired or refused.
+            respuesta["advertencia_malla_abierta"] = export_solidos.advertencia_malla_abierta(abiertas)
         return respuesta
 
     destino = EXPORTADOS_DIR / f"{doc_id}.{formato}"
 
+    abiertas: list[str] = []
     if formato == "stl":
         if ext_origen in _STEP_EXTS:
             shape = b123d_kernel.import_from_step(ruta)
-            tri_mesh = mesh.tessellate_to_trimesh(shape)
+            tri_mesh = mesh.tessellate_para_exportar(shape)
             destino.write_bytes(mesh.to_stl_bytes(tri_mesh))
         else:
+            # Mesh-only document: copied as-is (ADR-0016), only checked for openness.
+            tri_mesh = mesh.load_stl(ruta)
             shutil.copyfile(ruta, destino)
+        abiertas = mesh.mallas_abiertas([(Path(registro["nombre"]).stem or "pieza", tri_mesh)])
     elif formato == "step":
         if ext_origen not in _STEP_EXTS:
             raise HTTPException(
@@ -1428,6 +1436,8 @@ def exportar_documento(
         resultado["descarga"] = (
             f"/documentos/{doc_id}/descarga/{_slug_descarga(registro['nombre'])}.stl"
         )
+    if abiertas:
+        resultado["advertencia_malla_abierta"] = export_solidos.advertencia_malla_abierta(abiertas)
     return resultado
 
 

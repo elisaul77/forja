@@ -82,9 +82,9 @@ def _malla_origen(origen: str, ruta: Path, piezas: list[str] | None) -> tuple[tr
     if not piezas:
         forma = b123d_kernel.import_from_step(ruta)
         nombres = documents._nombres_piezas(origen)
-        return mesh.tessellate_to_trimesh(forma), nombres
+        return mesh.tessellate_para_exportar(forma), nombres
     grupos = _grupos_origen(origen, ruta, piezas)
-    mallas = [mesh.tessellate_to_trimesh(s) for lista in grupos.values() for s in lista]
+    mallas = [mesh.tessellate_para_exportar(s) for lista in grupos.values() for s in lista]
     return trimesh.util.concatenate(mallas), list(grupos)
 
 
