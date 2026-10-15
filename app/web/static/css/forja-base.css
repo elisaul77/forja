@@ -1076,3 +1076,10 @@ a.fj-btn { text-decoration: none; }
 .fj-animation__spring-fields .fj-input, .fj-animation__spring-fields .fj-select { width: 100%; min-width: 0; }
 .fj-viewport--animation .fj-view-help { display: none; }
 @container fjvp (max-width: 600px) { .fj-animation { bottom: var(--fj-space-2); left: var(--fj-space-2); width: min(360px, calc(100% - 2 * var(--fj-space-2))); } .fj-mode-switch { left: var(--fj-space-2); } .fj-viewport--animation .fj-view-controls { top: calc(var(--fj-space-3) + var(--fj-space-7)); } }
+.fj-animation__caption { margin: 0; padding: var(--fj-space-2, 8px); border-left: 3px solid var(--fj-accent, #e8772e); background: var(--fj-surface-2, rgba(127,127,127,.08)); font-size: var(--fj-text-sm, 13px); line-height: 1.4; min-height: 3.6em; }
+.fj-animation__playback .fj-btn--primary { background: var(--fj-accent); color: var(--fj-sunk); }
+.fj-animation__steps { margin: 0; padding-left: 1.6em; max-height: 13em; overflow-y: auto; font-size: var(--fj-text-xs, 12px); }
+.fj-animation__step button { all: unset; cursor: pointer; display: block; padding: 2px 4px; border-radius: 4px; color: var(--fj-ink-3); }
+.fj-animation__step.is-done button { color: var(--fj-ink-2, #aaa); }
+.fj-animation__step.is-current button { color: var(--fj-ink-1, #fff); background: var(--fj-surface-2, rgba(127,127,127,.15)); font-weight: 600; }
+.fj-animation__step button:focus-visible { outline: 2px solid var(--fj-accent); }

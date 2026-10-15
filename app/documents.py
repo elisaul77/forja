@@ -42,6 +42,7 @@ import render
 import revision
 import scripts_runner
 import solids
+import mesh_parts
 import versioning
 from checks import colisiones as colisiones_checks
 from checks import fdm as fdm_checks
@@ -1056,7 +1057,7 @@ def obtener_documento(
 # Viewer meshes cached on disk per document revision: re-opening an unchanged
 # document reads a file instead of re-importing the STEP and re-tessellating.
 # Bump _VERSION_MALLA whenever the tessellation/serialisation output changes.
-_VERSION_MALLA = "1"
+_VERSION_MALLA = "2"  # 2: LOD de vista para modelos grandes
 _CACHE_MALLAS = DOCUMENTOS_DIR / ".cache" / "mallas"
 
 
@@ -1139,12 +1140,18 @@ def _calcular_malla(doc_id: str, components: bool) -> bytes:
                     allow_invalid_preview=not registro["valido"],
                 )
                 return content
-            tri_mesh = mesh.tessellate_to_trimesh(shape)
+            if registro["valido"]:
+                tri_mesh, _indices = mesh.tessellate_to_trimesh_con_caras(shape, vista=True)
+            else:
+                # Invalid STEP (e.g. community reconstructions): skip faces
+                # OCC cannot mesh instead of failing the whole preview.
+                tri_mesh, _indices, _omitidas = mesh.tessellate_to_trimesh_con_caras_tolerante(shape, vista=True)
         elif ext in _STL_EXTS:
             tri_mesh = mesh.load_stl(ruta)
             if components:
                 content = piece_mesh.from_stl(
-                    tri_mesh, bbox=registro["bbox"], volume=registro["volumen"]
+                    tri_mesh, bbox=registro["bbox"], volume=registro["volumen"],
+                    entries=mesh_parts.load(doc_id)
                 )
                 return content
         else:
@@ -1255,7 +1262,7 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                 entradas = solids.cargar(doc_id) if (formato == "3mf" or pieza) else None
             elif ext_origen in _STL_EXTS:
                 shape = mesh.load_stl(ruta)
-                entradas = None
+                entradas = mesh_parts.load(doc_id)
             else:
                 raise HTTPException(status_code=400, detail="formato de documento no soportado")
 
@@ -1339,12 +1346,20 @@ def exportar_documento(
     with one named object per named solid, for both `por_solido` values —
     a multi-object 3MF is what a slicer wants.
 
-    `por_solido=true` requires a STEP document with a named-solid breakdown
+    `por_solido=true` supports named STL regions for STL export and STEP
+    documents with a named-solid breakdown
     (`solidos.json`, see `app/solids.py`): geometrically-identical named
     pieces (e.g. 4 chairs from the same script function) collapse into ONE
     file, and the response maps each written filename to every solid name it
     represents (`app/export.py`).
     """
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    with parametros.bloqueo(doc_id):
+        return _export_document_locked(doc_id, formato, por_solido)
+
+
+def _export_document_locked(doc_id: str, formato: str, por_solido: bool) -> dict[str, Any]:
     if formato not in export_solidos.FORMATOS_SOPORTADOS:
         raise HTTPException(status_code=400, detail="formato no soportado (usar stl, step o 3mf)")
 
@@ -1366,7 +1381,7 @@ def exportar_documento(
             entradas_3mf = solids.cargar(doc_id)
         else:
             shape = mesh.load_stl(ruta)
-            entradas_3mf = None
+            entradas_3mf = mesh_parts.load(doc_id)
         try:
             resultado_3mf = export_solidos.exportar_3mf_documento(
                 shape, entradas_3mf, destino, nombre_por_defecto=nombre_objeto,
@@ -1379,6 +1394,27 @@ def exportar_documento(
                 f"/documentos/{doc_id}/descarga/{_slug_descarga(registro['nombre'])}.3mf"
             )
         return resultado_3mf
+
+    if por_solido and ext_origen in _STL_EXTS and formato == "stl":
+        entries = mesh_parts.load(doc_id)
+        if entries is None:
+            raise HTTPException(status_code=400, detail="Este STL no tiene piezas identificadas; incorpora documentos para conservar sus nombres.")
+        try:
+            objects, _ = export_solidos.objetos_3mf(mesh.load_stl(ruta), entries)
+            directory = EXPORTADOS_DIR / doc_id
+            directory.mkdir(parents=True, exist_ok=True)
+            files = {}
+            for name, part in objects:
+                filename = export_solidos._nombre_archivo_seguro(name, "stl", directory)
+                (directory / filename).write_bytes(mesh.to_stl_bytes(part))
+                files[filename] = [name]
+            result = {"directorio": str(directory), "archivos": files}
+            open_parts = mesh.mallas_abiertas(objects)
+            if open_parts:
+                result["advertencia_malla_abierta"] = export_solidos.advertencia_malla_abierta(open_parts)
+            return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if por_solido:
         if ext_origen not in _STEP_EXTS:
@@ -1644,6 +1680,9 @@ def obtener_caras(doc_id: str) -> list[dict[str, Any]]:
     ]
 
 
+_cache_caras_triangulos: dict[str, tuple[tuple[str, int], bytes]] = {}
+
+
 @router.get("/documentos/{doc_id}/caras_triangulos")
 def obtener_caras_triangulos(doc_id: str) -> Response:
     """Binary little-endian ``uint32`` array, one entry per triangle of
@@ -1652,9 +1691,19 @@ def obtener_caras_triangulos(doc_id: str) -> Response:
     raycast triangle hit into a stable face id without shipping any raw
     geometry over JSON."""
     ruta = _ruta_step_o_404(doc_id)
+    # Tessellating a big assembly takes ~30 s; the viewer asks again on every
+    # note click, so cache per document revision (the STEP is immutable per
+    # revision) and keep only the latest one per document.
+    clave = (_revisiones.get(doc_id, ""), ruta.stat().st_mtime_ns)
+    guardado = _cache_caras_triangulos.get(doc_id)
+    if guardado is not None and guardado[0] == clave:
+        return Response(content=guardado[1], media_type="application/octet-stream")
     shape = b123d_kernel.import_from_step(ruta)
-    _tri_mesh, indices = mesh.tessellate_to_trimesh_con_caras(shape)
-    return Response(content=indices.tobytes(), media_type="application/octet-stream")
+    # Tolerant so it stays aligned with /malla for invalid STEP previews.
+    _tri_mesh, indices, _omitidas = mesh.tessellate_to_trimesh_con_caras_tolerante(shape, vista=True)
+    datos = indices.tobytes()
+    _cache_caras_triangulos[doc_id] = (clave, datos)
+    return Response(content=datos, media_type="application/octet-stream")
 
 
 @router.get("/documentos/{doc_id}/historial")

@@ -26,6 +26,7 @@ from xml.sax.saxutils import quoteattr
 import trimesh
 
 import solids
+import mesh_parts
 from kernel import b123d_kernel
 from kernel import mesh as kernel_mesh
 
@@ -193,7 +194,7 @@ def objetos_3mf(
     (ADR-0016); a ready ``trimesh.Trimesh`` is passed through untouched."""
     nombres_inciertos = False
     if isinstance(shape, trimesh.Trimesh):
-        objetos = [(nombre_por_defecto, shape)]
+        objetos = mesh_parts.objects(shape, entradas, nombre_por_defecto)
     elif not entradas:
         objetos = [(nombre_por_defecto, kernel_mesh.tessellate_para_exportar(shape, tolerancia))]
     else:

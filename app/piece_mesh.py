@@ -11,6 +11,7 @@ import struct
 from typing import Any
 
 import solids
+import mesh_parts
 from kernel import mesh as kernel_mesh
 
 _MAGIC = b"FJP1"
@@ -92,9 +93,9 @@ def from_step(
     for every face, the full model is returned as one safe component.
     """
     if allow_invalid_preview:
-        tri_mesh, triangle_faces, omitted = kernel_mesh.tessellate_to_trimesh_con_caras_tolerante(shape)
+        tri_mesh, triangle_faces, omitted = kernel_mesh.tessellate_to_trimesh_con_caras_tolerante(shape, vista=True)
     else:
-        tri_mesh, triangle_faces = kernel_mesh.tessellate_to_trimesh_con_caras(shape)
+        tri_mesh, triangle_faces = kernel_mesh.tessellate_to_trimesh_con_caras(shape, vista=True)
         omitted = []
     stl_bytes = kernel_mesh.to_stl_bytes(tri_mesh)
     triangle_count = len(tri_mesh.faces)
@@ -223,9 +224,26 @@ def from_step(
 
 
 def from_stl(
-    tri_mesh: Any, *, bbox: list[float], volume: float
+    tri_mesh: Any, *, bbox: list[float], volume: float, entries: Any = None
 ) -> bytes:
     """Wrap an STL-only document as one explicitly unnamed mesh component."""
+    if entries is not None:
+        try:
+            validated = mesh_parts.validate(tri_mesh, entries)
+            objects = mesh_parts.objects(tri_mesh, validated, "Malla")
+            pieces = []
+            for entry, (name, part) in zip(validated, objects):
+                pieces.append({"nombre": name, "bbox": part.bounds.T.reshape(-1).tolist(),
+                               "volumen": float(abs(part.volume)),
+                               "fragmentos": entry.get("fragmentos", 1),
+                               "rangos": entry["rangos"]})
+            return _serialize({"version": 1, "triangulos": len(tri_mesh.faces),
+                               "identificadas": True, "nombres_inciertos": False,
+                               "piezas": pieces}, kernel_mesh.to_stl_bytes(tri_mesh))
+        except ValueError:
+            return _whole_model(kernel_mesh.to_stl_bytes(tri_mesh), len(tri_mesh.faces),
+                                bbox, volume, 1,
+                                "Los nombres no corresponden a esta malla; selección por pieza desactivada.")
     stl_bytes = kernel_mesh.to_stl_bytes(tri_mesh)
     triangle_count = len(tri_mesh.faces)
     manifest = {

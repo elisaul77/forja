@@ -46,6 +46,18 @@ export class AnimationView {
     const jointLabel = make("label", "fj-animation__field", "Articulación");
     this.jointSelect = make("select", "fj-select");
     jointLabel.append(this.jointSelect);
+    const sceneLabel = make("label", "fj-animation__field", "Escena");
+    this.sceneSelect = make("select", "fj-select");
+    sceneLabel.append(this.sceneSelect);
+    this.sceneCaption = make("p", "fj-animation__caption");
+    this.sceneCaption.setAttribute("aria-live", "polite");
+    this.sceneCaption.hidden = true;
+    this.sceneSteps = make("ol", "fj-animation__steps");
+    this.sceneSteps.hidden = true;
+    this.panel.append(sceneLabel, this.sceneSteps, this.sceneCaption);
+    this.sceneLabel = sceneLabel; sceneLabel.hidden = true;
+    this.scenes = []; this.scene = null;
+    this.sceneSelect.onchange = () => this.selectScene();
     this.panel.append(jointLabel);
     const limits = make("div", "fj-animation__limits");
     const fromLabel = make("label", "fj-animation__field", "Desde");
@@ -62,6 +74,7 @@ export class AnimationView {
     this.multiPanel = make("div", "fj-animation__multi");
     this.multiPanel.hidden = true;
     this.panel.append(this.multiPanel);
+    this.multiLabel = multiLabel;
     this.multiToggle.onchange = () => {
       this.pause(); this.motionLimit = 1;
       this.motionResult.textContent = "";
@@ -163,6 +176,157 @@ export class AnimationView {
     }
     if ([...this.jointSelect.options].some(option => option.value === previous)) this.jointSelect.value = previous;
     this.selectJoint();
+    this.loadScenes();
+  }
+
+  async loadScenes() {
+    this.scenes = []; this.scene = null;
+    this.sceneSelect.replaceChildren(make("option", "", "Manual (sin escena)"));
+    this.sceneSelect.options[0].value = "";
+    this.sceneLabel.hidden = true;
+    if (!this.docId || !this.assembly?.articulaciones?.length) return;
+    try {
+      const response = await fetch(`/documentos/${encodeURIComponent(this.docId)}/ensamble/escenas`, { cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      this.scenes = (data.escenas ?? []).filter(scene => Array.isArray(scene.claves) && scene.claves.length > 1);
+    } catch { return; }
+    this.scenes.forEach((scene, index) => {
+      const option = make("option", "", scene.nombre ?? `Escena ${index + 1}`);
+      option.value = String(index);
+      this.sceneSelect.append(option);
+    });
+    this.sceneLabel.hidden = !this.scenes.length;
+  }
+
+  selectScene() {
+    this.pause(); this.motionLimit = 1;
+    this.scene = this.sceneSelect.value === "" ? null : this.scenes[Number(this.sceneSelect.value)];
+    const manual = !this.scene;
+    for (const control of this.singleControls) control.hidden = !manual || this.multiToggle.checked;
+    this.multiLabel.hidden = !manual;
+    this.multiPanel.hidden = !manual || !this.multiToggle.checked;
+    this.checkButton.hidden = this.motionButton.hidden = !manual;
+    this.spring.hidden = !manual || this.multiToggle.checked || this.currentJoint()?.tipo !== "deslizamiento";
+    this.sceneCaption.hidden = manual;
+    this.buildSteps();
+    this.ghost(manual ? [] : (this.scene.transparentes ?? []));
+    this.setFraction(0);
+  }
+
+  /** Numbered step list: each keyframe with a `titulo` starts a step. */
+  buildSteps() {
+    this.sceneSteps.replaceChildren();
+    this.stepItems = [];
+    this.sceneSteps.hidden = !this.scene;
+    if (!this.scene) return;
+    const keys = this.scene.claves, start = keys[0].t;
+    for (const key of keys) {
+      if (!key.titulo) continue;
+      const item = make("li", "fj-animation__step");
+      const button = make("button", "", key.titulo); button.type = "button";
+      button.onclick = () => { this.pause(); this.setFraction((key.t - start) / this.sceneDuration()); };
+      item.append(button); this.sceneSteps.append(item);
+      this.stepItems.push({ t: key.t, item });
+    }
+  }
+
+  /** Accent colour on the pieces doing the work in the current step. */
+  highlight(names) {
+    const key = names.join("|");
+    if (key === this.highlightKey) return;
+    this.highlightKey = key;
+    for (const [mesh, material] of this.highlighted ?? []) { mesh.material.dispose(); mesh.material = material; }
+    this.highlighted = [];
+    for (const name of names) {
+      const mesh = this.viewer.pieces.get(name)?.mesh;
+      if (!mesh) continue;
+      this.highlighted.push([mesh, mesh.material]);
+      mesh.material = mesh.material.clone();
+      mesh.material.transparent = false; mesh.material.opacity = 1; mesh.material.depthWrite = true;
+      mesh.material.color?.set(0xf07a2a);
+      mesh.material.emissive?.set(0x5a2208);
+    }
+  }
+
+  /** Scene-only see-through pieces (e.g. a frame hiding the mechanism). */
+  ghost(names) {
+    this.highlight([]);
+    for (const [mesh, material] of this.ghosted ?? []) { mesh.material.dispose(); mesh.material = material; }
+    this.ghosted = [];
+    for (const name of names) {
+      const mesh = this.viewer.pieces.get(name)?.mesh;
+      if (!mesh) continue;
+      this.ghosted.push([mesh, mesh.material]);
+      mesh.material = mesh.material.clone();
+      Object.assign(mesh.material, { transparent: true, opacity: 0.12, depthWrite: false });
+    }
+    this.viewer.render();
+  }
+
+  sceneDuration() {
+    const keys = this.scene.claves;
+    return Math.max(1e-6, keys[keys.length - 1].t - keys[0].t);
+  }
+
+  /** Values and caption at `fraction` of the scene: linear between keyframes;
+   * joints a keyframe omits keep their last given value. */
+  sceneValues(fraction) {
+    const keys = this.scene.claves;
+    const time = keys[0].t + fraction * this.sceneDuration();
+    const values = { ...this.assembly.valores };
+    let caption = "", title = "", marked = [];
+    let index = 0;
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i].t <= time) index = i;
+      if (keys[i].t <= time + 1e-9) {
+        if (keys[i].rotulo) caption = keys[i].rotulo;
+        if (keys[i].titulo) title = keys[i].titulo;
+        if (keys[i].resaltar) marked = keys[i].resaltar;
+      }
+      if (keys[i].t <= time) Object.assign(values, keys[i].valores);
+    }
+    const next = keys[index + 1];
+    if (next) {
+      const span = next.t - keys[index].t;
+      const k = span > 0 ? (time - keys[index].t) / span : 1;
+      for (const [id, target] of Object.entries(next.valores)) {
+        const start = Number(values[id] ?? 0);
+        values[id] = start + (Number(target) - start) * k;
+      }
+    }
+    for (const joint of this.assembly.articulaciones) {
+      if (joint.tipo === "fijo" || values[joint.id] === undefined) continue;
+      values[joint.id] = Math.max(joint.limites[0], Math.min(joint.limites[1], Number(values[joint.id])));
+    }
+    return { values, caption, title, marked, time };
+  }
+
+  setSceneFraction(error) {
+    if (this.mode !== "animation") { this.resetPose(); return; }
+    this.playButton.disabled = this.scrub.disabled = Boolean(error);
+    if (error) { this.state.textContent = error; this.resetPose(); return; }
+    const { values, caption, title, marked, time } = this.sceneValues(this.fraction);
+    this.highlight(marked);
+    for (const [name, matrix] of poseDeltas(this.assembly, values)) {
+      const mesh = this.viewer.pieces.get(name)?.mesh;
+      if (!mesh) continue;
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.fromArray(matrix);
+      mesh.updateMatrixWorld(true);
+    }
+    this.viewer.render();
+    this.sceneCaption.replaceChildren();
+    if (title) this.sceneCaption.append(make("strong", "", title), make("br"));
+    this.sceneCaption.append(caption);
+    let current = -1;
+    this.stepItems?.forEach((step, index) => { if (step.t <= time + 1e-9) current = index; });
+    this.stepItems?.forEach((step, index) => {
+      step.item.classList.toggle("is-current", index === current);
+      step.item.classList.toggle("is-done", index < current);
+    });
+    this.state.textContent = `${time.toFixed(1)} s / ${this.sceneDuration().toFixed(1)} s`;
+    this.screen.textContent = "";
   }
 
   selectJoint() {
@@ -197,7 +361,8 @@ export class AnimationView {
 
   setMode(mode) {
     if (mode === "animation" && !this.beforeAnimation()) return;
-    if (mode === "cad") { this.pause(); this.clearCheck(); this.resetPose(); }
+    if (mode === "cad") { this.pause(); this.clearCheck(); this.resetPose(); this.ghost([]); }
+    else if (this.scene) this.ghost(this.scene.transparentes ?? []);
     this.mode = mode;
     this.cadToolbar.hidden = mode !== "cad";
     this.panel.hidden = mode !== "animation";
@@ -244,6 +409,11 @@ export class AnimationView {
     this.fraction = Math.max(0, Math.min(1, fraction));
     this.scrub.value = String(Math.round(this.fraction * 1000));
     const error = this.available();
+    if (this.scene) {
+      this.hint.textContent = error || (this.scene.descripcion ?? "");
+      this.setSceneFraction(error);
+      return;
+    }
     this.hint.textContent = error || (this.multiToggle.checked ?
       "Marca varias articulaciones y asigna sus posiciones de inicio y fin." :
       "Mueve una articulación; las demás conservan su posición actual.");
@@ -382,7 +552,7 @@ export class AnimationView {
   }
 
   play() {
-    if (this.available() || !this.tracks()) return;
+    if (this.available() || (!this.scene && !this.tracks())) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       this.setFraction(this.motionLimit);
       return;
@@ -394,7 +564,7 @@ export class AnimationView {
     const tick = now => {
       if (!this.playing) return;
       if (last !== null) {
-        const next = Math.min(this.motionLimit, this.fraction + Math.min(now - last, 100) / 4000);
+        const next = Math.min(this.motionLimit, this.fraction + Math.min(now - last, 100) / (this.scene ? this.sceneDuration() * 1000 : 4000));
         const analyze = now - this.lastScreenAt >= 100 || next === this.motionLimit;
         this.setFraction(next, analyze);
         if (analyze) this.lastScreenAt = now;
@@ -413,5 +583,5 @@ export class AnimationView {
     this.playButton.textContent = "Reproducir";
   }
 
-  dispose() { this.pause(); this.clearCheck(); this.resetPose(); this.switch.remove(); this.panel.remove(); }
+  dispose() { this.ghost([]); this.pause(); this.clearCheck(); this.resetPose(); this.switch.remove(); this.panel.remove(); }
 }

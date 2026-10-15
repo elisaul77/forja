@@ -166,7 +166,7 @@ def exportar(id: str, formato: str, por_solido: bool = False) -> dict[str, Any]:
     el campo falta cuando todas las mallas son cerradas. Es solo un aviso: el
     archivo se escribe igual.
 
-    `por_solido=true` (Fase 5B, solo documentos STEP con solidos con
+    `por_solido=true` (documentos STEP o STL incorporados con piezas con
     nombre; para `stl`/`step`): exporta UN archivo por pieza nombrada en vez de un unico
     archivo para todo el documento. Piezas geometricamente identicas (p.ej.
     4 sillas iguales del mismo script) se exportan una sola vez; la
@@ -462,7 +462,8 @@ def rama(id: str, accion: str, nombre: str | None = None, desde: str | None = No
       pieza X a <sha>». `resultado: sin_cambios` si ya era igual.
     - `incorporar`: mete en ESTE documento (mismo id) la geometria del
       documento `desde` (su id): todas sus piezas o las `piezas` indicadas.
-      Destino STL: concatena la malla. Destino STEP: añade los solidos con
+      Destino STL: conserva cada pieza como una región de malla nombrada,
+      seleccionable y exportable; STL sin nombres usa el nombre del documento. Destino STEP: añade los solidos con
       su nombre (si choca, sufijo _2, _3...); un origen STL en destino STEP
       es error. El origen no cambia; deja el paso «incorporar <piezas>
       desde <nombre origen>» (se deshace con `restaurar` y `snapshot_previo`).

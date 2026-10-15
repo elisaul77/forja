@@ -16,6 +16,7 @@ is the recovery path.
 from __future__ import annotations
 
 import copy
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -147,6 +148,28 @@ def get_assembly(doc_id: str, response: Response):
         response.headers["X-Forja-Revision"] = documents._revisiones.get(doc_id, "")
         response.headers["Cache-Control"] = "no-store"
         return payload
+
+
+def _scenes_path(doc_id: str) -> Path:
+    return documents.DOCUMENTOS_DIR / f"{doc_id}.escenas.json"
+
+
+@router.get("/escenas")
+def get_scenes(doc_id: str, response: Response):
+    """Scripted multi-step motions (keyframes + captions) for the viewer.
+
+    Read-only: `{escenas: [{nombre, descripcion, claves: [{t, valores,
+    rotulo}]}]}` from `<doc>.escenas.json`; an empty list when absent."""
+    _path(doc_id)
+    response.headers["Cache-Control"] = "no-store"
+    file = _scenes_path(doc_id)
+    if not file.exists():
+        return {"escenas": []}
+    try:
+        data = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, "El archivo de escenas no es JSON válido.") from exc
+    return {"escenas": data.get("escenas", []) if isinstance(data, dict) else []}
 
 
 @router.get("/comprobar-posicion")

@@ -4,7 +4,8 @@
 
 - Destination STL (mesh): its mesh + the source tessellation (every piece or
   the named ones; STEP source = Forja's usual tessellation, STL source = its
-  mesh) concatenated and written atomically.
+  mesh) concatenated with named region metadata, preserved on export and
+  restart. Connected shells never define piece identity.
 - Destination STEP: the source's named solids are added to the compound and
   to ``solidos.json`` under their names (a clashing name gets a ``_2``,
   ``_3``... suffix). An STL source has no B-rep solids -> 400.
@@ -17,6 +18,7 @@ The source document is only read, never written.
 from __future__ import annotations
 
 import json
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -34,6 +36,7 @@ import notes
 import parametros
 import ramas
 import solids
+import mesh_parts
 import versioning
 from kernel import b123d_kernel, mesh
 
@@ -74,18 +77,24 @@ def _grupos_origen(origen: str, ruta: Path, piezas: list[str] | None) -> dict[st
     return grupos
 
 
-def _malla_origen(origen: str, ruta: Path, piezas: list[str] | None) -> tuple[trimesh.Trimesh, list[str]]:
+def _mesh_objects(origen: str, ruta: Path, piezas: list[str] | None) -> list[tuple[str, trimesh.Trimesh]]:
     if not _es_step(ruta):
+        try:
+            objects = mesh_parts.objects(mesh.load_stl(ruta), mesh_parts.load(origen),
+                                         Path(documents._registry[origen]["nombre"]).stem)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if piezas:
-            raise HTTPException(status_code=400, detail="un origen STL no tiene piezas con nombre (omite piezas)")
-        return mesh.load_stl(ruta), []
-    if not piezas:
-        forma = b123d_kernel.import_from_step(ruta)
-        nombres = documents._nombres_piezas(origen)
-        return mesh.tessellate_para_exportar(forma), nombres
-    grupos = _grupos_origen(origen, ruta, piezas)
-    mallas = [mesh.tessellate_para_exportar(s) for lista in grupos.values() for s in lista]
-    return trimesh.util.concatenate(mallas), list(grupos)
+            by_name = dict(objects)
+            if any(name not in by_name for name in piezas):
+                raise HTTPException(status_code=400, detail="piezas desconocidas en el origen")
+            objects = [(name, by_name[name]) for name in dict.fromkeys(piezas)]
+        return objects
+    groups = _grupos_origen(origen, ruta, piezas)
+    return [(mesh_parts.default_name(Path(documents._registry[origen]["nombre"]).stem)
+             if len(groups) == 1 and name == "solido_1" and not piezas else name,
+             trimesh.util.concatenate([mesh.tessellate_para_exportar(s) for s in group]))
+            for name, group in groups.items()]
 
 
 def _escribir_atomico(ruta: Path, contenido: bytes) -> None:
@@ -105,20 +114,30 @@ def _nombre_libre(nombre: str, usados: set[str]) -> str:
     if nombre not in usados:
         return nombre
     n = 2
-    while f"{nombre}_{n}" in usados:
+    while f"{nombre[:60]}_{n}" in usados:
         n += 1
-    return f"{nombre}_{n}"
+    return f"{nombre[:60]}_{n}"
 
 
-def _incorporar_stl(ruta: Path, malla_nueva: trimesh.Trimesh) -> dict[str, Any]:
+def _incorporar_stl(destino: str, ruta: Path, incoming: list[tuple[str, trimesh.Trimesh]]) -> dict[str, Any]:
     actual = mesh.load_stl(ruta)
-    combinada = trimesh.Trimesh(
-        vertices=np.concatenate([actual.vertices, malla_nueva.vertices]),
-        faces=np.concatenate([actual.faces, malla_nueva.faces + len(actual.vertices)]),
-        process=False,
-    )
-    _escribir_atomico(ruta, mesh.to_stl_bytes(combinada))
-    return {"triangulos_antes": int(len(actual.faces)), "triangulos_despues": int(len(combinada.faces))}
+    objects = mesh_parts.objects(actual, mesh_parts.load(destino),
+                                 Path(documents._registry[destino]["nombre"]).stem)
+    used = {name for name, _ in objects}
+    renamed = {}
+    for name, part in incoming:
+        free = _nombre_libre(name, used)
+        if free != name:
+            renamed[name] = free
+        used.add(free)
+        objects.append((free, part))
+    combined, entries = mesh_parts.combine(objects)
+    # Sidecar and geometry are published under the document lock. Caller
+    # restores BOTH on error; snapshots already carry solidos.json.
+    _escribir_atomico(ruta, mesh.to_stl_bytes(combined))
+    _escribir_atomico(solids.ruta_solidos(destino), json.dumps(entries).encode())
+    return {"triangulos_antes": int(len(actual.faces)),
+            "triangulos_despues": int(len(combined.faces)), "renombradas": renamed}
 
 
 def _incorporar_step(destino: str, ruta: Path, origen: str, ruta_origen: Path,
@@ -159,7 +178,10 @@ def incorporar(destino: str, origen: str, piezas: list[str] | None) -> dict[str,
     if origen == destino:
         raise HTTPException(status_code=400, detail="el origen y el destino son el mismo documento")
     nombre_origen = documents._registry[origen]["nombre"]
-    with parametros.bloqueo(destino):
+    with contextlib.ExitStack() as locks:
+        for doc_id in sorted([destino, origen]):
+            locks.enter_context(parametros.bloqueo(doc_id))
+        ruta_origen = _ruta_doc(origen)
         ruta = _ruta_doc(destino)
         ramas.asegurar(destino)
         previo = ramas._snapshot_actual(destino, ruta)
@@ -177,11 +199,32 @@ def incorporar(destino: str, origen: str, piezas: list[str] | None) -> dict[str,
             mensaje = f"incorporar {', '.join(nombres)} desde {nombre_origen}"
             snapshot = versioning.crear_snapshot(destino, f"antes de {mensaje}", previo)
         else:
-            malla_nueva, nombres = _malla_origen(origen, ruta_origen, piezas)
+            incoming = _mesh_objects(origen, ruta_origen, piezas)
+            nombres = [name for name, _ in incoming]
             mensaje = f"incorporar {', '.join(nombres) if nombres else 'todo'} desde {nombre_origen}"
             snapshot = versioning.crear_snapshot(destino, f"antes de {mensaje}", previo)
-            extra = _incorporar_stl(ruta, malla_nueva)
-        analisis = documents._analyze(ruta, ruta.suffix.lower())
+            try:
+                extra = _incorporar_stl(destino, ruta, incoming)
+            except Exception as exc:
+                _escribir_atomico(ruta, previo[ruta.name])
+                sidecar_path = solids.ruta_solidos(destino)
+                if "solidos.json" in previo:
+                    _escribir_atomico(sidecar_path, previo["solidos.json"])
+                else:
+                    sidecar_path.unlink(missing_ok=True)
+                if isinstance(exc, HTTPException):
+                    raise
+                raise HTTPException(status_code=422, detail=f"no se pudo incorporar: {exc}") from exc
+        try:
+            analisis = documents._analyze(ruta, ruta.suffix.lower())
+        except Exception as exc:
+            _escribir_atomico(ruta, previo[ruta.name])
+            sidecar_path = solids.ruta_solidos(destino)
+            if "solidos.json" in previo:
+                _escribir_atomico(sidecar_path, previo["solidos.json"])
+            else:
+                sidecar_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail="No se pudo verificar la incorporación; se restauró el documento.") from exc
         registro = {"id": destino, "nombre": documents._registry[destino]["nombre"], **analisis}
         documents._registry[destino] = registro
         documents._borrar_cache_malla(destino)

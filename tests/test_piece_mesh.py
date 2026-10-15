@@ -201,7 +201,7 @@ def test_invalid_step_preview_reports_omitted_faces(monkeypatch):
     normal = mesh.tessellate_to_trimesh_con_caras(shape)
     monkeypatch.setattr(
         mesh, "tessellate_to_trimesh_con_caras_tolerante",
-        lambda _shape: (*normal, [2]),
+        lambda _shape, **_kw: (*normal, [2]),
     )
     payload = piece_mesh.from_step(
         shape, entries, metadata_available=True,

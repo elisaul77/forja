@@ -186,9 +186,21 @@ export class ForjaNotasControlador {
   async _alClicar(ev) {
     if (this.modo !== "nota" && this.modo !== "pizarra-esperando-cara") return;
     const hit = this.viewer.raycastearMalla(ev.clientX, ev.clientY);
-    if (!hit) return;
-    await this._asegurarCaras();
+    if (!hit || this._ocupadoNota) return;
+    const feedback = document.getElementById("fj-feedback");
+    const avisar = (texto) => { if (feedback) { feedback.hidden = !texto; feedback.textContent = texto; } };
+    this._ocupadoNota = true;
+    try {
+      if (this._caras === null) avisar("Preparando las caras del modelo para anclar la nota…");
+      await this._asegurarCaras();
+      avisar("");
+      await this._colocarEnGolpeo(hit, avisar);
+    } finally {
+      this._ocupadoNota = false;
+    }
+  }
 
+  async _colocarEnGolpeo(hit, avisar) {
     if (this.modo === "pizarra-esperando-cara") {
       const referencia = this._referenciaDesdeGolpeo(hit);
       const normal =
@@ -206,7 +218,14 @@ export class ForjaNotasControlador {
     const referencia = this._referenciaDesdeGolpeo(hit);
     const comentario = await pedirComentario("Nota para el asistente");
     if (comentario === null) return;
-    await crearNota(this.docId, comentario, referencia);
+    avisar("Guardando nota…");
+    try {
+      await crearNota(this.docId, comentario, referencia);
+      avisar("");
+    } catch (error) {
+      avisar(`No se pudo guardar la nota: ${error.message ?? error}`);
+      return;
+    }
     await this.recargar();
   }
 

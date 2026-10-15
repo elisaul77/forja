@@ -2,14 +2,14 @@
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
 import { ForjaViewer } from "./viewer.js?v=14";
-import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
+import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=16";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
 import { crearBotonCupon } from "./cupon.js?v=2";
 import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=2";
-import { AnimationView } from "./animation.js?v=4";
+import { AnimationView } from "./animation.js?v=7";
 import { renderPiecesPanel } from "./pieces.js?v=9";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
 import { construirAnclas } from "./orca.js?v=3";

@@ -29,8 +29,18 @@ def tessellate_to_trimesh(shape: Shape, tolerance: float = 0.1) -> trimesh.Trime
     return tri_mesh
 
 
+# Viewer-only LOD: above this many faces (e.g. a whole-printer STEP) the
+# viewer mesh is re-tessellated coarser. Imported STEPs can carry their own
+# very fine triangulation, which OCC reuses regardless of `tolerance`, so it
+# is discarded first. Measured 2026-10-08 on the Ender 3 V3 SE reference
+# (37,897 faces): 15.6 M tri / 781 MB -> 0.97 M tri in 26 s at 1 mm.
+CARAS_MODELO_GRANDE = 10_000
+TOLERANCIA_VISTA_GRANDE_MM = 1.0
+TOLERANCIA_ANGULAR_VISTA_GRANDE = 0.5
+
+
 def tessellate_to_trimesh_con_caras(
-    shape: Shape, tolerance: float = 0.1
+    shape: Shape, tolerance: float = 0.1, *, vista: bool = False
 ) -> tuple[trimesh.Trimesh, np.ndarray]:
     """Tessellate ``shape`` face-by-face (rather than as one opaque mesh),
     concatenating the per-face triangles into one mesh and returning a
@@ -46,31 +56,39 @@ def tessellate_to_trimesh_con_caras(
     lack of vertex sharing (`Trimesh.volume` sums signed per-triangle
     contributions, it does not require watertight-by-shared-vertex mesh).
     """
-    tri_mesh, indices, _omitted = _tessellate_faces(shape, tolerance, skip_invalid=False)
+    tri_mesh, indices, _omitted = _tessellate_faces(shape, tolerance, skip_invalid=False, vista=vista)
     return tri_mesh, indices
 
 
 def tessellate_to_trimesh_con_caras_tolerante(
-    shape: Shape, tolerance: float = 0.1
+    shape: Shape, tolerance: float = 0.1, *, vista: bool = False
 ) -> tuple[trimesh.Trimesh, np.ndarray, list[int]]:
     """Preview invalid STEP geometry, reporting every face that could not mesh.
 
     The caller must show the omitted-face count. This never changes the B-rep.
     """
-    return _tessellate_faces(shape, tolerance, skip_invalid=True)
+    return _tessellate_faces(shape, tolerance, skip_invalid=True, vista=vista)
 
 
 def _tessellate_faces(
-    shape: Shape, tolerance: float, *, skip_invalid: bool
+    shape: Shape, tolerance: float, *, skip_invalid: bool, vista: bool = False
 ) -> tuple[trimesh.Trimesh, np.ndarray, list[int]]:
+    caras = shape.faces()
+    extra: tuple[float, ...] = ()
+    if vista and len(caras) > CARAS_MODELO_GRANDE:
+        from OCP.BRepTools import BRepTools
+
+        BRepTools.Clean_s(shape.wrapped)
+        tolerance = max(tolerance, TOLERANCIA_VISTA_GRANDE_MM)
+        extra = (TOLERANCIA_ANGULAR_VISTA_GRANDE,)
     vertices_por_cara: list[np.ndarray] = []
     triangulos_por_cara: list[np.ndarray] = []
     indice_cara: list[int] = []
     omitted: list[int] = []
     offset = 0
-    for i, face in enumerate(shape.faces()):
+    for i, face in enumerate(caras):
         try:
-            vertices, triangulos = face.tessellate(tolerance)
+            vertices, triangulos = face.tessellate(tolerance, *extra)
         except (AttributeError, RuntimeError, ValueError):
             if not skip_invalid:
                 raise

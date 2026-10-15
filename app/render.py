@@ -265,7 +265,7 @@ def _tesela_grupos(
         faces_totales: list[np.ndarray] = []
         offset = 0
         for pieza in piezas_por_nombre[nombre]:
-            tri_mesh = kernel_mesh.tessellate_to_trimesh(pieza, tolerancia)
+            tri_mesh, _i, _omitidas = kernel_mesh.tessellate_to_trimesh_con_caras_tolerante(pieza, tolerancia)
             if len(tri_mesh.faces) == 0:
                 continue
             vertices_totales.append(tri_mesh.vertices)

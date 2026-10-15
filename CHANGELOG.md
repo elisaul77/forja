@@ -7,6 +7,12 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (piezas nombradas en mallas)
+
+- Incorporar documentos en un STL conserva cada pieza con su nombre; selección, aislamiento y descarga individual funcionan sin convertir la malla a STEP. Un grupo puede contener varios fragmentos desconectados.
+- Exportación STL por pieza y 3MF con objetos separados; geometría conservada sin reparación automática. Los nombres sobreviven a reinicios y restauraciones mediante el historial existente.
+- La correspondencia entre piezas y triángulos se valida con rangos exhaustivos y una huella de geometría. Metadatos dañados desactivan la selección y rechazan la exportación selectiva.
+
 ### Fixed (exportación estanca)
 
 - Los STL y 3MF exportados (`exportar`, descargas e `incorporar`) se teselan como un solo sólido, así las caras comparten aristas y la malla queda cerrada. Antes, las uniones entre caras dejaban grietas (4680 aristas abiertas en la tuerca P5) que el laminador rellenaba. El volumen coincide con el B-rep. La vista 3D no cambia. Decisión en `docs/decisions/0016-exportacion-estanca.md`.
