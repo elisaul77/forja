@@ -53,6 +53,8 @@ _TOOLS = {
     "suspension",
     "puentes",
     "rama",
+    "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
+    "preparar_candidato", "candidato_diseno", "trabajo_diseno", "exportar_diseno", "referencia_visual",
 }
 
 

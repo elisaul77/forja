@@ -44,6 +44,7 @@ import scripts_runner
 import solids
 import mesh_parts
 import versioning
+import design_state
 from checks import colisiones as colisiones_checks
 from checks import fdm as fdm_checks
 from kernel import b123d_kernel, mesh
@@ -332,6 +333,7 @@ def _con_solidos_snapshot(
 def _con_parametros_snapshot(archivos: dict[str, bytes], doc_id: str) -> dict[str, bytes]:
     """Add the parametric state (``parametros.json``, Phase 5C fix-review)
     to a snapshot's file set when the document has a stored script."""
+    archivos.update(design_state.snapshot(doc_id))
     estado = parametros.estado_para_snapshot(doc_id)
     if estado is not None:
         archivos[parametros.NOMBRE_SNAPSHOT] = estado
@@ -504,6 +506,7 @@ def _actualizar_documento_desde_script(
     re-resolved against the rebuilt shape (`naming.resolver_referencia`),
     never left silently pointing at a stale index.
     """
+    design_state.require_unprotected_legacy_edit(doc_id)
     registro_previo = _registry.get(doc_id)
     if registro_previo is None:
         raise HTTPException(status_code=404, detail="documento no encontrado")
@@ -979,9 +982,12 @@ def verificar_fdm_documento(
     if ruta is None or not ruta.exists():
         raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
     if ruta.suffix.lower() not in _STEP_EXTS:
-        raise HTTPException(
-            status_code=400, detail="check_fdm solo esta disponible para documentos STEP/script (no malla STL)"
-        )
+        import design_analysis, design_geometry
+        with parametros.bloqueo(doc_id):
+            state = design_state.load(doc_id)
+            parts = {n: m for n, m in design_geometry.objects(doc_id).items()
+                     if state.parts.get(n, design_state.PartRole()).role == "design"}
+            return design_analysis.print_check(parts, boquilla, dims_cama, angulo_max, state.print_rotations)
     entradas = solids.cargar(doc_id)
     if not entradas:
         raise HTTPException(
@@ -1780,7 +1786,7 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
             ruta_notas_doc.write_bytes(contenido)
         elif nombre == "solidos.json":
             ruta_solidos_doc.write_bytes(contenido)
-        elif nombre in (parametros.NOMBRE_SNAPSHOT, materiales.NOMBRE_SNAPSHOT):
+        elif nombre in (parametros.NOMBRE_SNAPSHOT, materiales.NOMBRE_SNAPSHOT, design_state.KEY):
             continue  # applied below with the geometry, never written as-is
         elif nombre in (assemblies.STATE_KEY, assemblies.BASE_KEY):
             # Applied through `assemblies.restore_files` below: written here
@@ -1801,6 +1807,7 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
     # annotation, not the current geometry/script or named-solid metadata.
     restaura_geometria = ruta.name in archivos
     if restaura_geometria:
+        design_state.restore(doc_id, archivos.get(design_state.KEY))
         parametros.restaurar_estado(doc_id, archivos.get(parametros.NOMBRE_SNAPSHOT))
         materiales.restaurar_estado(doc_id, archivos.get(materiales.NOMBRE_SNAPSHOT))
         # The assembly belongs to the geometry: a geometry snapshot carries
@@ -1886,6 +1893,9 @@ def _eliminar_documento_bloqueado(doc_id: str) -> dict[str, Any]:
     notes.ruta_notas(doc_id).unlink(missing_ok=True)
     solids.borrar(doc_id)
     materiales.borrar(doc_id)
+    design_state.path(doc_id).unlink(missing_ok=True)
+    shutil.rmtree(DOCUMENTOS_DIR / ".design-assets" / doc_id, ignore_errors=True)
+    shutil.rmtree(DOCUMENTOS_DIR / ".design-candidates" / doc_id, ignore_errors=True)
     # The assembly is part of the document (Phase 6, ADR-0003/0006: deleting
     # a document must leave nothing of it behind, not even state a restore
     # could not reach); `clear` also removes `.ensambles/<id>/` itself.

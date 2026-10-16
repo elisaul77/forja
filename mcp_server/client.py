@@ -806,3 +806,25 @@ def puentes() -> dict[str, Any]:
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
     return resp.json()
+
+
+@_heavy_operation
+def design_request(method: str, path: str, payload: dict | None = None) -> dict:
+    """Internal fixed-route adapter; no arbitrary URL is exposed as a tool."""
+    try:
+        with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
+            response = c.request(method, path, json=payload,
+                                 headers=_headers_con_token() if method != 'GET' else {})
+        if response.status_code >= 400:
+            return {'error': True, 'status': response.status_code, 'message': _detalle(response)}
+        return response.json()
+    except httpx.HTTPError as exc:
+        return _error_red('design', exc)
+
+
+@_heavy_operation
+def design_image(doc_id: str, image_id: str):
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        response=c.get(f'/documentos/{urllib.parse.quote(doc_id,safe="")}/design/images/{urllib.parse.quote(image_id,safe="")}')
+    response.raise_for_status()
+    return response.content

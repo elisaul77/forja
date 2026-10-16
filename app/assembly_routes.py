@@ -337,6 +337,8 @@ def clear_assembly(doc_id: str):
 
 @router.post("/pose", dependencies=[Depends(auth.requiere_token)])
 def apply_pose(doc_id: str, body: Pose):
+    import design_state
+    design_state.require_unprotected_legacy_edit(doc_id)
     start = time.perf_counter()
     _path(doc_id)  # rejected before the lock (see `_path`)
     with parametros.bloqueo(doc_id):

@@ -1389,3 +1389,11 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - ADR 0001 (geometry kernel), 0002 (frontend stack), 0003 (topological
   naming and versioning), 0004 (MCP process model).
 - Approved implementation plan and phase detail committed under `plans/`.
+
+## Shared agent workspace (2026-10-15)
+
+- Added typed human/agent design intent, protected roles, requirements and revision-bound selections.
+- Added geometric query batches, alignment fitting, FDM mesh analysis, cancellable jobs and revision cache.
+- Added idempotent prepared candidates, validation before publish, rollback and deterministic manufacturing export by role.
+- Added nine MCP tools and the Diseño collaboration panel, sharing one REST contract.
+- Intent now follows snapshots and branches; conflicting full merges surface design-state conflicts.

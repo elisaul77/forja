@@ -35,9 +35,15 @@ def crear_servidor() -> MCPServer:
     can only `run()` once, so each lifespan needs its own instance)."""
     servidor = MCPServer(
         name="forja",
-        version="0.7.0",
+        version="0.8.0",
         instructions=(
             "Forja es un editor CAD 3D nativo para IA (build123d/OpenCascade). "
+            "Antes de editar, consulta capacidades_diseno y contexto_diseno para "
+            "respetar intencion, roles y requisitos. Usa consultar_diseno para "
+            "mediciones por revision y preparar_candidato para cambios verificables; "
+            "candidato_diseno aplica tras revisar resultados. exportar_diseno excluye "
+            "referencias y usa la postura de impresion sin mover el montaje. "
+            "referencia_visual muestra fotos adjuntas por el usuario. "
             "Flujo tipico: abrir_archivo -> resumen_documento -> ejecutar_script "
             "(con PARAMETROS + construir(params) si la pieza se va a iterar) "
             "-> percibir (contactos) -> cortes solo si hace falta ver una forma "
@@ -85,6 +91,10 @@ def crear_servidor() -> MCPServer:
     servidor.tool(name="ensamble")(tools.ensamble)
     servidor.tool(name="suspension")(tools.suspension)
     servidor.tool(name="puentes")(tools.puentes)
+    for name in ("capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
+                 "preparar_candidato", "candidato_diseno", "trabajo_diseno", "exportar_diseno"):
+        servidor.tool(name=name)(getattr(tools, name))
+    servidor.tool(name="referencia_visual", structured_output=False)(tools.referencia_visual)
     return servidor
 
 

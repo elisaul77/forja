@@ -1083,3 +1083,23 @@ a.fj-btn { text-decoration: none; }
 .fj-animation__step.is-done button { color: var(--fj-ink-2, #aaa); }
 .fj-animation__step.is-current button { color: var(--fj-ink-1, #fff); background: var(--fj-surface-2, rgba(127,127,127,.15)); font-weight: 600; }
 .fj-animation__step button:focus-visible { outline: 2px solid var(--fj-accent); }
+
+/* Human/agent workspace. Scoped to avoid changing existing side panels. */
+.fj-design { display: flex; flex-direction: column; gap: .65rem; }
+.fj-design[hidden] { display: none; }
+.fj-design label { display: flex; flex-direction: column; gap: .3rem; margin: .5rem 0; }
+.fj-design input, .fj-design textarea, .fj-design select { width: 100%; box-sizing: border-box; padding: .45rem; color: inherit; background: var(--fj-bg); border: 1px solid var(--fj-ink-3); border-radius: .3rem; }
+.fj-design textarea { min-height: 5rem; resize: vertical; }
+.fj-design input[type=checkbox] { width: auto; align-self: start; }
+.fj-design details { padding: .5rem; border: 1px solid var(--fj-ink-3); border-radius: .4rem; }
+.fj-design summary { cursor: pointer; font-weight: 600; }
+.fj-design button { flex-shrink: 0; margin: .25rem .2rem .25rem 0; white-space: normal; }
+.fj-design pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; max-height: 20rem; overflow: auto; }
+.fj-design-card { padding: .6rem; border-left: 3px solid var(--fj-accent); }
+.fj-design-results { border-top: 1px solid var(--fj-ink-3); padding-top: .7rem; }
+
+.fj-design-photo { max-width: 100%; max-height: 240px; object-fit: contain; border-radius: .4rem; }
+
+.fj-auth { max-width: min(90vw, 28rem); padding: var(--fj-space-4); color: var(--fj-ink-2); background: var(--fj-surface); border: 1px solid var(--fj-line-strong); border-radius: var(--fj-r-md); }
+.fj-auth label { display: block; margin-bottom: var(--fj-space-4); }
+.fj-auth input { display: block; width: 100%; box-sizing: border-box; padding: var(--fj-space-2); color: var(--fj-ink-1); background: var(--fj-bg); border: 1px solid var(--fj-line-strong); }

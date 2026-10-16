@@ -1,7 +1,8 @@
+import { renderDesign, designHit, disposeDesign } from "./design.js?v=2";
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=14";
+import { ForjaViewer } from "./viewer.js?v=design1-14";
 import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=16";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
@@ -47,6 +48,7 @@ export class TabManager {
     this.panelSeccionParametros = document.getElementById("fj-panel-parametros");
     this.panelSeccionEnsamble = document.getElementById("fj-panel-ensamble");
     this.panelSeccionPiezas = document.getElementById("fj-panel-piezas");
+    this.panelSeccionDesign = document.getElementById("fj-panel-design");
     this.panelActivo = "notas";
     document.getElementById("fj-panel-lateral-cerrar").addEventListener("click", () => {
       this.panel.hidden = true;
@@ -69,6 +71,7 @@ export class TabManager {
 
   _mostrarSeccionPanel(seccion) {
     this.panelActivo = seccion;
+    this.panelSeccionDesign.hidden = seccion !== "design";
     this.panelSeccionNotas.hidden = seccion !== "notas";
     this.panelSeccionHistorial.hidden = seccion !== "historial";
     // Historial 2.0: «Ramas» vive en el cajón de la vista Historial.
@@ -95,6 +98,7 @@ export class TabManager {
   _renderizarPanelPestanaActiva() {
     const entrada = this.tabs.get(this.activeId);
     if (!entrada) return;
+    if (this.panelActivo === "design") renderDesign(entrada, this.panelSeccionDesign);
     renderizarPanelNotas(entrada.notas);
     renderizarPanelHistorial(entrada.historial);
     if (this.panelActivo === "historial") {
@@ -151,6 +155,7 @@ export class TabManager {
 
     const viewer = new ForjaViewer(contenedor);
     viewer.cargarMallaSTL(mallaArrayBuffer);
+    viewer.onDesignHit = hit => { if(this.activeId === ficha.id && this.panelActivo === "design") designHit(this.tabs.get(ficha.id), hit); };
 
     const notas = new ForjaNotasControlador(viewer, ficha.id);
     viewer.canSelectPiece = () => !notas.modo && animation.mode === "cad";
@@ -613,6 +618,7 @@ export class TabManager {
       }));
       if (tag === "ramas") tasks.push(entry.ramas.cargarInicial(), entry.h2.invalidar());
       if (tag === "parametros") tasks.push(entry.parametros.cargarInicial());
+      if (tag === "design" && this.activeId === docId && this.panelActivo === "design") renderDesign(entry, this.panelSeccionDesign);
       if (tag === "materiales") tasks.push(this._cargarMateriales(entry));
     }
     if (!tasks.length) return;
@@ -671,6 +677,7 @@ export class TabManager {
     entrada.viewer.dispose();
     entrada.contenedor.remove();
     entrada.boton.remove();
+    disposeDesign(docId);
     this.tabs.delete(docId);
     if (hadFocus && this.activeId !== docId) this.tabs.get(this.activeId)?.boton.focus();
 

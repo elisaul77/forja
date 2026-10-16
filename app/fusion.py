@@ -453,6 +453,12 @@ def planificar(doc_id: str, archivos_a: dict[str, bytes], fuente_a: dict[str, by
                 "avisos": avisos, "base": base, "verificacion": verif, "modo": "piezas"}
 
     # -------------------------------------------- fusión completa
+    # Keep intent on the same branch timeline as geometry; conflicting edits
+    # must be explicit, never silently discard the agent/user requirements.
+    design = c.resolver("diseño", "intención", _json(o.get("design.json")),
+                        _json(a.get("design.json")), _json(b.get("design.json")))
+    if design is not None:
+        resultado["design.json"] = json.dumps(design, ensure_ascii=False).encode()
     resultado["notas.json"] = _fusionar_notas(c, o.get("notas.json"), a.get("notas.json"), b.get("notas.json"))
     resultado.update(_fusionar_ensamble(c, o, a, b))
     mats = _fusionar_materiales(c, o.get(materiales.NOMBRE_SNAPSHOT), a.get(materiales.NOMBRE_SNAPSHOT),
@@ -606,6 +612,9 @@ def fusionar(doc_id: str, desde: str, piezas: list[str] | None = None, estrategi
     """Merge ``desde`` into the active branch (or bring ``piezas`` from it).
     ``mensaje`` overrides the step message (Historial 2.0: «restaurar
     pieza»). Caller holds `parametros.bloqueo(doc_id)`."""
+    if not simular:
+        import design_state
+        design_state.require_unprotected_legacy_edit(doc_id)
     if estrategia not in ESTRATEGIAS:
         raise FusionInvalida("estrategia: auto | nuestra | suya")
     if piezas is not None:

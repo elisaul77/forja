@@ -43,6 +43,7 @@ from pydantic import BaseModel
 import assemblies
 import auth
 import documents
+import design_state
 import eventos
 import git_store
 import materiales
@@ -98,7 +99,8 @@ def capturar(doc_id: str) -> tuple[dict[str, bytes], dict[str, bytes], str | Non
             meta = {}
     for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)),
                            ("solidos.json", solids.ruta_solidos(doc_id)),
-                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id))):
+                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id)),
+                           (design_state.KEY, design_state.path(doc_id))):
         if camino.exists():
             archivos[nombre] = camino.read_bytes()
     archivos.update(assemblies.snapshot_files(doc_id))
@@ -280,7 +282,8 @@ def _materializar(doc_id: str, ruta: Path, archivos: dict[str, bytes]) -> None:
                                                  (documents._ruta_meta(doc_id), meta)]
     for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)),
                            ("solidos.json", solids.ruta_solidos(doc_id)),
-                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id))):
+                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id)),
+                           (design_state.KEY, design_state.path(doc_id))):
         destinos.append((camino, archivos.get(nombre)))
     preparados: list[tuple[Path, Path | None]] = []
     try:

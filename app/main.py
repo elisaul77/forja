@@ -17,6 +17,7 @@ import assembly_routes
 import bridges
 import cupon
 import documents
+import design_routes
 import eventos
 import notes
 import perfiles
@@ -45,6 +46,7 @@ async def _ciclo_de_vida(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Forja", lifespan=_ciclo_de_vida)
 app.include_router(documents.router)
+app.include_router(design_routes.router)
 app.include_router(notes.router)
 app.include_router(assembly_routes.router)
 app.include_router(bridges.router)

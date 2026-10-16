@@ -101,6 +101,7 @@ export class ForjaViewer {
       if (!start || event.button !== 0 || Math.hypot(event.clientX - start[0], event.clientY - start[1]) > 4 ||
           (this.canSelectPiece && !this.canSelectPiece())) return;
       const hit = this.raycastearMalla(event.clientX, event.clientY);
+      this.onDesignHit?.(hit);
       this.selectPiece(hit?.pieceName ?? null);
       this.onPieceSelection?.();
     };
@@ -430,6 +431,37 @@ export class ForjaViewer {
     this.camera.updateProjectionMatrix();
     this.controls.update();
     this.render();
+  }
+
+  showDesignPreview(buffer) {
+    if (this.designPreview) {
+      this.scene.remove(this.designPreview);
+      this.designPreview.geometry.dispose(); this.designPreview.material.dispose();
+      this.designPreview = null;
+    }
+    if (buffer) {
+      const geometry = loader.parse(buffer);
+      const material = new THREE.MeshStandardMaterial({color:cssVarColor("--fj-info", "#38bdf8"), transparent:true, opacity:0.45, depthWrite:false, side:THREE.DoubleSide});
+      this.designPreview = new THREE.Mesh(geometry,material); this.scene.add(this.designPreview);
+    }
+    this.render();
+  }
+
+  showDesignLines(lines) {
+    if (this.designLines) {
+      this.scene.remove(this.designLines);
+      this.designLines.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});
+    }
+    this.designLines=new THREE.Group();
+    for(const points of lines) {
+      const geometry=new THREE.BufferGeometry().setFromPoints(points.map(p=>new THREE.Vector3(...p)));
+      this.designLines.add(new THREE.Line(geometry,new THREE.LineBasicMaterial({color:cssVarColor("--fj-accent", "#f97316"),depthTest:false})));
+    }
+    this.scene.add(this.designLines);this.render();
+  }
+
+  showDesignPoints(points) {
+    this.showDesignLines(points.map(p=>[[p[0]-0.5,p[1],p[2]],[p[0]+0.5,p[1],p[2]]]));
   }
 
   setWireframe(enabled) {

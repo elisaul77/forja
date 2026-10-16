@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Forja</title>
 <link rel="stylesheet" href="/static/css/forja-tokens.css?v=7">
-<link rel="stylesheet" href="/static/css/forja-base.css?v=23">
+<link rel="stylesheet" href="/static/css/forja-base.css?v=25">
 <script type="importmap">
 {
   "imports": {
@@ -57,6 +57,7 @@
     <aside id="fj-panel-lateral" class="fj-panel-lateral" hidden>
       <div class="fj-panel-lateral__header">
         <div class="fj-panel-lateral__tabs">
+          <button type="button" class="fj-panel-lateral__tab" data-panel="design">Diseño</button>
           <button type="button" class="fj-panel-lateral__tab" data-panel="piezas">Piezas</button>
           <button type="button" class="fj-panel-lateral__tab is-active" data-panel="notas">Notas</button>
           <button type="button" class="fj-panel-lateral__tab" data-panel="historial">Historial</button>
@@ -71,6 +72,7 @@
       <div id="fj-panel-instantaneas" class="fj-h2__clasico" hidden></div>
       <div id="fj-panel-parametros" class="fj-panel-lateral__seccion" hidden></div>
       <div id="fj-panel-ensamble" class="fj-panel-lateral__seccion" hidden></div>
+      <div id="fj-panel-design" class="fj-panel-lateral__seccion" hidden></div>
       <div id="fj-panel-piezas" class="fj-panel-lateral__seccion" hidden></div>
     </aside>
   </div>
@@ -155,6 +157,6 @@
   </footer>
 </div>
 
-<script type="module" src="/static/js/app.js?v=34"></script>
+<script type="module" src="/static/js/app.js?v=36"></script>
 </body>
 </html>
