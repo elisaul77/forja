@@ -13,6 +13,12 @@ const statusLabels = {
   prepared: "Preparado",
   applied: "Aplicado",
 };
+// The viewer uses a synthetic label for legacy ungrouped STL documents.
+// Resolve it only when there is one unambiguous design part.
+export function resolveDesignPiece(pieces, name) {
+  if (pieces.some((piece) => piece.name === name)) return name;
+  return pieces.length === 1 ? pieces[0].name : null;
+}
 export function vector(text) {
   const v = text
     .trim()
@@ -251,8 +257,14 @@ class Workspace {
   onHit(hit) {
     if (!this.capture || !hit) return;
     if (this.points.length >= 256) return;
-    const selected =
-      hit.pieceName || this.entry.viewer.selectedPiece || this.piece.value;
+    const selected = resolveDesignPiece(
+      this.data.pieces,
+      hit.pieceName || this.entry.viewer.selectedPiece || this.piece.value,
+    );
+    if (!selected) {
+      this.message.textContent = "No se pudo identificar la pieza seleccionada.";
+      return;
+    }
     if (this.points.length && this.selected !== selected) {
       this.message.textContent =
         "Finaliza o limpia los puntos antes de seleccionar otra pieza.";
@@ -304,7 +316,8 @@ class Workspace {
         ),
       );
     const selected =
-      this.entry.viewer.selectedPiece || this.data.pieces[0]?.name;
+      resolveDesignPiece(this.data.pieces, this.entry.viewer.selectedPiece) ||
+      this.data.pieces[0]?.name;
     this.piece = options(
       root,
       "Pieza de trabajo",

@@ -1,4 +1,4 @@
-import { renderDesign, designHit, disposeDesign } from "./design.js?v=2";
+import { renderDesign, designHit, disposeDesign } from "./design.js?v=3";
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).

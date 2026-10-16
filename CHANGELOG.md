@@ -7,6 +7,10 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (selección en Diseño)
+
+- La captura sobre un STL sin grupos resuelve la etiqueta visual «Malla completa» al nombre real de la única pieza. El selector no queda vacío y las regiones se guardan con una pieza válida. En documentos con varias piezas no se adivina una correspondencia desconocida. Verificación real del frontend documentada en `docs/FRONTEND-VERIFICATION.md`.
+
 ### Added (piezas nombradas en mallas)
 
 - Incorporar documentos en un STL conserva cada pieza con su nombre; selección, aislamiento y descarga individual funcionan sin convertir la malla a STEP. Un grupo puede contener varios fragmentos desconectados.
