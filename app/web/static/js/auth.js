@@ -7,7 +7,9 @@ export function forgetSessionToken() {
   sessionStorage.removeItem(key);
 }
 
-export function requestSessionToken() {
+// `reason` (opcional, en español) explica por qué se pide la clave; sin él
+// el diálogo muestra el texto genérico de siempre.
+export function requestSessionToken(reason = "") {
   const stored = sessionStorage.getItem(key)?.trim();
   if (stored) return Promise.resolve(stored);
   if (pending) return pending;
@@ -19,7 +21,9 @@ export function requestSessionToken() {
     const title = document.createElement("h3");
     title.textContent = "Acceso a Forja";
     const explanation = document.createElement("p");
-    explanation.textContent = "Introduce la clave de esta instancia para continuar. Se recuerda solo durante esta pestaña.";
+    explanation.textContent = reason
+      ? `${reason}. Esta clave protege los cambios en este equipo; se recuerda solo durante esta pestaña.`
+      : "Introduce la clave de esta instancia para continuar. Se recuerda solo durante esta pestaña.";
     const label = document.createElement("label");
     label.textContent = "Clave de Forja";
     const input = document.createElement("input");

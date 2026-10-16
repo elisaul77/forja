@@ -54,6 +54,7 @@ _TOOLS = {
     "puentes",
     "rama",
     "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
+    "responder_indicacion",  # unified intents (ADR-0019)
     "preparar_candidato", "candidato_diseno", "trabajo_diseno", "exportar_diseno", "referencia_visual",
 }
 

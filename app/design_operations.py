@@ -3,6 +3,7 @@
 from __future__ import annotations
 import hashlib
 import json
+from datetime import datetime, timezone
 import numpy as np
 import trimesh
 from scipy.spatial.transform import Rotation
@@ -41,6 +42,18 @@ def expect(doc_id, rev, srev):
         )
 
 
+def _validar_util(op):
+    """A cylinder's size[1] is unused (only diameter and height count), so it
+    may be 0; a box needs all three sides positive."""
+    dimensiones = op.size if op.primitive == "box" else (op.size[0], op.size[2])
+    if min(dimensiones) <= 0:
+        raise ValueError("Dimensiones del útil deben ser positivas")
+
+
+def _ahora() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
 def transform_shape(s, op):
     from build123d import Axis
 
@@ -73,8 +86,7 @@ def edit_mesh(m, op):
             raise ValueError("La región no contiene vértices")
         m.vertices += weight[:, None] * np.asarray(op.translation)
         return m
-    if min(op.size) <= 0:
-        raise ValueError("Dimensiones del útil deben ser positivas")
+    _validar_util(op)
     tool = (
         trimesh.creation.box(extents=op.size)
         if op.primitive == "box"
@@ -101,8 +113,7 @@ def edit_shape(s, op):
         return transform_shape(s, op)
     if op.kind == "deform_region":
         raise ValueError("Deformación regional solo disponible para STL")
-    if min(op.size) <= 0:
-        raise ValueError("Dimensiones del útil deben ser positivas")
+    _validar_util(op)
     tool = (
         Box(*op.size) if op.primitive == "box" else Cylinder(op.size[0] / 2, op.size[2])
     )
@@ -143,6 +154,10 @@ def prepare(doc_id, body):
                 "Máximo 64 candidatos por documento; descarta candidatos antes de crear más"
             )
         design = state.load(doc_id)
+        if body.intent is not None and not any(
+            i.id == body.intent for i in design.intents
+        ):
+            raise ValueError("Indicación desconocida")
         before = geo.objects(doc_id)
         path = incorporar._ruta_doc(doc_id)
         for op in body.operations:
@@ -219,6 +234,10 @@ def prepare(doc_id, body):
                 "state_revision": body.state_revision,
                 "request_hash": body_hash,
                 "state": "prepared",
+                "intent": body.intent,
+                "summary": body.summary,
+                "constraints_revision": state.constraints_digest(design),
+                "created": _ahora(),
                 "geometry_file": out.name,
                 "sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
                 "checks": checks,
@@ -246,7 +265,22 @@ def apply(doc_id, key):
         p, manifest = candidate(doc_id, key)
         if manifest["state"] == "applied":
             return manifest
-        expect(doc_id, manifest["revision"], manifest["state_revision"])
+        if "constraints_revision" in manifest:
+            # Intent conversation does not invalidate candidates; roles and
+            # requirements do (the checks depend only on those).
+            current_state = state.load(doc_id)
+            if (
+                documents.calcular_revision(doc_id) != manifest["revision"]
+                or state.constraints_digest(current_state)
+                != manifest["constraints_revision"]
+            ):
+                raise HTTPException(
+                    409,
+                    "El documento o sus condiciones cambiaron; vuelve a consultar antes de aplicar.",
+                )
+        else:
+            # Legacy manifest (before constraints_revision): full-state guard.
+            expect(doc_id, manifest["revision"], manifest["state_revision"])
         if manifest["checks"]["failed"]:
             raise HTTPException(
                 409,
@@ -260,7 +294,7 @@ def apply(doc_id, key):
         path = incorporar._ruta_doc(doc_id)
         ramas.asegurar(doc_id)
         previous, _, _ = ramas.capturar(doc_id)
-        versioning.crear_snapshot(
+        before_snapshot = versioning.crear_snapshot(
             doc_id,
             "antes de aplicar candidato de diseño",
             ramas._snapshot_actual(doc_id, path),
@@ -313,7 +347,9 @@ def apply(doc_id, key):
             ramas.borrar_cache(doc_id)
             documents.confirmar_revision(doc_id)
             manifest.update(
-                state="applied", applied_revision=documents.calcular_revision(doc_id)
+                state="applied",
+                applied_revision=documents.calcular_revision(doc_id),
+                before_snapshot=before_snapshot,
             )
             incorporar._escribir_atomico(
                 p / "manifest.json", json.dumps(manifest).encode()

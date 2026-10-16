@@ -43,3 +43,7 @@ Fixture STEP y STL: guardar intención/selecciones → inspeccionar → alinear 
 - `git diff --check`: correcto. Los conteos de Python se solapan; no se suman como pruebas distintas.
 
 - Revisión UI en navegador integrado: ensamble con tres piezas, panel Diseño y formulario de acceso verificados. Se corrigió la incompatibilidad del antiguo `window.prompt` usando `auth.js` asíncrono en el panel nuevo; tres pruebas cubren sesión, concurrencia y cancelación. Las consultas autenticadas de producción requieren que el usuario introduzca su clave; no se leyó ni utilizó esa credencial.
+
+## Addendum 2026-10-16 — indicaciones unificadas
+
+Decisión: `docs/decisions/0019-unified-intents.md`. Las notas y trazos pasan a ser marcas de una indicación (`Intent.marks`, por id; sin migración de `notas.json`). El estado de atención se deriva en `design_routes.read()`. Nuevas rutas: `POST …/design/intents`, `…/intents/{iid}/user` (sin clave) y `…/intents/{iid}/agent` (con clave). `responder_indicacion` es la herramienta MCP nueva; `preparar_candidato` acepta `indicacion` y `resumen`. Verificación en `docs/FRONTEND-VERIFICATION.md` (sección 2026-10-16).

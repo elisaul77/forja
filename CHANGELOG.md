@@ -7,6 +7,18 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Changed (indicaciones unificadas)
+
+- La pestaña Diseño pasa a ser **Indicaciones**: la única lista donde se explica lo que se quiere cambiar. Las notas y trazos del visor son las marcas de una indicación; se enlazan por id y no se copian ni migran. Las notas antiguas sin indicación aparecen como marcas sueltas con «Convertir en indicación». `notas.json` y `design.json` antiguos cargan sin cambios. Decisión en `docs/decisions/0019-unified-intents.md`.
+- Una indicación muestra un estado derivado en el servidor: pendiente, entendida, con pregunta, propuesta disponible, cambio aplicado, revertida, resuelta o descartada. Solo el usuario la marca como resuelta; ninguna operación lo hace.
+- Las propuestas quedan vinculadas a su indicación con un resumen humano. Una respuesta del usuario no invalida una propuesta preparada; sí lo hacen los cambios de geometría, roles, requisitos u objetivo. Aplicar guarda un snapshot previo y permite «Volver atrás».
+- Forja no envía mensajes a ninguna IA; el panel lo indica. Responder, adjuntar marcas o fotos y resolver no piden clave; preparar, aplicar, restaurar y cambiar geometría o piezas protegidas siguen pidiéndola.
+
+### Added (indicaciones por MCP)
+
+- Herramienta `responder_indicacion` para registrar la interpretación, una pregunta o un mensaje del agente en una indicación. Requiere clave; no cambia la geometría.
+- `preparar_candidato` acepta `indicacion` y `resumen` (máximo 500). `contexto_diseno` devuelve `intents_view`, `marks_detail`, `missing_marks`, `stale` y `loose_marks`.
+
 ### Fixed (selección en Diseño)
 
 - La captura sobre un STL sin grupos resuelve la etiqueta visual «Malla completa» al nombre real de la única pieza. El selector no queda vacío y las regiones se guardan con una pieza válida. En documentos con varias piezas no se adivina una correspondencia desconocida. Verificación real del frontend documentada en `docs/FRONTEND-VERIFICATION.md`.

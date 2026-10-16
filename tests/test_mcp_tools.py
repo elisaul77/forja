@@ -85,6 +85,7 @@ def test_tool_names_match_skill_table():
         "cupon",  # fdm-B
         "rama",
         "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
+        "responder_indicacion",  # unified intents (ADR-0019)
         "preparar_candidato", "candidato_diseno", "trabajo_diseno", "exportar_diseno", "referencia_visual",  # G2
     }
     registradas = {tool.name for tool in mcp_instance._tool_manager.list_tools()}  # noqa: SLF001

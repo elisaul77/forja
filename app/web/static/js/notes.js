@@ -13,6 +13,13 @@ import {
   borrarTrazo,
   actualizarVisibilidadTrazo,
 } from "./api.js?v=11";
+import {
+  createIntent,
+  sendIntentAction,
+  designPiecesOf,
+  resolveDesignPiece,
+  subsamplePoints,
+} from "./design.js?v=5";
 
 // ---------------- Diálogos compartidos (uno solo puede estar abierto a la vez) ----------------
 
@@ -80,6 +87,15 @@ function pedirConfigPizarra() {
   });
 }
 
+/** Aviso en la línea de estado del visor (mismo elemento que usan las herramientas). */
+function avisarFeedback(texto) {
+  const feedback = document.getElementById("fj-feedback");
+  if (feedback) {
+    feedback.hidden = !texto;
+    feedback.textContent = texto;
+  }
+}
+
 // ---------------- Controlador por pestaña ----------------
 
 export class ForjaNotasControlador {
@@ -94,6 +110,10 @@ export class ForjaNotasControlador {
     this.modo = null; // null | "nota" | "pizarra-esperando-cara" | "pizarra-dibujando"
     this._configPizarraPendiente = null;
     this._trazoActual = null;
+    // Indicación a la que se añade la próxima marca (botón "Añadir otra marca").
+    this.targetIntent = null;
+    // Lo llama tabs.js para refrescar el panel Indicaciones tras cada marca.
+    this.alCambiarMarcas = null;
 
     this._alClicar = this._alClicar.bind(this);
     this._alBajarBoton = this._alBajarBoton.bind(this);
@@ -105,6 +125,16 @@ export class ForjaNotasControlador {
     canvas.addEventListener("mousedown", this._alBajarBoton);
     canvas.addEventListener("mousemove", this._alMoverMouse);
     canvas.addEventListener("mouseup", this._alSoltarBoton);
+  }
+
+  // Salir del modo de nota o de pizarra cancela también la indicación objetivo
+  // (botón "Añadir otra marca"): la próxima marca ya no se asociaría.
+  get modo() {
+    return this._modo;
+  }
+  set modo(valor) {
+    this._modo = valor;
+    if (!valor) this.targetIntent = null;
   }
 
   async cargarInicial() {
@@ -216,17 +246,54 @@ export class ForjaNotasControlador {
     }
 
     const referencia = this._referenciaDesdeGolpeo(hit);
-    const comentario = await pedirComentario("Nota para el asistente");
-    if (comentario === null) return;
+    const comentario = await pedirComentario("¿Qué quieres cambiar aquí?");
+    if (comentario === null) {
+      this.targetIntent = null;
+      return;
+    }
+    const destino = this.targetIntent;
     avisar("Guardando nota…");
+    let nota;
     try {
-      await crearNota(this.docId, comentario, referencia);
+      nota = await crearNota(this.docId, comentario, referencia);
       avisar("");
     } catch (error) {
       avisar(`No se pudo guardar la nota: ${error.message ?? error}`);
       return;
     }
     await this.recargar();
+    await this._vincularMarca(nota.n, comentario, {
+      pieza: this._piezaDe(hit.pieceName),
+      puntos: [hit.punto],
+    }, destino);
+  }
+
+  /** Nombre canónico de la pieza del golpeo; `undefined` (se omite) si no es inequívoco. */
+  _piezaDe(nombreVisor) {
+    return resolveDesignPiece(designPiecesOf(this.docId), nombreVisor || this.viewer.selectedPiece) ?? undefined;
+  }
+
+  /** Une una marca recién guardada a una indicación: una nueva, o la objetivo
+   * si el usuario pulsó "Añadir otra marca". Nunca falla en silencio: la
+   * marca ya está guardada aunque la indicación no se cree. */
+  async _vincularMarca(n, texto, { pieza, puntos }, destino = null) {
+    try {
+      if (destino) {
+        await sendIntentAction(this.docId, destino, { action: "attach", marks: [n] });
+      } else {
+        await createIntent(this.docId, {
+          text: texto || "(sin texto)",
+          marks: [n],
+          ...(pieza ? { piece: pieza } : {}),
+          ...(puntos?.length ? { points: subsamplePoints(puntos) } : {}),
+        });
+      }
+    } catch (error) {
+      avisarFeedback(`La marca se guardó, pero la indicación no: ${error.message ?? error}`);
+    }
+    // Una marca de «Añadir otra marca» se consume aunque falle: no queda pendiente en silencio.
+    if (destino) this.targetIntent = null;
+    this.alCambiarMarcas?.();
   }
 
   // ---------------- modo "✏ Pizarra" ----------------
@@ -417,6 +484,8 @@ export class ForjaNotasControlador {
   async _alSoltarBoton(ev) {
     if (this.modo !== "pizarra-dibujando" || ev.button !== 0 || this._trazoActual === null) return;
     const puntos = this._trazoActual;
+    // Antes de salir del modo de pizarra (que borra targetIntent).
+    const destino = this.targetIntent;
     this._trazoActual = null;
     if (puntos.length < 2) {
       this.viewer.mostrarAnotaciones(this.notas, this.trazos);
@@ -424,7 +493,7 @@ export class ForjaNotasControlador {
     }
     const { tipo, comentario } = this._configPizarraPendiente;
     const plano = this.viewer._planoPizarra;
-    await crearTrazo(this.docId, {
+    const trazo = await crearTrazo(this.docId, {
       tipo,
       comentario,
       puntos,
@@ -434,6 +503,12 @@ export class ForjaNotasControlador {
     });
     this._salirDeModoPizarra();
     await this.recargar();
+    // El comentario del diálogo es el texto de la indicación; si está vacío se pregunta una vez.
+    const texto = comentario || (await pedirComentario("¿Qué quieres decir con este trazo?")) || "";
+    await this._vincularMarca(trazo.n, texto, {
+      pieza: this._piezaDe(this.viewer.selectedPiece),
+      puntos,
+    }, destino);
   }
 
   // ---------------- panel lateral: notas ----------------
@@ -441,85 +516,24 @@ export class ForjaNotasControlador {
   async alternarVisibilidadNota(notaId, visible) {
     await actualizarVisibilidadNota(this.docId, notaId, visible);
     await this.recargar();
+    this.alCambiarMarcas?.();
   }
 
   async eliminarNota(notaId) {
     await borrarNota(this.docId, notaId);
     await this.recargar();
+    this.alCambiarMarcas?.();
   }
 
   async alternarVisibilidadTrazo(trazoId, visible) {
     await actualizarVisibilidadTrazo(this.docId, trazoId, visible);
     await this.recargar();
+    this.alCambiarMarcas?.();
   }
 
   async eliminarTrazo(trazoId) {
     await borrarTrazo(this.docId, trazoId);
     await this.recargar();
-  }
-}
-
-// ---------------- panel lateral compartido: render de la lista de notas ----------------
-
-const panelNotas = document.getElementById("fj-panel-notas");
-
-export function renderizarPanelNotas(controlador) {
-  panelNotas.textContent = "";
-  const items = [...controlador.notas, ...controlador.trazos];
-  if (items.length === 0) {
-    const vacio = document.createElement("div");
-    vacio.className = "fj-panel-lateral__vacio";
-    vacio.textContent = "Sin notas ni trazos todavía. Usa Añadir nota o Dibujar indicación en el visor.";
-    panelNotas.appendChild(vacio);
-    return;
-  }
-  for (const item of items) {
-    const esNota = item.tipo === "nota";
-    const fila = document.createElement("div");
-    fila.className = "fj-item-nota";
-
-    const cuerpo = document.createElement("div");
-    cuerpo.className = "fj-item-nota__cuerpo";
-    const comentario = document.createElement("div");
-    comentario.className = "fj-item-nota__comentario";
-    comentario.textContent = item.comentario || "(sin comentario)";
-    cuerpo.appendChild(comentario);
-
-    const meta = document.createElement("div");
-    meta.className = "fj-item-nota__meta";
-    meta.textContent = esNota ? "📌 nota" : `✏ ${item.tipo} · ${item.puntos_resumen.n_puntos} pts`;
-    cuerpo.appendChild(meta);
-
-    if (item.referencia_perdida) {
-      const perdida = document.createElement("div");
-      perdida.className = "fj-item-nota__perdida";
-      perdida.textContent = "⚠ referencia perdida (la geometría cambió)";
-      cuerpo.appendChild(perdida);
-    }
-    fila.appendChild(cuerpo);
-
-    const acciones = document.createElement("div");
-    acciones.className = "fj-item-nota__acciones";
-    const btnVisible = document.createElement("button");
-    btnVisible.type = "button";
-    btnVisible.className = "fj-btn fj-btn--ghost";
-    btnVisible.textContent = item.visible ? "Ocultar" : "Mostrar";
-    btnVisible.addEventListener("click", () =>
-      esNota
-        ? controlador.alternarVisibilidadNota(item.n, !item.visible)
-        : controlador.alternarVisibilidadTrazo(item.n, !item.visible),
-    );
-    const btnBorrar = document.createElement("button");
-    btnBorrar.type = "button";
-    btnBorrar.className = "fj-btn fj-btn--ghost";
-    btnBorrar.textContent = "Borrar";
-    btnBorrar.addEventListener("click", () =>
-      esNota ? controlador.eliminarNota(item.n) : controlador.eliminarTrazo(item.n),
-    );
-    acciones.appendChild(btnVisible);
-    acciones.appendChild(btnBorrar);
-    fila.appendChild(acciones);
-
-    panelNotas.appendChild(fila);
+    this.alCambiarMarcas?.();
   }
 }

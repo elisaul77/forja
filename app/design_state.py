@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 import hashlib
+import json
 import os
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
 KEY = "design.json"
@@ -42,14 +43,33 @@ class Region(Model):
     radius_mm: FiniteFloat = Field(default=5, gt=0, le=1000)
 
 
+# Id of a note/stroke in `{doc}.notas.json` (linked, never copied).
+Mark = Annotated[str, Field(min_length=1, max_length=64)]
+
+
+class Message(Model):
+    """One entry of an intent's log. Data, not a chat transport: nothing is
+    sent to an AI from here; the agent reads it when it reads Forja."""
+
+    author: Literal["user", "agent"]
+    text: str = Field(max_length=4000)
+    created: str = Field(max_length=40)
+
+
 class Intent(Model):
     images: list[str] = Field(default_factory=list, max_length=6)
     id: str = Field(min_length=1, max_length=64)
     text: str = Field(max_length=4000)
     region: Region | None = None
     direction: tuple[FiniteFloat, FiniteFloat, FiniteFloat] | None = None
-    status: Literal["pending", "accepted", "resolved"] = "pending"
+    # Stored status is only what a person/agent set explicitly; the displayed
+    # attention state is derived in design_routes.read().
+    status: Literal["pending", "accepted", "resolved", "dismissed"] = "pending"
     source: Literal["user", "agent", "measurement", "reference", "assumption"] = "user"
+    marks: list[Mark] = Field(default_factory=list, max_length=64)
+    interpretation: str | None = Field(default=None, max_length=4000)
+    question: str | None = Field(default=None, max_length=2000)
+    messages: list[Message] = Field(default_factory=list, max_length=100)
 
 
 class Requirement(Model):
@@ -96,6 +116,17 @@ def load(doc_id):
 
 def digest(state):
     return hashlib.sha256(state.model_dump_json().encode()).hexdigest()[:32]
+
+
+def constraints_digest(state):
+    """Digest of the design EXCEPT the intent conversation (`intents`).
+    Roles, locks, requirements, objective and postures keep guarding a
+    prepared candidate (an objective PUT still 409s the apply, as before);
+    replies, attachments and agent readings never do."""
+    canonical = json.dumps(
+        state.model_dump(exclude={"intents"}), sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()[:32]
 
 
 def save(doc_id, state):

@@ -41,6 +41,42 @@ class Prepare(ds.Model):
     state_revision: str
     request_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     operations: list[Operation] = Field(min_length=1, max_length=16)
+    # Optional link to an existing intent and the agent's human explanation.
+    intent: str | None = Field(default=None, min_length=1, max_length=64)
+    summary: str = Field(default="", max_length=500)
+
+
+class IntentCreate(ds.Model):
+    """Open route (like notes): the user explains a change, optionally
+    linking marks (notes/strokes ids) and a region of a piece."""
+
+    text: str = Field(default="", max_length=4000)
+    marks: list[ds.Mark] = Field(default_factory=list, max_length=64)
+    piece: str | None = Field(default=None, min_length=1, max_length=128)
+    points: list[tuple[FiniteFloat, FiniteFloat, FiniteFloat]] = Field(
+        default_factory=list, max_length=256
+    )
+    radius_mm: FiniteFloat = Field(default=5, gt=0, le=1000)
+    images: list[str] = Field(default_factory=list, max_length=6)
+
+
+class IntentUserAction(ds.Model):
+    """Open route: what the user does with an intent. Only the user marks an
+    intent resolved or dismissed."""
+
+    action: Literal["reply", "attach", "resolve", "reopen", "dismiss", "edit"]
+    text: str | None = Field(default=None, max_length=4000)
+    marks: list[ds.Mark] = Field(default_factory=list, max_length=64)
+    images: list[str] = Field(default_factory=list, max_length=6)
+
+
+class IntentAgent(ds.Model):
+    """Token-protected route for the agent: its reading of an intent. A
+    question is replaced on every call (omitted = answered/cleared)."""
+
+    interpretation: str | None = Field(default=None, max_length=4000)
+    question: str | None = Field(default=None, max_length=2000)
+    message: str | None = Field(default=None, max_length=4000)
 
 
 class Save(ds.Model):

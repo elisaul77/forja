@@ -1,9 +1,9 @@
-import { renderDesign, designHit, disposeDesign } from "./design.js?v=3";
+import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor } from "./design.js?v=5";
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=design1-14";
-import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=16";
+import { ForjaViewer } from "./viewer.js?v=design1-16";
+import { ForjaNotasControlador } from "./notes.js?v=18";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
@@ -42,14 +42,14 @@ export class TabManager {
     // Panel lateral (Fase 4), compartido entre pestañas: muestra siempre
     // los datos de la pestaña activa.
     this.panel = document.getElementById("fj-panel-lateral");
-    this.panelSeccionNotas = document.getElementById("fj-panel-notas");
     this.panelSeccionHistorial = document.getElementById("fj-panel-historial");
     this.panelSeccionRamas = document.getElementById("fj-panel-ramas");
     this.panelSeccionParametros = document.getElementById("fj-panel-parametros");
     this.panelSeccionEnsamble = document.getElementById("fj-panel-ensamble");
     this.panelSeccionPiezas = document.getElementById("fj-panel-piezas");
     this.panelSeccionDesign = document.getElementById("fj-panel-design");
-    this.panelActivo = "notas";
+    // Indicaciones (antes «Diseño») es la lista única: notas, trazos y propuestas.
+    this.panelActivo = "design";
     document.getElementById("fj-panel-lateral-cerrar").addEventListener("click", () => {
       this.panel.hidden = true;
       this.panelReturnFocus?.focus();
@@ -72,7 +72,6 @@ export class TabManager {
   _mostrarSeccionPanel(seccion) {
     this.panelActivo = seccion;
     this.panelSeccionDesign.hidden = seccion !== "design";
-    this.panelSeccionNotas.hidden = seccion !== "notas";
     this.panelSeccionHistorial.hidden = seccion !== "historial";
     // Historial 2.0: «Ramas» vive en el cajón de la vista Historial.
     this.panel.classList.toggle("fj-panel-lateral--historial", seccion === "historial");
@@ -87,7 +86,7 @@ export class TabManager {
 
   abrirPanel(seccion) {
     if (!this.activeId) return;
-    if (seccion === "ramas") seccion = "historial";
+    seccion = panelSectionFor(seccion);
     if (this.panel.hidden) this.panelReturnFocus = document.activeElement;
     this.panel.hidden = false;
     this._mostrarSeccionPanel(seccion);
@@ -99,7 +98,6 @@ export class TabManager {
     const entrada = this.tabs.get(this.activeId);
     if (!entrada) return;
     if (this.panelActivo === "design") renderDesign(entrada, this.panelSeccionDesign);
-    renderizarPanelNotas(entrada.notas);
     renderizarPanelHistorial(entrada.historial);
     if (this.panelActivo === "historial") {
       renderizarHistorial2(entrada.h2);
@@ -158,6 +156,7 @@ export class TabManager {
     viewer.onDesignHit = hit => { if(this.activeId === ficha.id && this.panelActivo === "design") designHit(this.tabs.get(ficha.id), hit); };
 
     const notas = new ForjaNotasControlador(viewer, ficha.id);
+    notas.alCambiarMarcas = () => this._refrescarIndicaciones(ficha.id);
     viewer.canSelectPiece = () => !notas.modo && animation.mode === "cad";
     viewer.onPieceSelection = () => {
       if (this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "piezas") {
@@ -214,8 +213,8 @@ export class TabManager {
     const btnPanel = document.createElement("button");
     btnPanel.type = "button";
     btnPanel.className = "fj-btn";
-    btnPanel.textContent = "Notas e historial";
-    btnPanel.addEventListener("click", () => this.abrirPanel("notas"));
+    btnPanel.textContent = "Indicaciones";
+    btnPanel.addEventListener("click", () => this.abrirPanel("design"));
     const btnParametros = document.createElement("button");
     btnParametros.type = "button";
     btnParametros.className = "fj-btn";
@@ -365,6 +364,13 @@ export class TabManager {
 
     const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, animation, btnParametros,
       revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
+    // Acciones del panel Indicaciones: mismos modos que los botones del visor.
+    entry.designActions = {
+      pointMode: () => { if (notas.modo !== "nota") btnNota.click(); },
+      drawMode: () => btnPizarra.click(),
+    };
+    // Tras deshacer una propuesta (restaurar), recarga la pestaña entera.
+    entry.alRestaurar = registro => this._alRestaurar(ficha.id, registro);
     entry.materiales = {
       materiales: {},
       guardar: async cambios => {
@@ -460,6 +466,13 @@ export class TabManager {
       entrada.localRefresh = false;
       entrada.scheduler.flush(true);
     }
+  }
+
+  /** Tras crear o cambiar una marca: refresca Indicaciones si está a la vista. */
+  _refrescarIndicaciones(docId) {
+    const entry = this.tabs.get(docId);
+    if (!entry || this.activeId !== docId || this.panel.hidden || this.panelActivo !== "design") return;
+    refreshDesign(entry);
   }
 
   /** Callback del panel de parámetros tras un re-cálculo exitoso: nueva
@@ -626,8 +639,7 @@ export class TabManager {
     await Promise.allSettled(tasks);
     entry.panelLoading = false;
     if (this.activeId === docId && !this.panel.hidden && this.tabs.get(docId) === entry &&
-        !(this.panelActivo === "parametros" && entry.parametros.ocupado()) &&
-        !(this.panelActivo === "notas" && entry.notas.ocupado())) this._renderizarPanelPestanaActiva();
+        !(this.panelActivo === "parametros" && entry.parametros.ocupado())) this._renderizarPanelPestanaActiva();
     if (entry.pendingPanels.size) void this._actualizarPaneles(docId);
   }
 

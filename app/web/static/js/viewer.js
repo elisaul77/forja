@@ -464,6 +464,17 @@ export class ForjaViewer {
     this.showDesignLines(points.map(p=>[[p[0]-0.5,p[1],p[2]],[p[0]+0.5,p[1],p[2]]]));
   }
 
+  /** Encuadra la cámara sobre un conjunto de puntos (marcas de una indicación). */
+  focusDesignPoints(points) {
+    if (!points?.length) return;
+    const box = new THREE.Box3().setFromPoints(points.map(p => new THREE.Vector3(...p)));
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    // Radio mínimo: una sola marca no debe dejar la cámara dentro del marcador.
+    const modelRadius = this.mesh?.geometry?.boundingSphere?.radius ?? 0;
+    sphere.radius = Math.max(sphere.radius, 30, modelRadius * 0.3);
+    this.ajustarVista(this.direccionHaciaCamara(), sphere);
+  }
+
   setWireframe(enabled) {
     this.wireframe = enabled;
     if (this.mesh) this.mesh.material.wireframe = enabled;

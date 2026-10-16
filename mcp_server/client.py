@@ -823,6 +823,14 @@ def design_request(method: str, path: str, payload: dict | None = None) -> dict:
 
 
 @_heavy_operation
+def responder_indicacion(doc_id: str, indicacion_id: str, payload: dict[str, Any]) -> dict:
+    """Agent route (token): interpretation/question/message of one intent."""
+    path = (f"/documentos/{urllib.parse.quote(doc_id, safe='')}/design/intents/"
+            f"{urllib.parse.quote(indicacion_id, safe='')}/agent")
+    return design_request('POST', path, payload)
+
+
+@_heavy_operation
 def design_image(doc_id: str, image_id: str):
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         response=c.get(f'/documentos/{urllib.parse.quote(doc_id,safe="")}/design/images/{urllib.parse.quote(image_id,safe="")}')

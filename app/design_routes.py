@@ -7,6 +7,8 @@ import hashlib, json
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response, FileResponse
+from datetime import datetime, timezone
+import uuid
 import auth, documents, parametros, ramas, versioning, eventos, notes
 import design_state as ds
 import design_geometry as geo
@@ -22,7 +24,21 @@ from threading import Lock
 _cache_lock = Lock()
 
 
-from design_contracts import Save, Query, Batch, Operation, Prepare
+from design_contracts import (
+    Save,
+    Query,
+    Batch,
+    Operation,
+    Prepare,
+    IntentCreate,
+    IntentUserAction,
+    IntentAgent,
+)
+
+MAX_INTENTS = 256
+MAX_MESSAGES = 100
+MAX_MARKS = 64
+MAX_IMAGES = 6
 
 
 def capabilities():
@@ -73,11 +89,114 @@ def get_capabilities():
     return capabilities()
 
 
+def _ahora() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _candidatos(doc_id):
+    root = ops.directory(doc_id)
+    if not root.exists():
+        return []
+    return [json.loads(p.read_text()) for p in sorted(root.glob("*/manifest.json"))]
+
+
+def _estado_candidato(c, rev) -> str:
+    """prepared | applied | reverted. An applied candidate is only "applied"
+    while the document is still at the revision it produced; after a restore
+    or any later geometry change it is "reverted" (never resolved)."""
+    if c["state"] == "applied" and c.get("applied_revision") != rev:
+        return "reverted"
+    return c["state"]
+
+
+def _atencion(intent, vinculados, rev):
+    """Attention shown to the user, derived from stored data only. Stored
+    status is what a person or agent set explicitly; the rest is derived."""
+    if intent.status == "dismissed":
+        return "dismissed"
+    if intent.status in ("resolved", "accepted"):
+        return "resolved"
+    ultimo = intent.messages[-1] if intent.messages else None
+    if ultimo is not None and ultimo.author == "user":
+        # A user reply newer than every linked candidate is waiting for the agent.
+        if all(ultimo.created > c.get("created", "") for c in vinculados):
+            return "waiting_agent"
+    estados = [_estado_candidato(c, rev) for c in vinculados]
+    if "applied" in estados:
+        return "applied"
+    if "prepared" in estados:
+        return "proposal"
+    if "reverted" in estados:
+        return "reverted"
+    if intent.question:
+        return "question"
+    if intent.interpretation:
+        return "understood"
+    return "waiting_agent"
+
+
+def _candidato_obsoleto(c, rev, estado) -> bool:
+    """A prepared candidate is stale when the geometry moved or its checks'
+    constraints (roles/requirements) changed. Legacy manifests without
+    `constraints_revision` fall back to the full state revision."""
+    if c["state"] != "prepared":
+        return False
+    if c["revision"] != rev:
+        return True
+    if "constraints_revision" in c:
+        return c["constraints_revision"] != ds.constraints_digest(estado)
+    return c.get("state_revision") != ds.digest(estado)
+
+
+def _vista_indicacion(intent, rev, estado, parts, marcas, candidatos):
+    por_id = {m["n"]: m for m in marcas}
+    vinculados = [c for c in candidatos if c.get("intent") == intent.id]
+    region = intent.region
+    stale = bool(region) and (region.revision != rev or region.piece not in parts)
+    stale = stale or any(
+        por_id[m]["referencia_perdida"] for m in intent.marks if m in por_id
+    )
+    return {
+        "id": intent.id,
+        "text": intent.text,
+        "status": intent.status,
+        "attention": _atencion(intent, vinculados, rev),
+        "stale": stale,
+        "piece": region.piece if region else None,
+        "region": region.model_dump() if region else None,
+        "marks": list(intent.marks),
+        "marks_detail": [por_id[m] for m in intent.marks if m in por_id],
+        "missing_marks": [m for m in intent.marks if m not in por_id],
+        "images": list(intent.images),
+        "interpretation": intent.interpretation,
+        "question": intent.question,
+        "messages": [m.model_dump() for m in intent.messages],
+        "candidates": [
+            {
+                "id": c["id"],
+                "state": _estado_candidato(c, rev),
+                "summary": c.get("summary", ""),
+                "checks": {
+                    k: c["checks"][k]
+                    for k in ("passed", "failed", "not_checked", "approval")
+                },
+                "before_snapshot": c.get("before_snapshot"),
+                "stale": _candidato_obsoleto(c, rev, estado),
+                "created": c.get("created"),
+            }
+            for c in vinculados
+        ],
+    }
+
+
 def read(doc_id):
     ops.current(doc_id)
     s = ds.load(doc_id)
     rev = documents.calcular_revision(doc_id)
     parts = geo.objects(doc_id)
+    marcas = notes.resumen(doc_id, detalle=False)
+    candidatos = _candidatos(doc_id)
+    enlazadas = {m for i in s.intents for m in i.marks}
     return {
         "document": doc_id,
         "revision": rev,
@@ -96,7 +215,11 @@ def read(doc_id):
             for i in s.intents
             if i.region and (i.region.revision != rev or i.region.piece not in parts)
         ],
-        "annotations": notes.resumen(doc_id, detalle=False),
+        "annotations": marcas,
+        "intents_view": [
+            _vista_indicacion(i, rev, s, parts, marcas, candidatos) for i in s.intents
+        ],
+        "loose_marks": [m for m in marcas if m["n"] not in enlazadas],
         "images": [
             {"id": key, "url": f"/documentos/{doc_id}/design/images/{key}"}
             for key in sorted({key for item in s.intents for key in item.images})
@@ -282,18 +405,29 @@ def query_route(doc_id: str, body: Batch):
 )
 def prepare_route(doc_id: str, body: Prepare):
     try:
-        return ops.prepare(doc_id, body)
+        result = ops.prepare(doc_id, body)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    eventos.publicar(
+        "anotaciones_actualizadas", doc_id, documents.calcular_revision(doc_id),
+        ["design", "historial"],
+    )
+    return result
 
 
 @router.get("/documentos/{doc_id}/design/candidates")
 def list_candidates(doc_id: str):
-    ops.current(doc_id)
-    root = ops.directory(doc_id)
+    rev, _ = ops.current(doc_id)
+    estado = ds.load(doc_id)
     return {
         "candidates": [
-            json.loads(p.read_text()) for p in sorted(root.glob("*/manifest.json"))
+            {
+                **c,
+                "manifest_state": c["state"],
+                "state": _estado_candidato(c, rev),
+                "stale": _candidato_obsoleto(c, rev, estado),
+            }
+            for c in _candidatos(doc_id)
         ]
     }
 
@@ -315,9 +449,14 @@ def preview(doc_id: str, key: str):
 )
 def apply_route(doc_id: str, key: str):
     try:
-        return ops.apply(doc_id, key)
+        result = ops.apply(doc_id, key)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+    eventos.publicar(
+        "anotaciones_actualizadas", doc_id, documents.calcular_revision(doc_id),
+        ["design", "historial"],
+    )
+    return result
 
 
 @router.delete(
@@ -337,6 +476,10 @@ def discard(doc_id: str, key: str):
                 409, "Candidato aplicado: usa el historial para restaurar"
             )
         shutil.rmtree(p)
+    eventos.publicar(
+        "anotaciones_actualizadas", doc_id, documents.calcular_revision(doc_id),
+        ["design", "historial"],
+    )
     return {"discarded": key}
 
 
@@ -409,3 +552,172 @@ def reference_image(doc_id: str, key: str):
     return FileResponse(
         path, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"}
     )
+
+
+# ------------------------------------------------------------ intents (ADR-0019)
+# The user routes are token-free like notes/strokes: explaining an intent is
+# editor content, bounded by the Pydantic models. Only /agent and every
+# geometry-changing route keep `auth.requiere_token`.
+
+
+def _doc_existe(doc_id: str) -> None:
+    if not notes._existe_documento(doc_id):
+        raise HTTPException(404, "documento no encontrado")
+
+
+def _buscar_indicacion(design, iid: str):
+    intent = next((i for i in design.intents if i.id == iid), None)
+    if intent is None:
+        raise HTTPException(404, "Indicación no encontrada")
+    return intent
+
+
+def _marcas_validas(doc_id: str, marcas: list[str], design, iid: str | None) -> None:
+    datos = notes.cargar(doc_id)
+    existentes = {x["n"] for x in datos["notas"] + datos["trazos"]}
+    for marca in marcas:
+        if marca not in existentes:
+            raise HTTPException(422, f"Marca inexistente: {marca}")
+        if any(i.id != iid and marca in i.marks for i in design.intents):
+            raise HTTPException(409, "La marca ya pertenece a otra indicación")
+
+
+def _mutar_indicacion(doc_id: str, mensaje: str, cambiar) -> dict:
+    """Snapshot BEFORE the change (like PUT /design). `cambiar` validates and
+    mutates the loaded state in place; nothing is written if it raises."""
+    with parametros.bloqueo(doc_id):
+        rev, _ = ops.current(doc_id)
+        design = ds.load(doc_id)
+        cambiar(design)
+        ramas.asegurar(doc_id)
+        versioning.crear_snapshot(
+            doc_id,
+            mensaje,
+            ramas._snapshot_actual(doc_id, documents._files[doc_id]),
+        )
+        ds.save(doc_id, design)
+        eventos.publicar(
+            "anotaciones_actualizadas", doc_id, rev, ["design", "historial"]
+        )
+        return read(doc_id)
+
+
+@router.post("/documentos/{doc_id}/design/intents")
+def crear_indicacion(doc_id: str, body: IntentCreate) -> dict:
+    _doc_existe(doc_id)
+    if not body.text.strip() and not body.marks:
+        raise HTTPException(422, "Escribe la indicación o marca algo en el modelo")
+    if body.points and not body.piece:
+        raise HTTPException(422, "Una región necesita pieza")
+    iid = uuid.uuid4().hex[:12]
+
+    def cambiar(design):
+        if len(design.intents) >= MAX_INTENTS:
+            raise HTTPException(422, "Demasiadas indicaciones en este documento")
+        marcas = list(dict.fromkeys(body.marks))
+        if len(marcas) > MAX_MARKS:
+            raise HTTPException(422, "Demasiadas marcas en una indicación")
+        _marcas_validas(doc_id, marcas, design, None)
+        for key in body.images:
+            try:
+                existe = design_assets.path(doc_id, key).exists()
+            except ValueError:
+                existe = False
+            if not existe:
+                raise HTTPException(422, "Referencia visual inexistente")
+        region = None
+        if body.piece:
+            if body.piece not in geo.objects(doc_id):
+                raise HTTPException(422, "Pieza desconocida")
+            region = ds.Region(
+                piece=body.piece,
+                revision=ops.current(doc_id)[0],
+                points=body.points,
+                radius_mm=body.radius_mm,
+            )
+        design.intents.append(
+            ds.Intent(
+                id=iid,
+                text=body.text.strip(),
+                region=region,
+                marks=marcas,
+                images=body.images,
+            )
+        )
+
+    result = _mutar_indicacion(doc_id, "crear indicación de diseño", cambiar)
+    return {**result, "created_intent": iid}
+
+
+@router.post("/documentos/{doc_id}/design/intents/{iid}/user")
+def accion_usuario(doc_id: str, iid: str, body: IntentUserAction) -> dict:
+    _doc_existe(doc_id)
+    accion = body.action
+    texto = (body.text or "").strip()
+    if accion in ("reply", "edit") and not texto:
+        raise HTTPException(422, "Escribe un texto")
+    if accion == "attach" and not (body.marks or body.images):
+        raise HTTPException(422, "Indica al menos una marca o una foto")
+
+    def cambiar(design):
+        intent = _buscar_indicacion(design, iid)
+        if accion == "reply":
+            if len(intent.messages) >= MAX_MESSAGES:
+                raise HTTPException(422, "Demasiados mensajes en esta indicación")
+            intent.messages.append(
+                ds.Message(author="user", text=texto, created=_ahora())
+            )
+        elif accion == "edit":
+            intent.text = texto
+        elif accion == "attach":
+            marcas = list(dict.fromkeys(intent.marks + body.marks))
+            if len(marcas) > MAX_MARKS:
+                raise HTTPException(422, "Demasiadas marcas en una indicación")
+            _marcas_validas(doc_id, body.marks, design, iid)
+            fotos = list(dict.fromkeys(intent.images + body.images))
+            if len(fotos) > MAX_IMAGES:
+                raise HTTPException(422, "Máximo 6 fotos por indicación")
+            for key in body.images:
+                try:
+                    existe = design_assets.path(doc_id, key).exists()
+                except ValueError:
+                    existe = False
+                if not existe:
+                    raise HTTPException(422, "Referencia visual inexistente")
+            intent.marks = marcas
+            intent.images = fotos
+        elif accion == "resolve":
+            intent.status = "resolved"
+        elif accion == "dismiss":
+            intent.status = "dismissed"
+        elif accion == "reopen":
+            intent.status = "pending"
+
+    return _mutar_indicacion(doc_id, f"indicación {iid}: {accion}", cambiar)
+
+
+@router.post(
+    "/documentos/{doc_id}/design/intents/{iid}/agent",
+    dependencies=[Depends(auth.requiere_token)],
+)
+def respuesta_agente(doc_id: str, iid: str, body: IntentAgent) -> dict:
+    _doc_existe(doc_id)
+    interpretacion = (body.interpretation or "").strip() or None
+    pregunta = (body.question or "").strip() or None
+    mensaje = (body.message or "").strip() or None
+    if not (interpretacion or pregunta or mensaje):
+        raise HTTPException(422, "Falta interpretación, pregunta o mensaje")
+
+    def cambiar(design):
+        intent = _buscar_indicacion(design, iid)
+        if len(intent.messages) >= MAX_MESSAGES:
+            raise HTTPException(422, "Demasiados mensajes en esta indicación")
+        if interpretacion is not None:
+            intent.interpretation = interpretacion
+        intent.question = pregunta
+        texto = mensaje or "\n".join(x for x in (interpretacion, pregunta) if x)
+        intent.messages.append(
+            ds.Message(author="agent", text=texto, created=_ahora())
+        )
+
+    return _mutar_indicacion(doc_id, f"respuesta del agente a indicación {iid}", cambiar)

@@ -94,7 +94,7 @@ def test_shared_workspace_over_real_mcp_http(tmp_path):
                         "clientInfo": {"name": "workspace-test", "version": "1"},
                     },
                 )
-                assert len(rpc("tools/list", {})["tools"]) == 30
+                assert len(rpc("tools/list", {})["tools"]) == 31
                 uploaded = c.post(
                     "/documentos",
                     files={
@@ -108,8 +108,12 @@ def test_shared_workspace_over_real_mcp_http(tmp_path):
                 )
                 assert uploaded.status_code == 200, uploaded.text
                 doc = uploaded.json()["id"]
+                intent = c.post(f"/documentos/{doc}/design/intents", json={"text": "Mover en X"})
+                assert intent.status_code == 200, intent.text
+                intent_id = intent.json()["created_intent"]
                 context = call("contexto_diseno", {"id": doc})
                 piece = context["pieces"][0]["name"]
+                assert context["intents_view"][0]["attention"] == "waiting_agent"
                 context["design"]["objective"] = "Flujo real MCP"
                 context = call(
                     "guardar_diseno",
@@ -130,6 +134,16 @@ def test_shared_workspace_over_real_mcp_http(tmp_path):
                     },
                 )
                 assert report["results"][0]["result"]["closed"]
+                answered = call(
+                    "responder_indicacion",
+                    {
+                        "id": doc,
+                        "indicacion": intent_id,
+                        "interpretacion": "Desplazar 1 mm en X",
+                    },
+                )
+                assert answered["intents_view"][0]["attention"] == "understood"
+                context = answered  # state_revision moved with the reply
                 candidate = call(
                     "preparar_candidato",
                     {
@@ -137,6 +151,8 @@ def test_shared_workspace_over_real_mcp_http(tmp_path):
                         "revision": context["revision"],
                         "state_revision": context["state_revision"],
                         "request_id": "wire",
+                        "indicacion": intent_id,
+                        "resumen": "Desplaza 1 mm en X",
                         "operations": [
                             {
                                 "kind": "transform",
