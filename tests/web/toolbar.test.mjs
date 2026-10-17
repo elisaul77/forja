@@ -83,7 +83,7 @@ test('catálogo 24a: acciones EXISTS/UI_ONLY y placeholders de fases F18-F23 pre
     assert.ok(porId(id), `falta ${id}`);
   }
   assert.equal(porId('ens-barrido').fase, 'F18');
-  assert.equal(porId('inspec-medir').fase, 'F21');
+  assert.equal(porId('inspec-medir').estado, 'listo');
   assert.equal(porId('planos-generar').fase, 'F22');
 });
 
@@ -109,9 +109,12 @@ test('habilitación: sin documento, STL, sin selección y próximas', () => {
   assert.match(stl.motivo, /B-rep/);
   assert.equal(estadoAccion(soloBrep, { documento: DOC_STEP, seleccion: null }).habilitada, true);
 
+  // Medir (F21) abre el panel Medidas: necesita documento, no pieza.
   const medir = estadoAccion(porId('inspec-medir'), { documento: DOC_STEP, seleccion: null });
-  assert.equal(medir.habilitada, false);
-  assert.equal(medir.motivo, 'Próximamente · F21');
+  assert.equal(medir.habilitada, true);
+  const medirSinDoc = estadoAccion(porId('inspec-medir'), { documento: null, seleccion: null });
+  assert.equal(medirSinDoc.habilitada, false);
+  assert.match(medirSinDoc.motivo, /Abre un documento/);
 });
 
 test('tooltip: etiqueta con atajo, efecto y motivo en líneas separadas', () => {
