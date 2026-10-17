@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import trimesh
@@ -166,6 +166,13 @@ def _tamano(forma: Any, idx: int) -> float:
     return hi[idx] - lo[idx]
 
 
+def _volumen_teselado(forma: Any, presupuesto: Presupuesto) -> float:
+    """Volumen de malla fina (F24b) cobrado al presupuesto. Gastar antes de teselar
+    hace que el plazo agotado corte antes de la segunda malla (422 por _Agotado)."""
+    presupuesto.gastar(1)
+    return km.volumen_malla(forma)
+
+
 def _cap_brep(forma: Any) -> None:
     caras = len(list(forma.faces()))
     if caras > MAX_BREP_FACES:
@@ -174,18 +181,22 @@ def _cap_brep(forma: Any) -> None:
 
 def _check_result(
     antes: Any, despues: Any, *, permitidos: set[int], solidos: int, delta_volumen: float,
-    volumen: Any = None,
+    volumen_antes: float | None = None, medir_despues: Callable[[Any], float] | None = None,
 ) -> None:
     """Refuses any result that is not valid, that changed the solid count, whose
     volume change differs from the analytic one, or whose bbox moved outside the
-    axes allowed to change. `volumen` mide un cuerpo (por defecto el B-rep)."""
+    axes allowed to change. Por defecto mide con el B-rep; `volumen_antes` y
+    `medir_despues` permiten usar la malla fina (`_scale_brep`). La medida del
+    resultado solo se calcula si pasa las comprobaciones de validez y sólidos."""
     if not despues.is_valid:
         raise EditRejected("la geometría resultante no es válida")
     n = len(despues.solids())
     if n != solidos:
         raise EditRejected(f"la pieza pasó de {solidos} a {n} sólidos")
-    medir = volumen or (lambda s: s.volume)
-    real = medir(despues) - medir(antes)
+    if volumen_antes is None:
+        volumen_antes = antes.volume
+    medir = medir_despues or (lambda s: s.volume)
+    real = medir(despues) - volumen_antes
     if abs(real - delta_volumen) > VOLUME_TOLERANCE_REL * abs(delta_volumen) + 1e-6:
         raise EditRejected(
             f"el volumen cambió {real:.3f} mm3 y debía cambiar {delta_volumen:.3f} mm3: la geometría no es la esperada"
@@ -246,12 +257,14 @@ def _scale_brep(forma: Any, cota: dict[str, Any], valor: float, presupuesto: Pre
     factor = valor / _tamano(forma, idx)
     presupuesto.gastar(2)
     nueva = b123d_kernel.scale_axis(forma, eje, factor, lo[idx])
-    # Cuerpo escalado: el volumen de OCC sale ~0,9 % alto (BSPLINE), así que la
-    # comprobación usa la malla fina (F24b).
-    volumen_original = km.volumen_malla(forma)
+    # Cuerpo escalado: el volumen B-rep de OCC sale ~0,9 % alto (BSPLINE), así que
+    # la comprobación compara mallas finas. Cada cuerpo se tesela una sola vez.
+    volumen_original = _volumen_teselado(forma, presupuesto)
     _check_result(
         forma, nueva, permitidos={idx}, solidos=len(forma.solids()),
-        delta_volumen=volumen_original * (factor - 1.0), volumen=km.volumen_malla,
+        delta_volumen=volumen_original * (factor - 1.0),
+        volumen_antes=volumen_original,
+        medir_despues=lambda s: _volumen_teselado(s, presupuesto),
     )
     medido = _tamano(nueva, idx)
     if abs(medido - valor) > TOLERANCE_MM:

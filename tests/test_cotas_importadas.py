@@ -474,3 +474,34 @@ def test_resolver_geometrico_rechaza_dos_cotas_y_ids_desconocidos():
         cotas.resolve_geometric(listado, {"x": 50})
     cota, valor = cotas.resolve_geometric(listado, {"tamano_total:x:40.000": 50})
     assert cota["eje"] == "x" and valor == 50.0
+
+
+def test_escalar_eje_tesela_una_vez_por_cuerpo_y_reutiliza_el_volumen(monkeypatch):
+    # F24b (revision): el volumen de malla del cuerpo original se calcula una sola
+    # vez; se reutiliza para la cifra "antes" de la comprobacion (2 teselaciones).
+    from checks.barrido import Presupuesto
+    from kernel import mesh as km
+
+    real = km.volumen_malla
+    llamadas = []
+
+    def contar(shape):
+        llamadas.append(shape)
+        return real(shape)
+
+    monkeypatch.setattr(km, "volumen_malla", contar)
+    cota = {"id": "tamano_total:x:15.000", "tipo": "tamano_total", "eje": "x",
+            "valor_mm": 15.0, "operacion": "escalar_eje"}
+    cotas_geometria._scale_brep(Cylinder(5, 10), cota, 15.0, Presupuesto(2000, 25.0))
+    assert len(llamadas) == 2
+
+
+def test_escalar_eje_cobra_la_teselacion_al_presupuesto():
+    # F24b (revision): teselar cuesta evaluaciones del Presupuesto de la edicion.
+    # Con 2 evaluaciones solo caben el escalado; la malla debe agotarlo.
+    from checks.barrido import Presupuesto, _Agotado
+
+    cota = {"id": "tamano_total:x:15.000", "tipo": "tamano_total", "eje": "x",
+            "valor_mm": 15.0, "operacion": "escalar_eje"}
+    with pytest.raises(_Agotado):
+        cotas_geometria._scale_brep(Cylinder(5, 10), cota, 15.0, Presupuesto(2, 25.0))

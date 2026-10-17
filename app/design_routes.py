@@ -443,9 +443,8 @@ def _preview_bundle(p):
     if (p / "geometry.step").is_file():
         shape = b123d_kernel.import_from_step(p / "geometry.step")
         info = b123d_kernel.analyze(shape)
-        # Volumen de malla fina: el B-rep de un cuerpo escalado sale ~0,9 % alto (F24b).
         return piece_mesh.from_step(shape, entries, metadata_available=True,
-                                    bbox=list(info.bbox), volume=km.volumen_malla(shape))
+                                    bbox=list(info.bbox), volume=info.volumen)
     tri = km.load_stl(p / "geometry.stl")
     return piece_mesh.from_stl(tri, bbox=tri.bounds.T.reshape(-1).tolist(),
                                volume=float(abs(tri.volume)), entries=entries)

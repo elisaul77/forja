@@ -460,3 +460,54 @@ def test_preview_piece_bundle(doc):
     size = int.from_bytes(bundle.content[4:8], "little")
     manifest = json.loads(bundle.content[8 : 8 + size])
     assert [p["nombre"] for p in manifest["piezas"]] == [c["pieces"][0]["name"]]
+
+
+def _cilindro_escalado_step(d_tmp):
+    # Cilindro escalado en no uniforme: GTransform lo deja con caras BSPLINE y el
+    # .volume de OCC sale ~0,9 % alto. Es el caso que separa B-rep y malla (F24b).
+    p = d_tmp / "cilindro.step"
+    b123d_kernel.export_to_step(b123d_kernel.scale_axis(Cylinder(5, 10), "x", 1.5, -5.0), p)
+    return ok(client.post("/documentos", files={"file": ("cilindro.step", p.read_bytes())}))["id"]
+
+
+def _aplicar_traslacion(d):
+    c = context(d)
+    candidato = ok(prepare(d, c, key="vol-brep"))
+    return ok(client.post(f"/documentos/{d}/design/candidates/{candidato['id']}/apply", headers=headers()))
+
+
+def test_apply_conserva_el_volumen_brep_y_sobrevive_a_la_recarga(tmp_path, monkeypatch):
+    # F24b (revision): el registro guarda el volumen B-rep (como _analyze, ramas y
+    # solids.json); la malla no se usa al aplicar ni se reimporta el STEP.
+    from kernel import mesh as km
+
+    d = _cilindro_escalado_step(tmp_path)
+    try:
+        llamadas = []
+        monkeypatch.setattr(km, "volumen_malla", lambda *a, **k: llamadas.append(1) or 0.0)
+        _aplicar_traslacion(d)
+        assert llamadas == []
+        vivo = documents._registry[d]["volumen"]
+        assert vivo == pytest.approx(documents._analyze(documents._files[d], ".step")["volumen"], rel=1e-9)
+        documents._registry.pop(d)
+        documents.recargar_documentos()
+        assert documents._registry[d]["volumen"] == pytest.approx(vivo, rel=1e-9)
+    finally:
+        client.delete("/documentos/" + d, headers=headers())
+
+
+def test_comparar_tras_apply_no_marca_cambio_de_volumen(tmp_path):
+    # F24b (revision): un paso aplicado y su rama reactivada no difieren en volumen.
+    d = _cilindro_escalado_step(tmp_path)
+    try:
+        _aplicar_traslacion(d)
+        vivo = documents._registry[d]["volumen"]
+        ok(client.post(f"/documentos/{d}/ramas", json={"nombre": "alta"}, headers=headers()))
+        activada = ok(client.post(f"/documentos/{d}/ramas/alta/activar", headers=headers()))
+        assert activada["volumen"] == pytest.approx(vivo, rel=1e-9)
+        ok(client.post(f"/documentos/{d}/ramas/main/activar", headers=headers()))
+        cmp = ok(client.get(f"/documentos/{d}/comparar", params={"a": "main", "b": "alta"}))
+        assert cmp["geometria_identica"] is True
+        assert cmp["volumen"]["delta"] == pytest.approx(0.0, abs=1e-6)
+    finally:
+        client.delete("/documentos/" + d, headers=headers())

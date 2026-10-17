@@ -9,8 +9,8 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ### Fixed (escala de cuerpos curvos, revisión de 24b)
 
-- Un cilindro escalado en no uniforme dejaba caras BSPLINE y su `.volume` de OCC salía ~0,86 % alto. Ahora el volumen que reporta el diseño (candidato, vista previa de la pieza, registro tras aplicar) y la comprobación de volumen de «Escalar eje» en cotas usan la malla fina (`kernel/mesh.volumen_malla`, 0,001 mm / 0,05 rad). Antes, la cota rechazaba ediciones correctas de cilindros.
-- Pruebas: `test_escala_no_uniforme_de_cilindro_volumen_de_malla` (`tests/test_design_ops_transform.py`) y `test_escalar_eje_acepta_cilindro_y_verifica_volumen_con_malla` (`tests/test_cotas_importadas.py`).
+- Un cilindro escalado en no uniforme dejaba caras BSPLINE y su `.volume` de OCC salía ~0,86 % alto. El volumen que reporta el diseño sigue siendo el B-rep (registro, vista previa, ramas y `solids.json`, igual que antes): así no aparece un cambio de volumen falso al recargar o cambiar de rama. La malla fina (`kernel/mesh.volumen_malla`, 0,001 mm / 0,05 rad) solo se usa en la comprobación de «Escalar eje» en cotas, donde cada cuerpo se tesela una vez y la teselación cuenta en el presupuesto. Antes, la cota rechazaba ediciones correctas de cilindros.
+- Pruebas: `test_escala_no_uniforme_de_cilindro_volumen_de_malla` (`tests/test_design_ops_transform.py`), `test_escalar_eje_acepta_cilindro_y_verifica_volumen_con_malla`, `test_escalar_eje_tesela_una_vez_por_cuerpo_y_reutiliza_el_volumen` y `test_escalar_eje_cobra_la_teselacion_al_presupuesto` (`tests/test_cotas_importadas.py`), y `test_apply_conserva_el_volumen_brep_y_sobrevive_a_la_recarga` y `test_comparar_tras_apply_no_marca_cambio_de_volumen` (`tests/test_design_workspace.py`).
 
 ### Added (barra de herramientas, fase 24b)
 
