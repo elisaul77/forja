@@ -225,8 +225,19 @@ def prepare(doc_id, body):
                 for n, m in after.items()
                 if n in {op.piece for op in body.operations}
             }
-            preview, _ = mesh_parts.combine(list(after.items()))
+            preview, preview_entries = mesh_parts.combine(list(after.items()))
             (p / "preview.stl").write_bytes(km.to_stl_bytes(preview))
+            # Same FJP1 envelope as /malla so the before/after view colours by piece.
+            import piece_mesh
+
+            (p / "preview.piezas").write_bytes(
+                piece_mesh.from_stl(
+                    preview,
+                    bbox=preview.bounds.T.reshape(-1).tolist(),
+                    volume=float(abs(preview.volume)),
+                    entries=preview_entries,
+                )
+            )
             result = {
                 "id": key,
                 "document": doc_id,

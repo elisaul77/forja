@@ -874,11 +874,15 @@ class Workspace {
   }
   /** Sin `act`: lo llaman tanto `_showPreview` como tareas que ya están dentro de `act`. */
   async _fetchPreview(candidate) {
-    const response = candidate.preview_url ? await fetch(candidate.preview_url) : null;
-    if (!response?.ok) throw new Error("Vista previa no disponible");
+    if (!candidate.preview_url) throw new Error("Vista previa no disponible");
+    const comparar = Boolean(this.entry.compararPropuesta);
+    // Con piezas, la vista antes/después colorea solo lo que cambió.
+    const url = comparar ? `${candidate.preview_url}?piezas=1` : candidate.preview_url;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Vista previa no disponible");
     const buffer = await response.arrayBuffer();
     this.previewId = candidate.id;
-    if (this.entry.compararPropuesta) {
+    if (comparar) {
       await this.entry.compararPropuesta(buffer, proposalStates(candidate), {
         lineas: proposalLines(candidate),
         alSalir: () => {

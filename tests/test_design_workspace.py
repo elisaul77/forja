@@ -447,3 +447,16 @@ def test_candidate_rollback_on_publish_error(doc, monkeypatch):
     monkeypatch.setattr(documents, "_analyze", analyze)
     assert documents._files[doc].read_bytes() == before
     assert context(doc)["revision"] == c["revision"]
+
+
+def test_preview_piece_bundle(doc):
+    c = context(doc)
+    candidate = ok(prepare(doc, c, key="bundle"))
+    url = candidate["preview_url"]
+    plain = client.get(url)
+    assert plain.status_code == 200 and not plain.content.startswith(b"FJP1")
+    bundle = client.get(url + "?piezas=1")
+    assert bundle.status_code == 200 and bundle.content.startswith(b"FJP1")
+    size = int.from_bytes(bundle.content[4:8], "little")
+    manifest = json.loads(bundle.content[8 : 8 + size])
+    assert [p["nombre"] for p in manifest["piezas"]] == [c["pieces"][0]["name"]]

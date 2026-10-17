@@ -433,11 +433,14 @@ def list_candidates(doc_id: str):
 
 
 @router.get("/documentos/{doc_id}/design/candidates/{key}/preview")
-def preview(doc_id: str, key: str):
+def preview(doc_id: str, key: str, piezas: bool = False):
     try:
         p, _ = ops.candidate(doc_id, key)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
+    # ?piezas=1: FJP1 bundle with per-piece ranges (older candidates fall back to STL).
+    if piezas and (p / "preview.piezas").is_file():
+        return FileResponse(p / "preview.piezas", media_type="application/octet-stream")
     return FileResponse(
         p / "preview.stl", media_type="model/stl", filename="candidato.stl"
     )
