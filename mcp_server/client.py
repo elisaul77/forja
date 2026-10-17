@@ -133,9 +133,13 @@ def _detalle_estructurado(resp: httpx.Response) -> dict[str, Any]:
     `linea`/`codigo_linea` alongside `mensaje` when the failure could be
     attributed to a specific line in the user's script."""
     try:
-        detalle = resp.json().get("detail", resp.text)
+        cuerpo = resp.json()
     except ValueError:
         return {"mensaje": resp.text}
+    if isinstance(cuerpo, dict) and isinstance(cuerpo.get("mensaje"), str):
+        # F23a (ADR-0023): `{error: true, mensaje}` answers (cota que no sigue al parámetro).
+        return {"mensaje": cuerpo["mensaje"]}
+    detalle = cuerpo.get("detail", resp.text) if isinstance(cuerpo, dict) else resp.text
     if isinstance(detalle, dict):
         return detalle
     return {"mensaje": str(detalle)}

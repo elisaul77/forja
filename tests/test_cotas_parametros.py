@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 
 import auth
 import cotas
+import documents
+import git_store
 from main import app
 from mcp_server import client as mcp_client
 from mcp_server import tools
@@ -30,6 +32,23 @@ _SCRIPT_SIN_USO = (
     "from build123d import Box, Cylinder, Pos\n"
     'PARAMETROS = {"ancho": 40, "alto": 20, "prof": 30}\n'
     'resultado = Box(PARAMS["ancho"], 30, PARAMS["alto"]) - Pos(5, 0, 0) * Cylinder(4, 40)\n'
+)
+
+
+# `prof` is read (PARAMS["prof"]) but the drawn Y size stays at 30 mm: editing it
+# must be refused, because the dimension does not follow its parameter (F23a rev. 1).
+_SCRIPT_LEE_SIN_USAR = (
+    "from build123d import Box, Cylinder, Pos\n"
+    'PARAMETROS = {"ancho": 40, "alto": 20, "prof": 30}\n'
+    'prof = PARAMS["prof"]\n'
+    'resultado = Box(PARAMS["ancho"], 30, PARAMS["alto"]) - Pos(5, 0, 0) * Cylinder(4, 40)\n'
+)
+# Valid for ancho <= 60, raises for bigger values: the generic script-failure path.
+_SCRIPT_FALLA_SI_GRANDE = (
+    "from build123d import Box, Cylinder, Pos\n"
+    'PARAMETROS = {"ancho": {"valor": 40, "min": 10, "max": 80, "unidad": "mm"}, "alto": 20, "prof": 30}\n'
+    'if PARAMS["ancho"] > 60:\n    raise ValueError("ancho fuera de diseno")\n'
+    'resultado = Box(PARAMS["ancho"], PARAMS["prof"], PARAMS["alto"]) - Pos(5, 0, 0) * Cylinder(4, 40)\n'
 )
 
 
@@ -56,6 +75,20 @@ def _cota(listado: dict, tipo: str, eje: str) -> dict:
 def _aplicar(doc_id: str, revision: str | None, cambios: dict, **extra):
     cuerpo = {"revision": revision, "cotas": cambios, **extra}
     return client.post(f"/documentos/{doc_id}/cotas/aplicar", json=cuerpo, headers=_h())
+
+
+def _estado_en_disco(doc_id: str) -> dict[str, bytes]:
+    """Bytes of the document's sidecars and of its git repository (refs, objects,
+    index): a refused edit must leave all of it identical."""
+    import documents as documents_mod
+
+    estado = {
+        f"doc:{ruta.name}": ruta.read_bytes()
+        for ruta in sorted(documents_mod.DOCUMENTOS_DIR.glob(f"{doc_id}*")) if ruta.is_file()
+    }
+    repo = git_store.ruta_repo(doc_id)
+    estado.update({f"git:{ruta.relative_to(repo)}": ruta.read_bytes() for ruta in sorted(repo.rglob("*")) if ruta.is_file()})
+    return estado
 
 
 def _historial(doc_id: str) -> list[dict]:
@@ -123,6 +156,26 @@ def test_resolver_edicion_tope_sin_max_y_dos_cotas_en_una_clave():
     with pytest.raises(cotas.CotaInvalida, match="distintos"):
         cotas.resolver_edicion(dos, {"a": 50, "b": 60})
     assert cotas.resolver_edicion(dos, {"a": 50, "b": 50}) == {"ancho": 50.0}
+
+
+def test_claves_leidas_y_clasificar_sin_lectura_es_solo_lectura():
+    assert cotas.claves_leidas(_SCRIPT_LEE_SIN_USAR) == {"ancho", "alto", "prof"}
+    assert cotas.claves_leidas(_SCRIPT_SIN_USO) == {"ancho", "alto"}
+    assert cotas.claves_leidas(_SCRIPT) == {"ancho", "alto", "prof"}
+    listado = cotas.clasificar([_descriptor(id="a", parametro="alto")], _ESQUEMA, leidas={"ancho"})
+    assert listado[0]["solo_lectura"] is True and listado[0]["operacion"] is None
+    assert listado[0]["razon"] == cotas.razon_valor_no_leida("alto")
+    libre = cotas.clasificar([_descriptor(id="a", parametro="alto")], _ESQUEMA)
+    assert libre[0]["operacion"] == "parametro"
+
+
+def test_prof_coincidente_pero_no_leido_es_solo_lectura_por_valor():
+    creado = _crear(_SCRIPT_SIN_USO)
+    prof = _cota(_listado(creado["id"]), "tamano_total", "y")
+    assert prof["solo_lectura"] is True
+    assert prof["razon"] == cotas.razon_valor_no_leida("prof")
+    resp = _aplicar(creado["id"], _listado(creado["id"])["revision"], {prof["id"]: 35})
+    assert resp.status_code == 422 and "PARAMS['prof']" in resp.json()["detail"]
 
 
 def test_tras_aplicar_marca_parametro_que_no_mueve_la_cota():
@@ -286,12 +339,73 @@ def test_restaurar_snapshot_previo_vuelve_a_40():
 
 
 def test_cota_que_no_sigue_al_parametro_se_informa():
-    creado = _crear(_SCRIPT_SIN_USO)
-    listado = _listado(creado["id"])
+    """Revision 1 (ADR-0023): the edit is verified on a staged build before any
+    write. A dimension that does not follow answers 422 {error, mensaje}; no new
+    revision, no snapshot, values and files byte-identical, undo cursor unchanged."""
+    creado = _crear(_SCRIPT_LEE_SIN_USAR)
+    doc_id = creado["id"]
+    listado = _listado(doc_id)
     prof = _cota(listado, "tamano_total", "y")
-    assert prof["parametro"] == "prof"
-    cuerpo = _aplicar(creado["id"], listado["revision"], {prof["id"]: 35}).json()
-    assert cuerpo["editadas"][0]["no_sigue_al_parametro"] is True
+    assert prof["parametro"] == "prof" and "solo_lectura" not in prof
+    estado_antes = _estado_en_disco(doc_id)
+    historial_antes = _historial(doc_id)
+    cabeza_antes = git_store.cabeza(doc_id)
+    cursor_antes = client.get(f"/documentos/{doc_id}/deshacer").json()
+
+    resp = _aplicar(doc_id, listado["revision"], {prof["id"]: 35})
+
+    assert resp.status_code == 422, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["error"] is True and set(cuerpo) == {"error", "mensaje"}
+    assert "no sigue al parámetro" in cuerpo["mensaje"] and "prof" in cuerpo["mensaje"]
+    assert _historial(doc_id) == historial_antes
+    assert git_store.cabeza(doc_id) == cabeza_antes
+    assert _listado(doc_id)["revision"] == listado["revision"]
+    assert client.get(f"/documentos/{doc_id}/deshacer").json() == cursor_antes
+    assert _estado_en_disco(doc_id) == estado_antes
+    assert _cota(_listado(doc_id), "tamano_total", "y")["valor_mm"] == 30.0
+    assert client.get(f"/documentos/{doc_id}/parametros").json()["valores"]["prof"] == 30
+
+
+def test_fallo_del_script_en_cotas_conserva_la_instantanea_preventiva():
+    """Generic failure path (ADR-0003, pinned for /documentos/script too): a
+    script error on the cotas route is still answered 422 and keeps the one
+    preventive snapshot. Only the not-following refusal takes no snapshot."""
+    creado = _crear(_SCRIPT_FALLA_SI_GRANDE)
+    doc_id = creado["id"]
+    listado = _listado(doc_id)
+    ancho = _cota(listado, "tamano_total", "x")
+    historial_antes = _historial(doc_id)
+    estado_antes = _estado_en_disco(doc_id)
+
+    resp = _aplicar(doc_id, listado["revision"], {ancho["id"]: 70})
+
+    assert resp.status_code == 422 and "error" not in resp.json()
+    assert len(_historial(doc_id)) == len(historial_antes) + 1
+    assert _historial(doc_id)[:-1] == historial_antes
+    assert _estado_en_disco(doc_id)["doc:" + doc_id + ".step"] == estado_antes["doc:" + doc_id + ".step"]
+    assert _listado(doc_id)["revision"] == listado["revision"]
+
+
+def test_listado_se_cachea_por_revision(monkeypatch):
+    creado = _crear()
+    doc_id = creado["id"]
+    proyecciones: list[int] = []
+    original = documents.planos.construir
+
+    def contado(*args, **kwargs):
+        proyecciones.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(documents.planos, "construir", contado)
+    primero = _listado(doc_id)
+    segundo = _listado(doc_id)
+    assert primero == segundo and len(proyecciones) == 1
+    ancho = _cota(primero, "tamano_total", "x")
+    assert _aplicar(doc_id, primero["revision"], {ancho["id"]: 50}).status_code == 200
+    despues = _listado(doc_id)
+    assert _cota(despues, "tamano_total", "x")["valor_mm"] == 50.0
+    assert len(proyecciones) >= 2
 
 
 def test_dos_ediciones_simultaneas_una_200_y_una_409():
@@ -328,6 +442,16 @@ def mcp_en_proceso(monkeypatch):
 
     monkeypatch.setattr(mcp_client.httpx, "Client", fabrica)
     yield fabrica_original
+
+
+def test_mcp_cota_que_no_sigue_devuelve_el_mensaje(mcp_en_proceso):
+    creado = _crear(_SCRIPT_LEE_SIN_USAR)
+    prof_id = _cota(_listado(creado["id"]), "tamano_total", "y")["id"]
+    revision = _listado(creado["id"])["revision"]
+    resp = tools.parametros(creado["id"], cotas={prof_id: 35})
+    assert resp["error"] is True
+    assert resp["mensaje"].startswith("La cota ") and "no sigue al parámetro 'prof'" in resp["mensaje"], resp
+    assert _listado(creado["id"])["revision"] == revision
 
 
 def test_mcp_parametros_cotas_aplica_y_valida(mcp_en_proceso):

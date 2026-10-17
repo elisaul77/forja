@@ -10,11 +10,16 @@ write itself runs in `app/documents.py` through the same path as `parametros`.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 OPERACION_PARAMETRO = "parametro"
 RAZON_SIN_PARAMETRO = "no ligada a un parametro del script"
 RAZON_MALLA = "malla sin B-rep"
+MENSAJE_NO_SIGUE = (
+    "El script no mueve esa cota con ese valor: nada se guardó y no hay revisión nueva."
+)
+_RE_PARAMS = re.compile(r"""PARAMS\[\s*(['"])([^'"\n]+)\1\s*\]""")
 TOLERANCIA_MM = 0.01  # re-measured value vs requested value
 FACTOR_TOPE_SIN_MAX = 10.0  # no PARAMETROS max: at most 10x the current size
 MAX_COTAS_POR_EDICION = 40
@@ -28,6 +33,42 @@ class CotaInvalida(ValueError):
     """Read-only dimension, or a value that is not a finite positive number in range."""
 
 
+class CotaNoSigue(Exception):
+    """An edited dimension does not follow its parameter (F23a revision 1): the
+    staged build refused the edit before anything was written (ADR-0023)."""
+
+    def __init__(self, informe: list[dict[str, Any]]) -> None:
+        self.informe = informe
+        super().__init__(mensaje_no_sigue(informe))
+
+
+def razon_valor_no_leida(clave: str) -> str:
+    return f"ligada por valor: el script no lee PARAMS['{clave}']"
+
+
+def claves_leidas(codigo: str) -> set[str]:
+    """PARAMETROS keys the script reads with a literal ``PARAMS["clave"]``. Static
+    and cheap (no run): a key the script never reads cannot drive a dimension, so
+    its value link is coincidental. A key read through an alias or a loop is not
+    seen: its dimensions are listed read-only (the conservative side)."""
+    return {m.group(2) for m in _RE_PARAMS.finditer(codigo)}
+
+
+def mensaje_no_sigue(informe: list[dict[str, Any]]) -> str:
+    partes = [
+        f"la cota {e['id']} no sigue al parámetro '{e['parametro']}'"
+        for e in informe if e.get("no_sigue_al_parametro")
+    ]
+    texto = "; ".join(partes)
+    return texto[:1].upper() + texto[1:] + ". " + MENSAJE_NO_SIGUE
+
+
+def exigir_seguimiento(informe: list[dict[str, Any]]) -> None:
+    """Raise `CotaNoSigue` when any edited dimension was not re-measured at its target."""
+    if any(e.get("no_sigue_al_parametro") for e in informe):
+        raise CotaNoSigue(informe)
+
+
 def _es_numero(valor: Any) -> bool:
     if not isinstance(valor, (int, float)) or isinstance(valor, bool):
         return False
@@ -38,17 +79,22 @@ def _es_numero(valor: Any) -> bool:
 
 
 def clasificar(
-    descriptores: list[dict[str, Any]], esquema: dict[str, dict[str, Any]], malla: bool = False
+    descriptores: list[dict[str, Any]], esquema: dict[str, dict[str, Any]], malla: bool = False,
+    leidas: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """F22 descriptors + ``operacion`` (``"parametro"`` when editable) or
     ``solo_lectura: true`` with ``razon``. ``min``/``max`` come from the
-    PARAMETROS entry so the editor can show the range."""
+    PARAMETROS entry so the editor can show the range. ``leidas`` (see
+    `claves_leidas`): a value link to a key the script never reads is read-only
+    (``ligada por valor``); ``None`` skips that check."""
     resultado = []
     for descriptor in descriptores:
         cota = dict(descriptor)
         clave = descriptor.get("parametro")
         if malla:
             cota.update(operacion=None, solo_lectura=True, razon=RAZON_MALLA)
+        elif descriptor.get("origen") == "parametro" and clave in esquema and leidas is not None and clave not in leidas:
+            cota.update(operacion=None, solo_lectura=True, razon=razon_valor_no_leida(clave))
         elif descriptor.get("origen") == "parametro" and clave in esquema:
             cota["operacion"] = OPERACION_PARAMETRO
             for tope in ("min", "max"):
@@ -107,6 +153,7 @@ def tras_aplicar(
             "id": id_cota,
             "parametro": previa.get("parametro"),
             "valor_antes": previa["valor_mm"],
+            "pedido_mm": pedido,
             "valor_despues": tras["valor_mm"] if tras else None,
             "error_mm": round(tras["valor_mm"] - pedido, 3) if tras else None,
         }

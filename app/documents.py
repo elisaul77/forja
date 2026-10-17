@@ -20,11 +20,11 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import trimesh
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 
 import assemblies
@@ -497,9 +497,15 @@ def _actualizar_documento_desde_script(
     timeout: float,
     variables: dict[str, Any] | None = None,
     mensaje_snapshot: str = "actualizar documento (script)",
+    verificar: Callable[[Any, list[str]], None] | None = None,
 ) -> dict[str, Any]:
     """Re-run a build123d script against an EXISTING document (Phase 4:
     "script re-run... updating a document", ADR-0003 versioning + naming).
+
+    ``verificar(forma, nombres)`` (F23a, ADR-0023) sees the rebuilt shape
+    before anything is written: it raises to refuse the edit, and then nothing
+    is committed, moved or changed (no preventive snapshot either). Without it
+    the preventive snapshot is taken before the run, as always.
 
     Snapshots the current STEP file (+ notes, if any) *before* applying;
     if the script fails or the kernel rejects the result, the file is
@@ -533,17 +539,28 @@ def _actualizar_documento_desde_script(
     if solidos_previos is not None:
         archivos_snapshot["solidos.json"] = solidos_previos
     archivos_snapshot = _con_parametros_snapshot(archivos_snapshot, doc_id)
-    versioning.crear_snapshot(
-        doc_id, mensaje_snapshot, _con_ensamble_snapshot(archivos_snapshot, doc_id)
-    )
+    snapshot_tomado = False
+
+    def tomar_snapshot() -> None:
+        nonlocal snapshot_tomado
+        if not snapshot_tomado:
+            versioning.crear_snapshot(
+                doc_id, mensaje_snapshot, _con_ensamble_snapshot(archivos_snapshot, doc_id)
+            )
+            snapshot_tomado = True
+
+    if verificar is None:
+        tomar_snapshot()
 
     try:
         salida_temporal, nombres_ordenados = scripts_runner.ejecutar_script(
             codigo, timeout=timeout, variables=variables
         )
     except scripts_runner.ScriptTimeoutError as exc:
+        tomar_snapshot()
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except scripts_runner.ScriptError as exc:
+        tomar_snapshot()
         raise HTTPException(status_code=422, detail=_detalle_script_error(exc)) from exc
 
     tmp_dir = salida_temporal.parent
@@ -552,8 +569,14 @@ def _actualizar_documento_desde_script(
         analisis = b123d_kernel.analyze(nueva_shape)
         if analisis.solidos == 0:
             raise ValueError("script produjo una figura sin solidos")
+        if verificar is not None:
+            verificar(nueva_shape, nombres_ordenados)
+        tomar_snapshot()
         shutil.move(str(salida_temporal), str(ruta))
+    except (cotas.CotaNoSigue, HTTPException):
+        raise  # refused before any write: the file, the history and the registry stay as they were
     except Exception as exc:  # noqa: BLE001 - rollback: state unchanged, error returned
+        tomar_snapshot()
         ruta.write_bytes(archivo_previo)
         raise HTTPException(status_code=422, detail=f"script invalido: {exc}") from exc
     finally:
@@ -850,9 +873,13 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
         return _aplicar_parametros_bloqueado(doc_id, body.valores, body.confirmar_script)
 
 
-def _aplicar_parametros_bloqueado(doc_id: str, nuevos: dict[str, Any], confirmar_script: bool) -> dict[str, Any]:
+def _aplicar_parametros_bloqueado(
+    doc_id: str, nuevos: dict[str, Any], confirmar_script: bool,
+    verificar: Callable[[dict[str, Any], Any, list[str]], None] | None = None,
+) -> dict[str, Any]:
     """Body of `aplicar_parametros` (F23a). The caller holds `parametros.bloqueo(doc_id)`;
-    the cotas route holds it across its revision check, its listing and this write."""
+    the cotas route holds it across its revision check, its listing and this write.
+    ``verificar(valores, forma, nombres)`` runs on the staged build (see `_actualizar_documento_desde_script`)."""
     if doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
     datos = parametros.cargar(doc_id)
@@ -884,6 +911,10 @@ def _aplicar_parametros_bloqueado(doc_id: str, nuevos: dict[str, Any], confirmar
         declarados = materiales.desde_codigo(codigo)
     except (parametros.ParametrosInvalidos, materiales.MaterialesInvalidos) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    def verificar_staged(forma: Any, nombres: list[str]) -> None:
+        if verificar is not None:
+            verificar(valores, forma, nombres)
+
     inicio = time.perf_counter()
     with _construyendo(doc_id):
         registro = _actualizar_documento_desde_script(
@@ -892,6 +923,7 @@ def _aplicar_parametros_bloqueado(doc_id: str, nuevos: dict[str, Any], confirmar
             datos["timeout"] or scripts_runner.DEFAULT_TIMEOUT,
             parametros.variables_efectivas(datos["variables"], valores),
             mensaje_snapshot=parametros.resumen_valores(valores),
+            verificar=verificar_staged if verificar is not None else None,
         )
         ms = round((time.perf_counter() - inicio) * 1000)
         parametros.guardar_valores(doc_id, esquema, valores)
@@ -907,12 +939,48 @@ def _es_malla(doc_id: str) -> bool:
     return ruta is not None and ruta.suffix.lower() in _STL_EXTS
 
 
+# Cotas listings per (doc, revision, inputs): a panel render does not re-project
+# (ADR-0023). Bounded: the oldest entry goes first.
+_CACHE_COTAS: dict[tuple[str, str, str], dict[str, Any]] = {}
+_CACHE_COTAS_MAX = 32
+
+
+def _codigo_del_script(doc_id: str) -> str | None:
+    """Code of the stored script (inline, or the file of its `ruta`); ``None``
+    without script. An unreadable `ruta` answers 400, as the re-run would."""
+    script = parametros.cargar(doc_id)["script"]
+    if not script:
+        return None
+    if "ruta" in script:
+        origen = _validar_ruta_permitida(script["ruta"])
+        try:
+            return origen.read_text()
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
+    return script["codigo"]
+
+
 def _listar_cotas_de_fuente(
     doc_id: str, fuente: Any, piezas: list[str], parametros_plano: dict[str, tuple[float, str]],
     revision: str | None, nombre: str,
 ) -> dict[str, Any]:
     """Cotas vivas (F23a, ADR-0023): the drawn dimensions of the sheet (default
-    views, all of them drawn) classified for editing. Pure read: no lock here."""
+    views, all of them drawn) classified for editing. Pure read: no lock here.
+    A dimension linked to a key the script never reads is read-only ("ligada por
+    valor"). Cached per (doc, revision) when a revision is given: the revision
+    covers the geometry, the rest of the inputs go into the key."""
+    esquema = parametros.cargar(doc_id)["parametros"]
+    codigo = _codigo_del_script(doc_id)
+    leidas = cotas.claves_leidas(codigo) if codigo is not None else None
+    malla = _es_malla(doc_id)
+    clave = None
+    if revision is not None:
+        clave = (doc_id, revision, json.dumps(
+            [parametros_plano, esquema, sorted(leidas or ()), nombre, piezas, malla],
+            sort_keys=True, default=str,
+        ))
+        if clave in _CACHE_COTAS:
+            return _CACHE_COTAS[clave]
     try:
         plano = planos.construir(
             fuente, nombre=nombre, piezas=piezas, revision=revision,
@@ -920,8 +988,15 @@ def _listar_cotas_de_fuente(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    esquema = parametros.cargar(doc_id)["parametros"]
-    return {"revision": revision, "cotas": cotas.clasificar(plano.cotas, esquema, malla=_es_malla(doc_id))}
+    resultado = {
+        "revision": revision,
+        "cotas": cotas.clasificar(plano.cotas, esquema, malla=malla, leidas=leidas),
+    }
+    if clave is not None:
+        if len(_CACHE_COTAS) >= _CACHE_COTAS_MAX:
+            _CACHE_COTAS.pop(next(iter(_CACHE_COTAS)))
+        _CACHE_COTAS[clave] = resultado
+    return resultado
 
 
 @router.get("/documentos/{doc_id}/cotas")
@@ -947,10 +1022,12 @@ def aplicar_cotas(doc_id: str, body: _CotasBody) -> dict[str, Any]:
     """Edit live dimensions (F23a, ADR-0023): `{revision, cotas: {id_cota: valor}}`.
     The revision must be the one the ids were read at (409 otherwise). Each
     dimension is translated to its PARAMETROS key and applied through the same
-    path as `POST .../parametros` (validation, snapshot, one new revision).
-    Under the document lock from the revision check to the write, so two
-    edits from the same reading never both apply. Replies with the usual
-    summary plus `editadas`: value before/after and the re-measured error."""
+    path as `POST .../parametros`, but verified first: the staged build is
+    measured before anything is written, and a dimension that does not follow
+    its parameter answers 422 `{error: true, mensaje}` with nothing committed
+    (no revision, no snapshot, files and history unchanged). Under the document
+    lock from the revision check to the write. Replies with the usual summary
+    plus `editadas`: value before/after and the re-measured error."""
     if doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
     with parametros.bloqueo(doc_id):
@@ -968,10 +1045,22 @@ def aplicar_cotas(doc_id: str, body: _CotasBody) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except cotas.CotaInvalida as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        respuesta = _aplicar_parametros_bloqueado(doc_id, nuevos, body.confirmar_script)
-        fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano_bloqueado(doc_id)
-        despues = _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
-    return {**respuesta, "editadas": cotas.tras_aplicar(antes["cotas"], despues["cotas"], body.cotas)}
+        informe: list[dict[str, Any]] = []
+
+        def verificar(valores: dict[str, Any], forma: Any, nombres: list[str]) -> None:
+            """Staged build, nothing written: the dimensions as the edit would leave them."""
+            entradas = solids.construir_entradas(forma, nombres)
+            despues_staged = _listar_cotas_de_fuente(
+                doc_id, forma, _nombres_piezas_plano(entradas), _parametros_para_plano(doc_id, valores), None, nombre,
+            )
+            informe.extend(cotas.tras_aplicar(antes["cotas"], despues_staged["cotas"], body.cotas))
+            cotas.exigir_seguimiento(informe)
+
+        try:
+            respuesta = _aplicar_parametros_bloqueado(doc_id, nuevos, body.confirmar_script, verificar=verificar)
+        except cotas.CotaNoSigue as exc:
+            return JSONResponse(status_code=422, content={"error": True, "mensaje": str(exc)})
+    return {**respuesta, "editadas": informe}
 
 
 
@@ -1502,11 +1591,12 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
     )
 
 
-def _parametros_para_plano(doc_id: str) -> dict[str, tuple[float, str]]:
+def _parametros_para_plano(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, tuple[float, str]]:
     """PARAMETROS of a script document as ``{clave: (valor, unidad)}`` (the
-    values in force). Pure read of the sidecar: callers may hold the lock."""
+    values in force, or ``valores`` when given: the staged ones of an edit).
+    Pure read of the sidecar: callers may hold the lock."""
     meta = parametros.cargar(doc_id)
-    valores = meta["valores"]
+    valores = meta["valores"] if valores is None else valores
     resultado: dict[str, tuple[float, str]] = {}
     for clave, entrada in meta["parametros"].items():
         valor = valores.get(clave, entrada["valor"])
