@@ -7,6 +7,12 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (barrido continuo de articulaciones)
+
+- `ensamble(id, barrido="todas"|[ids], detalle=False)` y `POST /documentos/{id}/ensamble/barrido` recorren cada articulación sobre su `limites` con avance continuo conservador, no muestreado. Devuelven el primer contacto en grados o mm, el par de sólidos, el volumen máximo de penetración, la holgura mínima vista y `garantia: "continua"|"muestreada"`. Es solo lectura: no escribe STEP, historial ni revisión. Decisión y límites en `docs/decisions/0020-barrido-continuo.md`.
+- Un barrido que no termina (tope de 400 evaluaciones) o un error de OCC responde `ok: false`, `completo: false`, `garantia: "muestreada"`; nunca pasa en silencio.
+- Motor puro `app/checks/barrido.py`, reutilizando `pose_clearance` (cotas de caja y `moving_names`), `colisiones` (tolerancias) y `distancia.volumen_interseccion`. No hay herramienta MCP nueva.
+
 ### Changed (indicaciones unificadas)
 
 - La pestaña Diseño pasa a ser **Indicaciones**: la única lista donde se explica lo que se quiere cambiar. Las notas y trazos del visor son las marcas de una indicación; se enlazan por id y no se copian ni migran. Las notas antiguas sin indicación aparecen como marcas sueltas con «Convertir en indicación». `notas.json` y `design.json` antiguos cargan sin cambios. Decisión en `docs/decisions/0019-unified-intents.md`.

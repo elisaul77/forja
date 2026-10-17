@@ -34,7 +34,7 @@ import notes
 import parametros
 import solids
 import versioning
-from checks import pose_clearance
+from checks import barrido, pose_clearance
 from kernel import b123d_kernel as kernel
 
 router = APIRouter(prefix="/documentos/{doc_id}/ensamble")
@@ -55,6 +55,14 @@ class SceneCheck(BaseModel):
     revision: str = Field(min_length=1)
     valores: dict[str, float]
     articulaciones_activas: list[str] = Field(min_length=1, max_length=60)
+
+
+class Sweep(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    articulaciones: list[str] | None = Field(default=None, min_length=1, max_length=60)
+    desde: dict[str, float] | None = None
+    hasta: dict[str, float] | None = None
+    detalle: bool = False
 
 
 class MotionCheck(BaseModel):
@@ -301,6 +309,94 @@ def check_assembly_motion(doc_id: str, body: MotionCheck, response: Response):
                 "muestras_comprobadas": checked, "primer_choque": first_hit,
                 "fraccion_segura_muestreada": last_safe,
                 "choques_iniciales": initial_hits, "ultima_posicion": last_result}
+
+
+def _barrido_ensamble(state: dict, rest: dict, body: Sweep) -> dict[str, Any]:
+    """Continuous sweep of each requested joint over its range (Phase 18).
+
+    Other joints stay at their stored values. The bound for each joint is
+    measured on the moving group BEFORE the joint's own rotation: that is the
+    rest pose after the descendant joints only, so the joint's axis is still
+    the rest-frame axis and ancestors (applied after) do not change distances.
+    """
+    joints = state["articulaciones"]
+    por_id = {joint["id"]: joint for joint in joints}
+    ids = list(body.articulaciones) if body.articulaciones is not None else [j["id"] for j in joints]
+    if len(set(ids)) != len(ids):
+        raise ValueError("articulaciones repetidas")
+    if set(ids) - set(por_id):
+        raise ValueError("articulación desconocida")
+    desde, hasta = body.desde or {}, body.hasta or {}
+    if (set(desde) | set(hasta)) - set(ids):
+        raise ValueError("desde/hasta solo pueden nombrar articulaciones barridas")
+    resultados: dict[str, Any] = {}
+    for joint_id in ids:
+        joint = por_id[joint_id]
+        if joint["tipo"] == "fijo":
+            raise ValueError(f"la articulación fija {joint_id} no se mueve; no hay nada que barrer")
+        lo, hi = joint["limites"]
+        inicio = desde.get(joint_id, lo)
+        fin = hasta.get(joint_id, hi)
+        assemblies._values(state, {joint_id: inicio})  # 422 outside limites
+        assemblies._values(state, {joint_id: fin})
+        moviles = pose_clearance.moving_names(joints, joint_id)
+        descendientes = [j for j in joints if j["hijo"] in moviles and j["id"] != joint_id]
+        visibles = {j["id"] for j in descendientes}
+        previa_state = {**state, "articulaciones": descendientes,
+                        "valores": {k: v for k, v in state["valores"].items() if k in visibles}}
+        previas = assemblies.pose_shapes_from_rest(previa_state, rest, {})
+        if joint["tipo"] == "giro":
+            tasa = barrido.tasa_giro(previas, moviles, joint["origen"], joint["eje"])
+            unidad = "grados"
+        else:
+            tasa = barrido.tasa_deslizamiento(joint["eje"])
+            unidad = "mm"
+
+        def evaluar(valor, _id=joint_id):
+            return assemblies.pose_shapes_from_rest(state, rest, {_id: valor})
+
+        resultado = barrido.barrer(evaluar, moviles, float(inicio), float(fin), tasa,
+                                   unidad=unidad, detalle=body.detalle)
+        resultado.pop("frase", None)
+        resultados[joint_id] = resultado
+    ok = all(r["ok"] for r in resultados.values())
+    continua = all(r["garantia"] == "continua" for r in resultados.values())
+    completo = all(r["completo"] for r in resultados.values())
+    if ok:
+        frase = f"Sin choques ni contactos en {len(ids)} articulación(es) barridas."
+    else:
+        frase = "Hay choques o contactos: mira primer_choque de cada articulación."
+    if not continua:
+        frase += " Parte del recorrido solo se muestreó; ver garantia por articulación."
+    return {"ok": ok, "garantia": "continua" if continua else "muestreada",
+            "completo": completo, "barrido": resultados, "frase": frase}
+
+
+@router.post("/barrido")
+def sweep_assembly(doc_id: str, body: Sweep, response: Response):
+    """Read-only continuous sweep of the joints (ADR-0020).
+
+    Holds the document lock while loading the rest shapes, like
+    `comprobar-posicion`. Never exports STEP, writes history or changes the
+    registry. A clean sweep is `garantia: "continua"`; a capped or failed
+    one is `muestreada` with `completo: false` and `ok: false`.
+    """
+    _path(doc_id)
+    comienzo = time.monotonic()
+    with parametros.bloqueo(doc_id):
+        _path(doc_id)
+        state = _estado_actual(doc_id)
+        if state is None:
+            raise HTTPException(422, "el documento no tiene ensamble")
+        if assemblies.is_stale(doc_id):
+            raise HTTPException(409, "el ensamble está desactualizado")
+        try:
+            state, rest = assemblies.rest_shapes(doc_id)
+            resultado = _barrido_ensamble(state, rest, body)
+        except (ValueError, OverflowError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+    response.headers["Cache-Control"] = "no-store"
+    return {**resultado, "ms": round((time.monotonic() - comienzo) * 1000)}
 
 
 @router.post("", dependencies=[Depends(auth.requiere_token)])
