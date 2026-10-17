@@ -7,6 +7,19 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (captura enfocada y primer choque, F20)
+
+- Captura enfocada (ADR 0028): `captura(id, foco=[x,y,z], radio=mm)` (MCP) y `GET /documentos/{id}/captura?foco=x,y,z&radio=` encuadran un cuadrado de lado `2 × radio` centrado en el punto, recortando la misma proyección de la cámara. `foco` y `radio` van juntos; radio entre 0,5 mm y 5 veces la diagonal de lo dibujado; coordenadas finitas y acotadas (|v| ≤ 1 000 000 mm). Un foco que no ve ninguna pieza da el encuadre general con la nota «foco fuera de la geometria» (nunca una imagen vacía).
+- Captura del primer choque: vista elegida para que se vean las dos piezas (si no hay ninguna, la 45/25 con aviso de pieza tapada). `ensamble(id, barrido=..., captura_en_choque=True)` añade UNA imagen de la pose del primer choque confirmado, solo el par, encuadrada en su punto de contacto. La respuesta trae `imagenes` (0 o 1), `par`, `articulacion`, `valor`, `tipo`; sin choque, `imagenes: 0` y `motivo`. La imagen viene por `GET /documentos/{id}/ensamble/captura-choque`, de solo lectura, con `Cache-Control: no-store`.
+- Funciones nuevas en `app/render.py`: `parsear_foco`, `validar_foco`, `validar_radio`, `radio_por_defecto`, `grupos_desde_formas` (teselado de formas posadas, colores sobre el orden completo).
+- Sin `foco`, `captura` y el render son byte a byte los de antes (regresión por hash en `tests/test_captura_foco.py`). No se añade herramienta MCP.
+
+### Changed (captura enfocada, F20)
+
+- `render.renderizar_png` acepta `foco` y `radio`. El cálculo de la ventana general es el mismo; la extracción de `_rasterizar_en` no cambia ninguna operación del camino por defecto.
+- `render.grupos_desde_shape` usa el tope de triángulos compartido `_teselar_con_tope` (mismo reintento y mismo error).
+- Pendiente: la acción «Captura enfocada» de la cinta sigue `proximamente` (fase F20). Activarla requiere elegir un punto en el visor, que no está en el alcance de esta fase.
+
 ### Added (vista explosionada, F19)
 
 - Vista explosionada de solo visualización (ADR-0027): `captura(id, ..., explosion=0..1)` en MCP y `GET /documentos/{id}/captura?explosion=` separan las piezas con nombre para ver las ocultas. Documentos STEP; `explosion=0` (por defecto) es byte a byte igual que antes (mismo PNG y mismo `X-Forja-Captura`).
