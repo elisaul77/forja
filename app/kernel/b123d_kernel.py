@@ -12,7 +12,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from build123d import Box, Compound, GeomType, Shape, export_step, import_step
+from build123d import (
+    Box,
+    Compound,
+    Cone,
+    Cylinder,
+    GeomType,
+    Shape,
+    Sphere,
+    Torus,
+    Wedge,
+    export_step,
+    import_step,
+)
 
 
 @dataclass
@@ -26,6 +38,65 @@ class ShapeInfo:
 def make_box(x: float = 10.0, y: float = 10.0, z: float = 10.0) -> Shape:
     """Build a simple axis-aligned solid box (used by the kernel smoke test)."""
     return Box(x, y, z)
+
+
+def forma_primitiva(tipo: str, dims: tuple[float, ...]) -> Shape:
+    """Útil centrado en el origen con dimensiones ya resueltas en mm:
+    box (x, y, z) · cylinder (radio, altura) · sphere (radio) ·
+    cone (radio de la base, altura; punta) · torus (radio mayor, radio del tubo) ·
+    wedge (x, y, z; cuña de cateto x y cateto z) · tube (radio exterior, radio
+    interior, altura)."""
+    if tipo == "box":
+        return Box(*dims)
+    if tipo == "cylinder":
+        return Cylinder(dims[0], dims[1])
+    if tipo == "sphere":
+        return Sphere(dims[0])
+    if tipo == "cone":
+        return Cone(dims[0], 0, dims[1])
+    if tipo == "torus":
+        return Torus(dims[0], dims[1])
+    if tipo == "wedge":
+        return Wedge(dims[0], dims[1], dims[2], 0, 0, 0, dims[2])
+    if tipo == "tube":
+        return Cylinder(dims[0], dims[2]) - Cylinder(dims[1], dims[2])
+    raise ValueError(f"Forma de útil desconocida: {tipo}")
+
+
+def escalar(forma: Shape, factor: tuple[float, float, float], centro: tuple[float, float, float]) -> Shape:
+    """Escala por eje en torno a `centro`, como B-rep nuevo (copia).
+
+    `Shape.scale` de build123d da el volumen correcto en memoria pero al
+    exportar a STEP se pierde (el archivo conserva la geometría original),
+    así que la transformación se hace con BRepBuilderAPI_GTransform."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_GTransform
+    from OCP.gp import gp_GTrsf, gp_Mat, gp_XYZ
+
+    fx, fy, fz = factor
+    trsf = gp_GTrsf()
+    trsf.SetVectorialPart(gp_Mat(fx, 0, 0, 0, fy, 0, 0, 0, fz))
+    cx, cy, cz = centro
+    trsf.SetTranslationPart(gp_XYZ(cx - fx * cx, cy - fy * cy, cz - fz * cz))
+    escalada = Shape.cast(BRepBuilderAPI_GTransform(forma.wrapped, trsf, True).Shape())
+    if not escalada.is_valid:
+        raise ValueError("La escala produjo CAD inválido")
+    return escalada
+
+
+def volumen_preciso(shape: Shape, eps: float = 1e-3) -> float:
+    """Volumen en mm3 de ``shape`` integrado sobre el B-rep con cuadratura adaptativa
+    de OCC (``BRepGProp``, ``eps`` = tolerancia de integración), sin teselar (valor absoluto).
+
+    ``.volume`` da ~0,9 % alto en un cilindro escalado en no uniforme (GTransform deja
+    caras BSPLINE); con ``eps`` 1e-3 esta integral queda en ~0,004 % del valor analítico,
+    en fracciones de milisegundo en el cilindro y ~0,4 s en un loft de 240 secciones.
+    Con 1e-5 el error baja a ~0,0002 % pero el loft tarda ~3 s por medida (ADR-0026)."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+
+    propiedades = GProp_GProps()
+    BRepGProp.VolumeProperties_s(shape.wrapped, propiedades, eps, False)
+    return float(abs(propiedades.Mass()))
 
 
 def analyze(shape: Shape) -> ShapeInfo:

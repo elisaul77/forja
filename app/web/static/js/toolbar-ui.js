@@ -9,9 +9,10 @@ import {
 } from "./toolbar.js?v=5";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js?v=4";
 import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=13";
+import { prepararOperacion, pedirCambioPieza } from "./design.js?v=10";
 
 const NS = "http://www.w3.org/2000/svg";
-const SPRITE = "/static/icons/forja-icons.svg?v=2";
+const SPRITE = "/static/icons/forja-icons.svg?v=3";
 const RETRASO_TOOLTIP_MS = 350;
 // Reserva del botón «más» al repartir la fila (igual que su min-width en forja-toolbar.css).
 const ANCHO_MAS_PX = 64;
@@ -228,6 +229,20 @@ export function montarBarraHerramientas({ tabs, documento = document, api = API_
     },
     enfoque() {
       app?.classList.toggle("fj-app--enfoque");
+    },
+    // 24b (ADR-0026): Indicaciones > «Preparar una alternativa manual» ajustada al tipo.
+    operacion(preset) {
+      const entrada = requerirEntrada();
+      tabs.abrirPanel("design");
+      prepararOperacion(entrada, preset);
+      mostrar("Revisa los valores en Indicaciones > Preparar una alternativa manual. Nada cambia hasta aplicar el candidato.");
+    },
+    // 24b: indicación ligada a la pieza seleccionada.
+    pedirCambio() {
+      const entrada = requerirEntrada();
+      tabs.abrirPanel("design");
+      pedirCambioPieza(entrada, entrada.viewer.selectedPiece);
+      mostrar("Describe el cambio en Indicaciones; quedará ligado a la pieza seleccionada.");
     },
     elegirCara: (fn) => armarCara(fn),
     // Cancela por el estado de la pestaña: picking, modo de nota y de pizarra, y selección.

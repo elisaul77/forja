@@ -14,6 +14,26 @@ const MAX_PHOTO_BYTES = 6 * 1024 * 1024;
 const PHOTO_TYPES = "image/png,image/jpeg,image/webp";
 const DEFAULT_NOZZLE = "0.4";
 const DEFAULT_BED = [220, 220, 250];
+// Formas del útil y modos de alinear (24b, ADR-0026). Los tamaños se explican en la ayuda.
+const PRIMITIVAS = [
+  ["box", "Caja"],
+  ["cylinder", "Cilindro"],
+  ["sphere", "Esfera"],
+  ["cone", "Cono"],
+  ["torus", "Toro"],
+  ["wedge", "Cuña"],
+  ["tube", "Tubo"],
+];
+const AYUDA_FORMAS =
+  "Caja: X, Y, Z · Cilindro: diámetro, reservado, altura · Esfera: diámetro (lo demás se ignora) · Cono: diámetro de la base, reservado, altura · Toro: diámetro exterior, diámetro del tubo · Cuña: X, Y, Z · Tubo: diámetro exterior, diámetro interior, altura.";
+const MODOS_ALINEAR = [
+  ["center", "Centros"],
+  ["min", "Caras mínimas"],
+  ["max", "Caras máximas"],
+  ["stack", "Apilar sobre la cara superior (Z)"],
+];
+// Pendiente por documento desde la barra de herramientas: {operacion, pieza}.
+const pendientes = new Map();
 const HONEST_BANNER =
   "Forja guarda tus indicaciones para el agente. No se envían solas: el agente las lee cuando le pidas en tu chat que revise Forja.";
 
@@ -71,6 +91,60 @@ export function proposalLines(candidate) {
 
 // The viewer uses a synthetic label for legacy ungrouped STL documents.
 // Resolve it only when there is one unambiguous design part.
+/** Operación de candidato desde «Preparar una alternativa manual». Envía solo los
+ * campos que usa cada tipo: el servidor rechaza los que no aplican (extra=forbid). */
+export function construirOperacion(v) {
+  const base = { kind: v.tipo, piece: v.pieza };
+  if (v.tipo === "transform")
+    return { ...base, translation: vector(v.translation), rotation_deg: vector(v.rotation), origin: vector(v.center) };
+  if (v.tipo === "scale") return { ...base, factor: vector(v.factor) };
+  if (v.tipo === "drop_to_bed") return { ...base, normal: vector(v.normal) };
+  if (v.tipo === "align") {
+    const operacion = { ...base, other: piezaAuxiliar(v.otra), mode: v.modo };
+    if (v.modo !== "stack") operacion.axes = ejesAlinear(v.ejes);
+    return operacion;
+  }
+  if (v.tipo === "deform_region")
+    return { ...base, translation: vector(v.translation), center: vector(v.center), radius_mm: Number(v.radius) };
+  if (v.cuerpo === "piece") return { ...base, other: piezaAuxiliar(v.otra) };
+  return {
+    ...base,
+    primitive: v.primitiva,
+    size: vector(v.size),
+    center: vector(v.center),
+    rotation_deg: vector(v.rotation),
+  };
+}
+function piezaAuxiliar(nombre) {
+  if (!nombre) throw new Error("Elige la otra pieza del documento.");
+  return nombre;
+}
+function ejesAlinear(texto) {
+  const ejes = String(texto).toLowerCase().split(/[;,\s]+/).filter(Boolean);
+  if (!ejes.length || ejes.some((e) => !["x", "y", "z"].includes(e)))
+    throw new Error("Los ejes para alinear deben ser x, y o z.");
+  return [...new Set(ejes)];
+}
+
+/** Abre «Preparar una alternativa manual» con `preset` = {tipo, primitiva?}. Se aplica al
+ * siguiente render del panel (lo llama toolbar-ui.js tras abrir Indicaciones). */
+export function prepararOperacion(entry, preset) {
+  const id = entry.ficha.id;
+  pendientes.set(id, { ...(pendientes.get(id) ?? {}), operacion: preset });
+  const c = controllers.get(id);
+  if (!c) return;
+  c.openDetails.add("advanced");
+  c.openDetails.add("alternative");
+  if (c.data) c.render();
+}
+/** Pide una indicación ligada a la pieza seleccionada («Pedir cambio con lo seleccionado»). */
+export function pedirCambioPieza(entry, pieza) {
+  const id = entry.ficha.id;
+  pendientes.set(id, { ...(pendientes.get(id) ?? {}), pieza: pieza ?? null });
+  const c = controllers.get(id);
+  if (c?.data) c.render();
+}
+
 export function resolveDesignPiece(pieces, name) {
   if (pieces.some((piece) => piece.name === name)) return name;
   return pieces.length === 1 ? pieces[0].name : null;
@@ -667,6 +741,15 @@ class Workspace {
       if (this._trigger("drawMode")) this.notify("Elige el plano y dibuja; el trazo queda como marca de la indicación.");
     });
     s.append(row);
+    const pieza = pendientes.get(this.entry.ficha.id)?.pieza ?? null;
+    if (pieza) {
+      s.append(el("p", `Esta indicación es sobre la pieza «${pieza}».`, { className: "fj-design__ayuda" }));
+      button(s, "Quitar la pieza de la indicación", () => {
+        const pendiente = pendientes.get(this.entry.ficha.id);
+        if (pendiente) pendiente.pieza = null;
+        this.render();
+      });
+    }
     const text = this.draftField(s, "Escribir sin marcar", "new", "", "textarea");
     text.maxLength = 4000;
     const photos = el("div", null, { className: "fj-design__acciones" });
@@ -688,8 +771,11 @@ class Workspace {
         if (!value) throw new Error("Escribe la indicación");
         await createIntent(this.entry.ficha.id, {
           text: value,
+          ...(pieza ? { piece: pieza } : {}),
           ...(this.photos.length ? { images: [...this.photos] } : {}),
         });
+        const pendiente = pendientes.get(this.entry.ficha.id);
+        if (pendiente) pendiente.pieza = null;
         this.photos = [];
         this.drafts.forget("new");
         this.notify("Indicación guardada. El agente la leerá cuando le pidas revisar Forja.");
@@ -1275,20 +1361,51 @@ class Workspace {
     this._paintOutput("measure");
   }
   _renderAlternative(parent) {
+    const id = this.entry.ficha.id;
+    const preset = pendientes.get(id)?.operacion ?? {};
     const d = this.details(parent, "alternative", "Preparar una alternativa manual");
-    const op = options(d, "Cambio", [
-      ["transform", "Mover / girar"],
-      ["union", "Añadir apoyo"],
-      ["subtract", "Perforar / recortar"],
-      ["intersect", "Conservar intersección"],
-      ["deform_region", "Desplazar región STL"],
-    ]);
+    const tipo = options(
+      d,
+      "Cambio",
+      [
+        ["transform", "Mover / girar"],
+        ["scale", "Escalar"],
+        ["align", "Alinear con otra pieza"],
+        ["drop_to_bed", "Apoyar sobre la cama"],
+        ["union", "Añadir apoyo"],
+        ["subtract", "Perforar / recortar"],
+        ["intersect", "Conservar intersección"],
+        ["deform_region", "Desplazar región STL"],
+      ],
+      preset.tipo ?? "transform",
+    );
+    const cuerpo = options(
+      d,
+      "Cuerpo de la booleana",
+      [
+        ["primitive", "Forma primitiva"],
+        ["piece", "Otra pieza del documento"],
+      ],
+      preset.cuerpo ?? "primitive",
+    );
+    const primitive = options(d, "Forma del apoyo o corte", PRIMITIVAS, preset.primitiva ?? "box");
+    d.append(el("p", AYUDA_FORMAS, { className: "fj-design__ayuda" }));
     const translation = this.draftField(d, "Desplazamiento X, Y, Z (mm)", "alt:translation", "0, 0, 0");
     const rotation = this.draftField(d, "Giro X, Y, Z (grados)", "alt:rotation", "0, 0, 0");
-    const primitive = options(d, "Forma del apoyo o corte", [["box", "Caja"], ["cylinder", "Cilindro"]]);
-    const size = this.draftField(d, "Tamaño X, Y, Z; cilindro: diámetro, reservado, altura", "alt:size", "10, 10, 10");
-    const center = this.draftField(d, "Centro X, Y, Z (mm)", "alt:center", "0, 0, 0");
+    const size = this.draftField(d, "Tamaño X, Y, Z (mm) según la forma", "alt:size", "10, 10, 10");
+    const center = this.draftField(d, "Centro X, Y, Z (mm); centro del giro", "alt:center", "0, 0, 0");
     const radius = this.draftField(d, "Radio de región (mm)", "alt:radius", "5");
+    const factor = this.draftField(d, "Factor de escala X, Y, Z (1 = sin cambio)", "alt:factor", "1, 1, 1");
+    const otherDefault = this.pieces.find((p) => p.name !== this.workPieceDefault())?.name ?? "";
+    const otra = options(
+      d,
+      "Otra pieza (referencia de alineación o cuerpo de la booleana)",
+      this.pieces.map((p) => [p.name, p.name]),
+      otherDefault,
+    );
+    const modo = options(d, "Alinear por", MODOS_ALINEAR, "center");
+    const ejes = this.draftField(d, "Ejes a alinear (x, y, z)", "alt:axes", "x, y, z");
+    const normal = this.draftField(d, "Cara que apoya en la cama: normal X, Y, Z", "alt:normal", "0, 0, -1");
     const link = options(
       d,
       "Vincular a una indicación",
@@ -1303,26 +1420,31 @@ class Workspace {
       ...(link.value ? { intent: link.value } : {}),
       ...(summary.value.trim() ? { summary: summary.value.trim() } : {}),
     });
+    const valores = () => ({
+      tipo: tipo.value,
+      cuerpo: cuerpo.value,
+      pieza: this.workPiece.value,
+      primitiva: primitive.value,
+      otra: otra.value,
+      translation: translation.value,
+      rotation: rotation.value,
+      size: size.value,
+      center: center.value,
+      radius: radius.value,
+      factor: factor.value,
+      modo: modo.value,
+      ejes: ejes.value,
+      normal: normal.value,
+    });
     const finish = () => {
+      const pendiente = pendientes.get(id);
+      if (pendiente) pendiente.operacion = null;
       this.drafts.forget("summary");
       this.notify("Candidato preparado. Compáralo antes de aplicarlo.");
     };
     button(d, "Crear candidato sin cambiar el original", () =>
       this.act(async () => {
-        await this._prepare(
-          {
-            kind: op.value,
-            piece: this.workPiece.value,
-            translation: vector(translation.value),
-            rotation_deg: vector(rotation.value),
-            origin: vector(center.value),
-            primitive: primitive.value,
-            size: vector(size.value),
-            center: vector(center.value),
-            radius_mm: Number(radius.value),
-          },
-          extra(),
-        );
+        await this._prepare(construirOperacion(valores()), extra());
         finish();
       }),
     );
@@ -1430,5 +1552,6 @@ export function designHit(entry, hit) {
 export function disposeDesign(id) {
   controllers.get(id)?.stop();
   controllers.delete(id);
+  pendientes.delete(id);
   draftsByDocument.delete(id);
 }

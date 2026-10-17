@@ -2,9 +2,9 @@
 // del servidor, subida de archivos y apertura de pestañas.
 import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=13";
 import { createLibrary, latestStep } from "./library.js?v=12";
-import { TabManager } from "./tabs.js?v=52";
-import { montarBarraHerramientas } from "./toolbar-ui.js?v=9";
-import { startLive } from "./live.js?v=13";
+import { TabManager } from "./tabs.js?v=53";
+import { montarBarraHerramientas } from "./toolbar-ui.js?v=10";
+import { startLive } from "./live.js?v=14";
 import { iniciarPanelPerfil } from "./perfil.js?v=2";
 
 const tabs = new TabManager({

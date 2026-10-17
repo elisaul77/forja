@@ -25,6 +25,7 @@
 - 👀 **Ver el diseño en vivo** — cuando el agente cambia un documento, el visor se actualiza solo, sin recargar y sin mover tu cámara.
 - 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
+- 🧱 **Componer piezas desde la barra** — mover, escalar, alinear, apoyar sobre la cama, y unir o restar primitivas u otras piezas; cada cambio es un candidato que revisas antes de aplicar.
 - 🔍 **Verificar antes de imprimir** — colisiones y holguras, imprimibilidad FDM (voladizos, paredes finas, cama), percepción espacial en texto (`percibir`).
 - 📏 **Medidas en vivo** — el panel Medidas del visor lista los pares de sólidos más cercanos (contacto, choque, holgura) en mm y se actualiza solo cuando cambia el modelo o un parámetro; las cifras son las mismas que `percibir`.
 - 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
@@ -242,6 +243,10 @@ En un STEP o una malla STL importados, cada cota de su plano que sale de una car
 ### Cotas vivas (F23a)
 
 En un documento creado por script, cada cota del plano que sale de un `PARAMETROS` se edita con su número: en el panel «Parámetros» del visor («Cotas del plano»; la acción «Cotas» de la barra lo abre) o por MCP con `parametros(id, cotas={id: valor})`. Los ids salen de `exportar(id, "svg", detalle=true)`. Cada edición es una revisión nueva (`restaurar` la deshace). Las cotas sin parámetro salen como «Solo lectura» con su motivo. Cada edición se verifica antes de escribir: si la cota no vuelve a su valor, 422 y nada se guarda. Clic en el overlay 3D: F23b (ADR 0025); clic en el plano: no aplica (el plano es una descarga). Decisión en `docs/decisions/0023-cotas-vivas.md`.
+
+### Transformar, primitivas y booleanas (barra · fase 24b)
+
+En Sólido > Transformar están **Mover / Rotar**, **Escalar** (por eje), **Alinear** (centros o caras por eje, o apilar sobre otra pieza) y **Apoyar sobre cama**. En Sólido > Crear están la caja, el cilindro, la esfera, el cono, el toro, la cuña y el tubo, que se añaden como apoyo. Sólido > Booleanas une, resta o intersecta con una primitiva o con **otra pieza del documento**, que no cambia. Cada acción abre «Preparar una alternativa manual» en Indicaciones: el resultado es un candidato que se compara antes de aplicar. «Pedir cambio con lo seleccionado» (Claude) deja la indicación ligada a la pieza. Decisión en `docs/decisions/0026-transformar-primitivas.md`.
 
 ### Ramas, pasos y comparar (Plan G · G2/G3)
 
