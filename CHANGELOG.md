@@ -22,6 +22,23 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - Cambios de caché: `cotas.js?v=3` (en `parametros.js`), `parametros.js?v=15` y `historial.js?v=3`/`ensamble.js?v=3` (en `tabs.js`), `tabs.js?v=50` (en `app.js`), `app.js?v=53` (en `index.html`). `historial.js` y `ensamble.js` importan `api.js?v=13` (antes sin `?v`).
 - `planos._agujeros` usa el reconocimiento de agujeros del núcleo (`kernel/b123d_kernel.global_axis_holes`), compartido con F23b. Salida de F22 sin cambios.
 
+### Added (medidas vivas, fase 21)
+
+- Panel **Medidas** en el visor (Inspeccionar > Medir, atajo M): los pares de sólidos con nombre más cercanos, con estado `choque` / `contacto` / `holgura`, distancia en mm (3 decimales) y volumen de choque. Se actualiza al cambiar la revisión (agente, parámetros), muestra «Construyendo…» en gris mientras se reconstruye y el valor de cada parámetro en solo lectura.
+- `GET /documentos/{id}/medidas?top=20` (token-free, como `/percibir`): `{revision, solidos, pares, total_pares, ocultos, completo, calculos, tope_calculos, choques, errores, nombres_inciertos, parametros}`. `top` admite de 1 a 100. Documentos STL: 400.
+- Mismas cifras que `percibir` y `check_colisiones`: el pase de pares de `app/percepcion.py` se parte en `_pares_cercanos_con_tope` (con tope opcional de cálculos exactos); la salida de `percibir` no cambia.
+- Límites: 500 cálculos exactos por medición (`completo: false` si se agotan) y una sola entrada de caché por documento, por revisión. Una respuesta de una revisión anterior se descarta en el cliente; una edición durante el cálculo responde 409.
+- `app/medidas.py`, `app/web/static/js/medidas.js`, `tests/test_medidas.py` (12 funciones, 14 casos con la parametrización) y `tests/web/medidas.test.mjs` (8).
+- Decisión numerada como ADR-0024.
+- Sin herramienta MCP nueva: el conjunto de herramientas queda igual.
+
+### Changed (medidas vivas, fase 21)
+
+- Inspeccionar > Medir pasa de «Próximamente · F21» a habilitado (requiere documento).
+- Cambios de caché: `toolbar-actions.js?v=5` (importado solo por `toolbar-ui.js`), `tabs.js?v=48` y `live.js?v=12` (en `app.js`), `app.js?v=50` y `forja-base.css?v=28` (en `index.html`). `medidas.js?v=1` lo importa solo `tabs.js`.
+- `tests/web/toolbar.test.mjs`: la prueba de Medir pasa a comprobar que está habilitado con documento y deshabilitado sin él.
+- Fusión con F23a y F23b (cotas vivas importadas): las versiones de caché finales son `app.js?v=54` (en `index.html`), `tabs.js?v=51`, `toolbar-ui.js?v=8` y `live.js?v=13` (en `app.js`), `toolbar-actions.js?v=7` (en `toolbar-ui.js`), `viewer.js?v=design1-21` (en `tabs.js`), `parametros.js?v=15`, `historial.js?v=3` y `ensamble.js?v=3` (en `tabs.js`), `cotas.js?v=3` (en `parametros.js`), `ramas.js?v=4`, `api.js?v=13` y `forja-base.css?v=28`. `live.js`, `toolbar-ui.js` y `viewer.js` cambian de contenido sin subir versión en su rama de origen; se suben aquí. `?panel=medidas` queda en la lista de paneles de `app.js`. Las cifras de versión de las secciones F21, F23a y F23b son el estado de cada rama antes de fusionar.
+
 ### Added (cotas vivas, F23a)
 
 - Cada cota del plano que sale de un `PARAMETROS` de un script es editable: `GET /documentos/{id}/cotas` lista `{revision, cotas}` con `operacion: "parametro"` (y `min`/`max`) o `solo_lectura` con `razon`; `POST /documentos/{id}/cotas/aplicar` con `{revision, cotas: {id_cota: valor}}` la aplica por el camino de `parametros` (una revisión nueva, restaurable con `restaurar`). Decisión en `docs/decisions/0023-cotas-vivas.md`.

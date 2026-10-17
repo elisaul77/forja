@@ -281,8 +281,23 @@ def _pares_cercanos_por_nombre(
     solids too (`_eje_del_par` needs both for a touching pair). Keys are
     alphabetically ordered ``(nombre_menor, nombre_mayor)``, with every
     stored value reordered to match (``_de_menor``, ``_de_mayor``)."""
+    return _pares_cercanos_con_tope(grupos_indexados, margen_mm)[0]
+
+
+def _pares_cercanos_con_tope(
+    grupos_indexados: list[tuple[str, int, Any, list[float], float]],
+    margen_mm: float,
+    tope_calculos: int | None = None,
+) -> tuple[dict[tuple[str, str], _ParInfo], bool, int]:
+    """Same pass as `_pares_cercanos_por_nombre`, with an optional budget on
+    the EXACT distance calls (Phase 21, `app/medidas.py`): ``(mejor,
+    completo, calculos)``. Once `tope_calculos` exact calls have been made,
+    the next bbox-prefiltered pair stops the walk and ``completo`` is False;
+    a walk that finishes within the budget is complete. ``tope_calculos=None``
+    is the unbounded walk that `percibir` always used."""
     mejor: dict[tuple[str, str], _ParInfo] = {}
     n = len(grupos_indexados)
+    calculos = 0
     for i in range(n):
         nombre_a, _ia, solido_a, bbox_a, _va = grupos_indexados[i]
         for j in range(i + 1, n):
@@ -291,6 +306,9 @@ def _pares_cercanos_por_nombre(
                 continue  # fragments of the same "partida" piece
             if not distancia.bbox_se_acercan(bbox_a, bbox_b, margen_mm):
                 continue
+            if tope_calculos is not None and calculos >= tope_calculos:
+                return mejor, False, calculos
+            calculos += 1
             try:
                 d, pa, pb = distancia.distancia_y_puntos(solido_a, solido_b)
             except Exception:  # noqa: BLE001 - a boolean/distance failure on one pair never aborts the rest
@@ -304,7 +322,7 @@ def _pares_cercanos_por_nombre(
             actual = mejor.get(clave)
             if actual is None or d < actual[0]:
                 mejor[clave] = candidato
-    return mejor
+    return mejor, True, calculos
 
 
 def _relacion_desde_par(nombre: str, a: str, b: str, info: _ParInfo) -> tuple[str, str] | None:

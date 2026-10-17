@@ -26,6 +26,7 @@ export function startLive({ tabs, onLibraryChanged = () => {} }) {
       void listarDocumentos().then(docs => tabs.reconciliar(docs)).catch(() => {});
     } else if (name === "construyendo") {
       show("Construyendo modelo…");
+      tabs.medidasConstruyendo(data.id);
     } else if (name === "construccion_fallida") {
       show("El último cambio falló", "error", 5000);
     } else if (name === "construccion_terminada") {

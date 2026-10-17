@@ -90,6 +90,13 @@ Capturas (scratchpad de la sesión):
 - Suite completa: el conjunto de fallos coincide con el de la línea base `caf1d53`. Comparación contra la salida guardada de la ejecución previa; no se volvió a ejecutar completa en esta fase.
 - `git diff --check`: correcto.
 
+## Medidas vivas (fase 21)
+
+- Panel **Medidas** en el visor, abierto con Inspeccionar > Medir (atajo M) o con `?panel=medidas`; la lista de paneles de `app.js` ya lo admite.
+- Fusionado con F23a (cotas vivas) en `feat/unified-intents`: el panel Parámetros conserva la sección «Cotas del plano» y la acción «Cotas».
+- Pruebas: `node --test tests/web/*.test.mjs` con 139 aprobadas, 0 fallos; `tests/test_medidas.py`, `tests/test_percibir.py` y `tests/test_cotas_parametros.py` con 70 aprobadas en el sandbox desechable.
+- Sin revisión visual ni captura en esta fase: el estado del panel en el navegador queda por verificar.
+
 ## Límites
 
 Revisión visual y de comportamiento, no certificación de accesibilidad ni de compatibilidad con todos los navegadores. No hay prueba de extremo a extremo con un cliente de IA real: el agente se simuló por la ruta HTTP de agente con clave ficticia. Las respuestas del agente no se generan ni se envían desde Forja.
