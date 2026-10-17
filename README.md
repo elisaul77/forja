@@ -26,6 +26,7 @@
 - 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
 - 🔍 **Verificar antes de imprimir** — colisiones y holguras, imprimibilidad FDM (voladizos, paredes finas, cama), percepción espacial en texto (`percibir`).
+- 📏 **Medidas en vivo** — el panel Medidas del visor lista los pares de sólidos más cercanos (contacto, choque, holgura) en mm y se actualiza solo cuando cambia el modelo o un parámetro; las cifras son las mismas que `percibir`.
 - 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
 - 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable, con grafo de ramas, miniatura por paso, historial por pieza y «restaurar solo esta pieza»; las notas siguen a sus caras entre reconstrucciones.
 - 🛡️ **Ejecución aislada** — los scripts corren en un contenedor sandbox sin red, sin secretos y sin acceso a tus documentos.
