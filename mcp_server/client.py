@@ -73,6 +73,11 @@ def _headers_con_token() -> dict[str, str]:
     return {"X-Forja-Token": auth.obtener_token()}
 
 
+def _finito(valor: Any) -> bool:
+    """Número real y finito (un `bool` no cuenta como número aquí)."""
+    return isinstance(valor, (int, float)) and not isinstance(valor, bool) and math.isfinite(valor)
+
+
 def _detalle(resp: httpx.Response) -> str:
     try:
         return str(resp.json().get("detail", resp.text))
@@ -429,11 +434,14 @@ def captura(
     colores_por_solido: bool = True,
     solidos: list[str] | None = None,
     explosion: float = 0.0,
+    foco: list[float] | None = None,
+    radio: float | None = None,
 ) -> dict[str, Any]:
     """Fetch the rendered PNG bytes + the `X-Forja-Captura` caption header;
     the caller (`mcp_server.tools.captura`) wraps the bytes as an MCP
     `Image` content block. `explosion` (F19) se envía solo si es distinto de
-    0, así la petición por defecto no cambia."""
+    0, así la petición por defecto no cambia. `foco` + `radio` (F20) encuadran
+    un punto en mm; van juntos y se validan aquí antes de la petición."""
     params: dict[str, Any] = {
         "azimut": azimut,
         "elevacion": elevacion,
@@ -445,6 +453,15 @@ def captura(
         params["solidos"] = solidos
     if explosion:
         params["explosion"] = explosion
+    if foco is not None or radio is not None:
+        if foco is None or radio is None:
+            return {"error": True, "mensaje": "foco y radio van juntos: radio solo aplica con foco y foco pide radio"}
+        if not isinstance(foco, (list, tuple)) or len(foco) != 3 or not all(_finito(v) for v in foco):
+            return {"error": True, "mensaje": "foco debe ser una lista de tres números x,y,z finitos (mm)"}
+        if not _finito(radio):
+            return {"error": True, "mensaje": "radio debe ser un número finito en mm"}
+        params["foco"] = ",".join(repr(float(v)) for v in foco)
+        params["radio"] = float(radio)
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(f"/documentos/{doc_id}/captura", params=params)
     if resp.status_code >= 400:
@@ -628,11 +645,14 @@ def ensamble(
     quitar: bool = False,
     barrido: str | list[str] | None = None,
     detalle: bool = False,
+    captura_en_choque: bool = False,
 ) -> dict[str, Any]:
     """Read (`None`), define (`articulaciones`), pose (`valores`), clear
     (`quitar=True`) or sweep (`barrido`, read-only) a document's assembly,
     one mode at a time. The GET and the sweep are token-free; the three
-    mutations carry `X-Forja-Token`."""
+    mutations carry `X-Forja-Token`. `captura_en_choque` (F20) pide, tras el
+    barrido, UNA imagen de la pose del primer choque (`imagenes` 0|1) en
+    `png`; el tool la devuelve como imagen."""
     modos = [nombre for nombre, activo in (
         ("articulaciones", articulaciones is not None),
         ("valores", valores is not None),
@@ -654,8 +674,11 @@ def ensamble(
         return {"error": True, "mensaje": 'barrido debe ser "todas" o una lista de identificadores de articulacion'}
     if detalle and barrido is None:
         return {"error": True, "mensaje": "detalle solo aplica con barrido"}
+    if captura_en_choque and barrido is None:
+        return {"error": True, "mensaje": "captura_en_choque solo aplica con barrido"}
 
     ruta = f"/documentos/{doc_id}/ensamble"
+    extra: dict[str, Any] = {}
     try:
         # The pose rebuilds the document through the kernel (de/hacia STEP +
         # reimport), so it gets the heavy budget like `percibir`/`exportar`.
@@ -671,6 +694,8 @@ def ensamble(
                 if barrido != "todas":
                     cuerpo["articulaciones"] = list(barrido)
                 resp = c.post(f"{ruta}/barrido", json=cuerpo)
+                if captura_en_choque and resp.status_code < 400:
+                    extra = _captura_del_primer_choque(c, ruta, resp.json())
             else:
                 resp = c.get(ruta)
     except httpx.HTTPError as exc:
@@ -680,7 +705,28 @@ def ensamble(
         # 409 format refusal (`assemblies.MENSAJE_FORMATO`) travels as its
         # own Spanish sentence, verbatim.
         return {"error": True, **_detalle_estructurado(resp)}
-    return resp.json()
+    return {**resp.json(), **extra}
+
+
+def _captura_del_primer_choque(c: httpx.Client, ruta: str, barrido: dict[str, Any]) -> dict[str, Any]:
+    """Una sola imagen: la pose del primer choque del barrido (por orden de
+    articulaciones), solo el par. Sin choque, `imagenes: 0` con el motivo. Un
+    fallo de la captura queda en `captura_error`: el veredicto del barrido se
+    conserva, nunca se pierde en silencio."""
+    for articulacion, resultado in barrido.get("barrido", {}).items():
+        choque = resultado.get("primer_choque")
+        if choque is None:
+            continue
+        a, b = choque["par"]
+        datos = {"articulacion": articulacion, "valor": choque["valor"], "par": [a, b], "tipo": choque["tipo"]}
+        resp = c.get(f"{ruta}/captura-choque",
+                     params={"articulacion": articulacion, "valor": choque["valor"], "a": a, "b": b})
+        if resp.status_code >= 400:
+            return {"imagenes": 0, "captura_error": _detalle(resp), **datos}
+        return {"imagenes": 1, "png": resp.content,
+                "caption": resp.headers.get("x-forja-captura", ""), **datos}
+    return {"imagenes": 0,
+            "motivo": "sin choque confirmado en el barrido: no hay pose de choque que mostrar"}
 
 
 _MENSAJE_POSE = "respuesta inesperada del puente de suspension (/pose)"

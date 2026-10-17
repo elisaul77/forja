@@ -2162,6 +2162,8 @@ def capturar_documento(
     colores_por_solido: bool = Query(default=True),
     solidos: list[str] | None = Query(default=None),
     explosion: float = Query(default=0.0),
+    foco: str | None = Query(default=None, max_length=120),
+    radio: float | None = Query(default=None),
 ) -> Response:
     """Headless PNG render of a document (Phase 5B, feedback item 1) — see
     `app/render.py` for the full rendering recipe. Backs the MCP `captura`
@@ -2176,9 +2178,14 @@ def capturar_documento(
     `explosion` (F19, ADR-0027): 0 a 1, vista explosionada de display. Solo
     documentos STEP con piezas con nombre; no toca la geometría guardada.
     `explosion=0` no cambia nada del render.
+
+    `foco=x,y,z` y `radio` (F20, ADR-0028): encuadre centrado en ese punto, con
+    radio en mm (entre 0,5 y 5 veces la diagonal). Van juntos; sin ellos el
+    render es el de siempre.
     """
     try:
         factor_explosion = vista_explosionada.validar_factor(explosion)
+        foco_xyz = render.parsear_foco(foco) if foco is not None else None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     registro = _registry.get(doc_id)
@@ -2224,6 +2231,8 @@ def capturar_documento(
             alto=alto,
             colores_por_solido=colores_por_solido,
             desplazamientos=desplazamientos,
+            foco=foco_xyz,
+            radio=radio,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

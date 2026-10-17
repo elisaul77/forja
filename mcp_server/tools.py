@@ -11,6 +11,7 @@ Tool set here MUST match the tool table in
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mcp.server.mcpserver import Image
@@ -533,6 +534,8 @@ def captura(
     colores_por_solido: bool = True,
     solidos: list[str] | None = None,
     explosion: float = 0.0,
+    foco: list[float] | None = None,
+    radio: float | None = None,
 ) -> list[Any] | dict[str, Any]:
     """Renderiza una imagen PNG (Fase 5B, reemplaza el stub de la Fase 3) del
     documento: un z-buffer por pixel en numpy (sin GPU/OpenGL, sin
@@ -551,6 +554,12 @@ def captura(
     la geometría ni el documento. Solo documentos STEP; 0 (por defecto) es la
     vista normal. Fuera de 0-1 o con un STL devuelve `{error: true, mensaje}`.
 
+    `foco` (lista `[x, y, z]` en mm) y `radio` (mm, entre 0,5 y 5 veces la
+    diagonal de la escena) encuadran una captura enfocada en ese punto: se
+    recorta la misma proyección alrededor del punto, sin cambiar la cámara. Van
+    juntos. Si el punto no ve ninguna pieza, sale el encuadre general y la
+    leyenda lo dice (nunca una imagen vacía). Sin ellos, la vista de siempre.
+
     Devuelve una imagen (bloque de contenido MCP), o
     `{error: true, mensaje}` si el documento no existe, no tiene desglose de
     solidos, o algun nombre en `solidos` no existe en el documento.
@@ -566,6 +575,8 @@ def captura(
         colores_por_solido=colores_por_solido,
         solidos=solidos,
         explosion=explosion,
+        foco=foco,
+        radio=radio,
     )
     if "error" in resultado:
         return resultado
@@ -583,7 +594,8 @@ def ensamble(
     quitar: bool = False,
     barrido: str | list[str] | None = None,
     detalle: bool = False,
-) -> dict[str, Any]:
+    captura_en_choque: bool = False,
+) -> list[Any] | dict[str, Any]:
     """Ensamblaje de un documento (Fase 6): definirlo, posarlo, leerlo o
     quitarlo. UN solo modo por llamada, como `parametros(id, valores=None)`;
     dos modos juntos devuelven `{error: true, mensaje}` sin tocar el
@@ -605,6 +617,10 @@ def ensamble(
       que se agota da `ok: false`, `agotado` y `muestreada`, nunca un choque.
       Un choque confirmado se distingue en `frase`. `detalle=True` agrega
       `muestras` (hasta 64). Ni escribe ni cambia la geometria ni el historial.
+      `captura_en_choque=True` (con `barrido`, Fase F20) añade UNA imagen de la
+      pose del primer choque, solo el par, encuadrada en su punto de contacto;
+      la respuesta trae `imagenes` (0 o 1) y `par`. Sin choque confirmado no hay
+      imagen y `motivo` lo dice. Nunca una imagen por contacto.
 
     - Sin argumentos (leer): `{id, piezas, articulaciones, valores,
       obsoleto}`. `piezas` son los solidos CON NOMBRE del documento;
@@ -637,8 +653,13 @@ def ensamble(
     `409` si la geometria cambio, `422` si la definicion o la pose no pasan
     la validacion.
     """
-    return client.ensamble(id, articulaciones=articulaciones, valores=valores, quitar=quitar,
-                           barrido=barrido, detalle=detalle)
+    resultado = client.ensamble(id, articulaciones=articulaciones, valores=valores, quitar=quitar,
+                                barrido=barrido, detalle=detalle, captura_en_choque=captura_en_choque)
+    if "png" in resultado:
+        # Solo con `captura_en_choque`: una imagen del primer choque + el veredicto.
+        png = resultado.pop("png")
+        return [Image(data=png, format="png"), json.dumps(resultado, ensure_ascii=False)]
+    return resultado
 
 
 def suspension(

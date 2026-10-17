@@ -340,6 +340,10 @@ headless real), `check_colisiones`, `percibir`, `parametros`, `check_fdm`,
 
 `captura(id, explosion=0.5)` (MCP) o `GET /documentos/{id}/captura?explosion=0.5` separa las piezas con nombre a lo largo de sus articulaciones o alejándolas del centro del conjunto, para ver las piezas ocultas. Es solo de visualización: no cambia la geometría ni el documento, y `explosion=0` (por defecto) es el render de siempre. Solo documentos STEP. En el visor, el botón «Explosionar» (también en la cinta, grupo Vista) abre un deslizador de separación de 0 a 100 %. La animación de un ensamblaje manda sobre la explosión mientras corre. Ver `docs/decisions/0027-vista-explosionada.md`.
 
+### Captura enfocada y primer choque (F20)
+
+`captura(id, foco=[x,y,z], radio=mm)` (MCP) o `GET /documentos/{id}/captura?foco=x,y,z&radio=` recorta la misma proyección alrededor de un punto: el encuadre es un cuadrado de `2 × radio` centrado en él (radio entre 0,5 mm y 5 veces la diagonal). Si el punto no ve ninguna pieza, sale el encuadre general con una nota. `ensamble(id, barrido="todas", captura_en_choque=True)` añade una sola imagen de la pose del primer choque, solo el par, encuadrada en su punto de contacto, desde la primera vista donde se ven las dos piezas; sin choque confirmado no hay imagen. Solo lectura, sin herramientas nuevas, y sin `foco` la captura es la de siempre. Ver `docs/decisions/0028-captura-enfocada.md`.
+
 ### Ensambles y puentes (Fase 6)
 
 `ensamble(id, ...)` es UNA herramienta de MCP con modos excluyentes: sin

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import tempfile
 import time
 from pathlib import Path
@@ -32,9 +33,10 @@ import eventos
 import naming
 import notes
 import parametros
+import render
 import solids
 import versioning
-from checks import barrido, pose_clearance
+from checks import barrido, distancia, pose_clearance
 from kernel import b123d_kernel as kernel
 
 router = APIRouter(prefix="/documentos/{doc_id}/ensamble")
@@ -421,6 +423,105 @@ def sweep_assembly(doc_id: str, body: Sweep, response: Response):
         raise HTTPException(422, str(exc)) from exc
     response.headers["Cache-Control"] = "no-store"
     return {**resultado, "ms": round((time.monotonic() - comienzo) * 1000)}
+
+
+# Lado de la imagen, el mismo tope que `captura` (F20, ADR-0028).
+_CHOQUE_LADO_MIN, _CHOQUE_LADO_MAX = 100, 2000
+
+
+def _pose_del_choque(state: dict, rest: dict[str, Any], articulacion: str, valor: float,
+                     a: str, b: str) -> dict[str, Any]:
+    """Formas posadas de la pose de un choque (F20): la de `valor` sobre
+    `articulacion`, con el par `a`/`b` comprobado. Lanza ValueError en español."""
+    por_id = {joint["id"]: joint for joint in state["articulaciones"]}
+    if articulacion not in por_id:
+        raise ValueError("articulación desconocida")
+    if por_id[articulacion]["tipo"] == "fijo":
+        raise ValueError(f"la articulación fija {articulacion} no se mueve; no hay pose de choque")
+    if a == b:
+        raise ValueError("el par de choque necesita dos piezas distintas")
+    assemblies._values(state, {articulacion: valor})  # ValueError fuera de limites
+    posed = assemblies.pose_shapes_from_rest(state, rest, {articulacion: valor})
+    faltan = [nombre for nombre in (a, b) if nombre not in posed]
+    if faltan:
+        raise ValueError(f"pieza desconocida en el par: {faltan}")
+    return posed
+
+
+# Vistas que se prueban para la captura del choque, en orden: la de siempre
+# (45/25) primero y luego los otros tres cuadrantes, y dos elevaciones.
+_VISTAS_CHOQUE = ((45.0, 25.0), (225.0, 25.0), (135.0, 25.0), (315.0, 25.0),
+                  (45.0, -25.0), (225.0, -25.0), (135.0, -25.0), (315.0, -25.0))
+
+
+def _vista_del_choque(grupos: dict[str, Any], foco: tuple[float, float, float], radio: float
+                      ) -> tuple[tuple[float, float], bool]:
+    """Primera vista donde se ven las dos piezas del par; si ninguna las
+    muestra, la primera y `False` (la captura lo dice en la leyenda)."""
+    for azimut, elevacion in _VISTAS_CHOQUE:
+        if render.piezas_visibles(grupos, azimut, elevacion, foco, radio) == set(grupos):
+            return (azimut, elevacion), True
+    return _VISTAS_CHOQUE[0], False
+
+
+def _foco_del_par(forma_a: Any, forma_b: Any) -> tuple[float, float, float]:
+    """Punto de contacto del par: el punto medio de sus dos puntos más cercanos
+    (OCC, `distancia.distancia_y_puntos`). Un par que se solapa da distancia 0 y
+    esos puntos aproximan la zona de contacto; el encuadre sigue siendo el par."""
+    _distancia, punto_a, punto_b = distancia.distancia_y_puntos(forma_a, forma_b)
+    return ((punto_a.X + punto_b.X) / 2.0, (punto_a.Y + punto_b.Y) / 2.0, (punto_a.Z + punto_b.Z) / 2.0)
+
+
+@router.get("/captura-choque")
+def captura_en_choque(
+    doc_id: str,
+    articulacion: str = Query(min_length=1, max_length=64),
+    valor: float = Query(),
+    a: str = Query(min_length=1, max_length=200),
+    b: str = Query(min_length=1, max_length=200),
+    azimut: float | None = Query(default=None),
+    elevacion: float | None = Query(default=None),
+    ancho: int = Query(default=512, ge=_CHOQUE_LADO_MIN, le=_CHOQUE_LADO_MAX),
+    alto: int = Query(default=512, ge=_CHOQUE_LADO_MIN, le=_CHOQUE_LADO_MAX),
+) -> Response:
+    """PNG de la pose de un choque del barrido, solo el par, encuadrado en su
+    punto de contacto (F20, ADR-0028). Lo pide `ensamble(barrido, captura_en_choque)`
+    tras el barrido, con el `valor` y el `par` de `primer_choque`. Sin `azimut`
+    y `elevacion` elige la primera vista donde se ven las dos piezas. Solo
+    lectura: la pose se arma en memoria desde las formas de reposo."""
+    _path(doc_id)
+    if not math.isfinite(valor):
+        raise HTTPException(422, "valor debe ser un número finito")
+    with parametros.bloqueo(doc_id):
+        _path(doc_id)
+        state = _estado_actual(doc_id)
+        if state is None:
+            raise HTTPException(422, "el documento no tiene ensamble")
+        if assemblies.is_stale(doc_id):
+            raise HTTPException(409, "el ensamble está desactualizado")
+        try:
+            state, rest = assemblies.rest_shapes(doc_id)
+        except (ValueError, OverflowError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+    try:
+        posed = _pose_del_choque(state, rest, articulacion, valor, a, b)
+        grupos, colores, _inciertos = render.grupos_desde_formas(posed, [a, b])
+        foco = _foco_del_par(posed[a], posed[b])
+        radio = render.radio_por_defecto(grupos)
+        nota = ""
+        if azimut is None or elevacion is None:
+            (azimut, elevacion), todas_visibles = _vista_del_choque(grupos, foco, radio)
+            if not todas_visibles:
+                nota = ", una pieza queda tapada en las vistas probadas"
+        png, caption = render.renderizar_png(
+            grupos, colores, azimut=azimut, elevacion=elevacion, ancho=ancho, alto=alto,
+            foco=foco, radio=radio,
+        )
+        caption += nota
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return Response(content=png, media_type="image/png",
+                    headers={"X-Forja-Captura": caption, "Cache-Control": "no-store"})
 
 
 @router.post("", dependencies=[Depends(auth.requiere_token)])
