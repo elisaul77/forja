@@ -177,6 +177,20 @@ def inspect(doc_id, part, points=None, radius=5, limit=30):
     return result
 
 
+# Overlap below this volume is treated as contact (coincident faces), not
+# penetration — same order as check_colisiones' default tolerance.
+OVERLAP_TOLERANCE_MM3 = 0.5
+
+
+def _overlap_volume(a, b):
+    """Shared volume of two closed meshes, or None if it cannot be computed."""
+    try:
+        inter = trimesh.boolean.intersection([a, b], engine="manifold")
+    except Exception:
+        return None
+    return float(abs(inter.volume)) if inter is not None and len(inter.faces) else 0.0
+
+
 def clearance(a, b):
     if max(len(a.faces), len(b.faces)) > MAX_FACES:
         raise ValueError("Malla demasiado grande; delimita la región")
@@ -184,8 +198,13 @@ def clearance(a, b):
     manager.add_object("a", a)
     collision = bool(manager.in_collision_single(b))
     distance = float(manager.min_distance_single(b))
+    solids_ok = bool(a.is_volume and b.is_volume)
     containment = None
-    if a.is_volume and b.is_volume and not collision:
+    overlap = None
+    if solids_ok and collision:
+        # Touching surfaces also "collide"; only real shared volume interferes.
+        overlap = _overlap_volume(a, b)
+    if solids_ok and not collision:
 
         def shell_points(m):
             groups = trimesh.graph.connected_components(
@@ -199,14 +218,24 @@ def clearance(a, b):
         containment = bool(
             a.contains(shell_points(b)).any() or b.contains(shell_points(a)).any()
         )
+    if overlap is not None:
+        interference = overlap > OVERLAP_TOLERANCE_MM3
+        contact = collision and not interference
+        note = "Contacto sin penetración." if contact else "Las piezas comparten volumen."
+    else:
+        interference = collision or containment is True
+        contact = None
+        note = "Intersección de superficies incluye contacto. Contención requiere volúmenes cerrados."
     return {
         "distance_mm": max(0, distance),
         "surface_intersection": collision,
+        "contact": contact,
+        "overlap_mm3": None if overlap is None else round(overlap, 3),
         "containment": containment,
-        "interference": collision or containment is True,
-        "method": "fcl_triangle_surfaces",
-        "solid_check_complete": bool(a.is_volume and b.is_volume),
-        "note": "Intersección de superficies incluye contacto. Contención requiere volúmenes cerrados.",
+        "interference": interference,
+        "method": "fcl_triangle_surfaces+manifold_overlap" if overlap is not None else "fcl_triangle_surfaces",
+        "solid_check_complete": solids_ok,
+        "note": note,
     }
 
 
@@ -214,6 +243,9 @@ def rotation_matrix(angles):
     matrix = np.eye(4)
     matrix[:3, :3] = Rotation.from_euler("xyz", angles, degrees=True).as_matrix()
     return matrix
+
+
+SECTION_POINT_BUDGET = 1500
 
 
 def section(m, origin, normal, limit=64):
@@ -250,11 +282,23 @@ def section(m, origin, normal, limit=64):
                 if current == start:
                     break
             lines.append(path)
+    # Shared point budget across all polylines so a detailed section stays
+    # small enough for an MCP reply; coordinates rounded to 1 µm.
+    kept = lines[:limit]
+    total = sum(len(line) for line in kept)
+    stride = max(1, int(np.ceil(total / SECTION_POINT_BUDGET)))
+
+    def thin(line):
+        out = line[::stride]
+        if line and out[-1] is not line[-1]:
+            out.append(line[-1])
+        return [[round(c, 3) for c in point] for point in out]
+
     return {
-        "polylines": [
-            line[:: max(1, int(np.ceil(len(line) / 256)))] for line in lines[:limit]
-        ],
+        "polylines": [thin(line) for line in kept],
         "more": max(0, len(lines) - limit),
+        "points_total": total,
+        "stride": stride,
         "method": "mesh_plane_intersection",
         "stitch_tolerance_mm": 1e-8,
     }

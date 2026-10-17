@@ -330,7 +330,7 @@ function showEvidence(parent, data) {
     parent.append(
       el(
         "p",
-        `Separación: ${data.distance_mm.toFixed(3)} mm. ${data.interference ? "Contacto o interferencia detectados." : ""} ${data.note || ""}`,
+        `Separación: ${data.distance_mm.toFixed(3)} mm. ${data.interference ? "Interferencia: las piezas comparten volumen." : data.contact ? "Se tocan sin penetrar." : ""} ${data.note || ""}`,
       ),
     );
   else if (data?.max_error_mm != null)
