@@ -1,4 +1,4 @@
-"""Cotas vivas (F23a, ADR-0022): the dimensions of the drawing (F22) that trace
+"""Cotas vivas (F23a, ADR-0023): the dimensions of the drawing (F22) that trace
 to a PARAMETROS entry of a script document become live controls.
 
 Pure logic, no HTTP and no geometry. `clasificar` annotates the F22

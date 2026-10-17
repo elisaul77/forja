@@ -1,4 +1,4 @@
-// F23a (ADR-0022): cotas vivas en el panel de parámetros. Funciones puras de
+// F23a (ADR-0023): cotas vivas en el panel de parámetros. Funciones puras de
 // `cotas.js` (etiquetas, validación del campo, descarte de respuestas viejas)
 // y una guarda: el módulo nunca escribe HTML, todo texto va por textContent.
 import { test } from 'node:test';

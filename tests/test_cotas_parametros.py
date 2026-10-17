@@ -1,4 +1,4 @@
-"""Cotas vivas (F23a, ADR-0022): dimensions of the drawing that trace to a
+"""Cotas vivas (F23a, ADR-0023): dimensions of the drawing that trace to a
 PARAMETROS entry of a script document are edited through the same path as
 `parametros`. Unit tests over `app/cotas.py`, HTTP over `/documentos/{id}/cotas`
 (real sandbox: script documents run in forja-sandbox), and the MCP client

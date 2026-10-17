@@ -12,7 +12,7 @@ import {
   crearTrazo,
   borrarTrazo,
   actualizarVisibilidadTrazo,
-} from "./api.js?v=11";
+} from "./api.js?v=12";
 import {
   createIntent,
   sendIntentAction,
@@ -144,6 +144,15 @@ export class ForjaNotasControlador {
 
   async cargarInicial() {
     await this.recargar();
+  }
+
+  /** Sale de cualquier modo de nota o pizarra (lo usa la barra al cancelar).
+   * Un trazo a medias se descarta; los diálogos abiertos no se tocan. */
+  cancelarModos() {
+    if (this.modo && this.modo.startsWith("pizarra")) this._salirDeModoPizarra();
+    this._configPizarraPendiente = null;
+    this._trazoActual = null;
+    this.modo = null;
   }
 
   destruir() {

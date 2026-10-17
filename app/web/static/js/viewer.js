@@ -5,8 +5,15 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { decodePieceBundle } from "./piece-data.js?v=8";
+import { calcularEncuadre, aplicarMarcosOrtograficos, alturaAlRedimensionar, liberarAristas, liberarMalla } from "./viewer-geometria.js?v=2";
 
 const loader = new STLLoader();
+
+// Vistas estándar (barra de herramientas): dirección desde la que mira la cámara.
+const VISTAS_ESTANDAR = {
+  frontal: [0, -1, 0], posterior: [0, 1, 0], izquierda: [-1, 0, 0],
+  derecha: [1, 0, 0], superior: [0, 0, 1], inferior: [0, 0, -1], isometrica: [1, -1, 0.75],
+};
 
 /**
  * Resuelve un token CSS (--fj-*) a un color usable por three.js.
@@ -84,10 +91,16 @@ export class ForjaViewer {
     this.grid = new THREE.GridHelper(400, 40, colorGrid, colorGrid);
     this.grid.rotation.x = Math.PI / 2; // plano XY como suelo (convención Z arriba)
     this.scene.add(this.grid);
-    this.scene.add(new THREE.AxesHelper(100));
+    this.ejes = new THREE.AxesHelper(100);
+    this.scene.add(this.ejes);
 
     this.mesh = null;
     this.wireframe = false;
+    // Estado de la barra de herramientas (fase 24a).
+    this.ortogonal = false;
+    this.aristas = false;
+    this.rayosX = false;
+    this.corteActivo = false;
     this.pieces = new Map();
     this.selectedPiece = null;
     this.isolatedPiece = null;
@@ -169,6 +182,8 @@ export class ForjaViewer {
       punto: [hit.point.x, hit.point.y, hit.point.z],
       indiceTriangulo: hit.object.userData.triangleIds?.[hit.faceIndex] ?? hit.faceIndex,
       pieceName: hit.object.userData.pieceName ?? null,
+      // Normal de la cara en coordenadas del mundo (para «Mirar de frente»).
+      normal: hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).toArray() : null,
     };
   }
 
@@ -192,6 +207,7 @@ export class ForjaViewer {
 
   /** Corta la escena por el plano: oculta lo que queda entre el plano y la cámara. */
   activarCorte(origen, normal) {
+    this.corteActivo = true;
     const n = new THREE.Vector3(...normal);
     const plano = new THREE.Plane(n.clone().negate(), n.dot(new THREE.Vector3(...origen)));
     // Local clipping: only the model is cut, never the plane or the strokes.
@@ -207,6 +223,7 @@ export class ForjaViewer {
   }
 
   desactivarCorte() {
+    this.corteActivo = false;
     this.scene.traverse((obj) => {
       if (obj.isMesh && obj.userData._ladoOriginal !== undefined) {
         obj.material.side = obj.userData._ladoOriginal;
@@ -335,8 +352,20 @@ export class ForjaViewer {
     const ancho = Math.max(1, Math.round(rect.width));
     const alto = Math.max(1, Math.round(rect.height));
     this.renderer.setSize(ancho, alto, false);
-    this.camera.aspect = ancho / alto;
-    this.camera.updateProjectionMatrix();
+    this._aspecto = ancho / alto;
+    if (this.ortogonal) {
+      // El zoom de la rueda se conserva al redimensionar (solo el encuadre explícito lo reinicia).
+      // La altura del marco es la del último encuadre (no la distancia): así, encuadrar y
+      // redimensionar al mismo tamaño deja exactamente el mismo marco.
+      this._alturaOrtogonal = alturaAlRedimensionar({
+        alturaGuardada: this._alturaOrtogonal,
+        distancia: this.camera.position.distanceTo(this.controls.target),
+      });
+      aplicarMarcosOrtograficos(this.camera, { altura: this._alturaOrtogonal, aspecto: this._aspecto });
+    } else {
+      this.camera.aspect = this._aspecto;
+      this.camera.updateProjectionMatrix();
+    }
     this.render();
   }
 
@@ -355,8 +384,7 @@ export class ForjaViewer {
 
     if (this.mesh) {
       this.scene.remove(this.mesh);
-      this.mesh.geometry.dispose();
-      this.mesh.material.dispose();
+      liberarMalla(this.mesh);
     }
 
     const colorMalla = cssVarColor("--fj-ink-3", "#a8a29e");
@@ -402,6 +430,9 @@ export class ForjaViewer {
     this._applyPieceColors();
     this.selectPiece(this.pieces.has(selected) ? selected : null);
     this._applyPieceVisibility();
+    // La barra de herramientas conserva aristas y rayos X al recargar la malla.
+    if (this.aristas) this.setAristas(true);
+    if (this.rayosX) this.setRayosX(true);
     if (conservarVista) this.render();
     else this.ajustarVista();
   }
@@ -417,9 +448,10 @@ export class ForjaViewer {
     const radio = Math.max(esfera.radius, 1);
 
     this.controls.target.copy(centro);
-    const verticalFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
-    const horizontalFov = Math.atan(Math.tan(verticalFov) * this.camera.aspect);
-    const distancia = radio / Math.sin(Math.min(verticalFov, horizontalFov)) * 1.15;
+    // Ortográfica no tiene fov: calcularEncuadre usa la distancia de referencia y la altura del marco.
+    const { distancia, altura } = calcularEncuadre({
+      ortogonal: this.ortogonal, fov: this.camera.fov, aspecto: this._aspecto, radio,
+    });
     this.camera.up.set(0, 0, 1);
     // OrbitControls caches the Z-up frame at construction. Keep it fixed;
     // a tiny offset avoids a degenerate look-at at the exact vertical pole.
@@ -428,7 +460,13 @@ export class ForjaViewer {
     this.camera.position.copy(centro).add(viewDirection.normalize().multiplyScalar(distancia));
     this.camera.near = Math.max(radio / 100, 0.01);
     this.camera.far = distancia * 50;
-    this.camera.updateProjectionMatrix();
+    if (this.ortogonal) {
+      // Encuadre explícito: el zoom vuelve a 1.
+      this._alturaOrtogonal = altura;
+      aplicarMarcosOrtograficos(this.camera, { altura, aspecto: this._aspecto, reiniciarZoom: true });
+    } else {
+      this.camera.updateProjectionMatrix();
+    }
     this.controls.update();
     this.render();
   }
@@ -497,6 +535,76 @@ export class ForjaViewer {
     }
   }
 
+  /** Vista estándar (1-6 y 0 en la barra): la cámara mira desde la cara indicada. */
+  setVistaEstandar(nombre) {
+    const direccion = VISTAS_ESTANDAR[nombre];
+    if (!direccion) throw new Error(`vista estándar desconocida: ${nombre}`);
+    this.ajustarVista(direccion);
+  }
+
+  /** Ortográfica (true) o perspectiva (false). Mantiene la posición y la luz frontal. */
+  setOrtogonal(enabled) {
+    if (enabled === this.ortogonal) return;
+    const previa = this.camera;
+    const nueva = enabled
+      ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1e6)
+      : new THREE.PerspectiveCamera(45, 1, 0.1, 1e6);
+    nueva.up.set(0, 0, 1);
+    nueva.position.copy(previa.position);
+    nueva.quaternion.copy(previa.quaternion);
+    for (const hijo of [...previa.children]) { previa.remove(hijo); nueva.add(hijo); }
+    this.scene.remove(previa);
+    this.scene.add(nueva);
+    this.camera = nueva;
+    this.controls.object = nueva;
+    this.ortogonal = enabled;
+    this.resize();
+  }
+
+  _objetosModelo() {
+    return [this.mesh, ...[...this.pieces.values()].map((p) => p.mesh)].filter(Boolean);
+  }
+
+  /** Aristas vivas: líneas en los bordes con ángulo mayor de 30 grados. */
+  setAristas(enabled) {
+    this.aristas = enabled;
+    for (const objeto of this._objetosModelo()) {
+      liberarAristas(objeto);
+      if (!enabled) continue;
+      const lineas = new THREE.LineSegments(
+        new THREE.EdgesGeometry(objeto.geometry, 30),
+        new THREE.LineBasicMaterial({ color: cssVarColor("--fj-ink-1", "#fafaf9") }),
+      );
+      lineas.userData.esAristas = true;
+      objeto.add(lineas);
+    }
+    this.render();
+  }
+
+  /** Rayos X: el modelo se ve translúcido para revisar el interior. */
+  setRayosX(enabled) {
+    this.rayosX = enabled;
+    for (const objeto of this._objetosModelo()) {
+      const material = objeto.material;
+      material.transparent = enabled;
+      material.opacity = enabled ? 0.3 : 1;
+      material.depthWrite = !enabled;
+      material.needsUpdate = true;
+    }
+    this.render();
+  }
+
+  setEjes(enabled) {
+    this.ejes.visible = enabled;
+    this.render();
+  }
+
+  /** PNG de la vista actual (para descargar). */
+  capturar() {
+    this.render();
+    return this.renderer.domElement.toDataURL("image/png");
+  }
+
   setGridVisible(enabled) {
     this.grid.visible = enabled;
     this.render();
@@ -544,8 +652,7 @@ export class ForjaViewer {
   _clearPieces() {
     for (const piece of this.pieces.values()) {
       this.scene.remove(piece.mesh);
-      piece.mesh.geometry.dispose();
-      piece.mesh.material.dispose();
+      liberarMalla(piece.mesh);
     }
     this.pieces.clear();
     this.selectedPiece = null;
@@ -670,10 +777,7 @@ export class ForjaViewer {
     this._clearPieces();
     this._limpiarAnotaciones();
     this.ocultarPlanoPizarra();
-    if (this.mesh) {
-      this.mesh.geometry.dispose();
-      this.mesh.material.dispose();
-    }
+    liberarMalla(this.mesh);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }

@@ -81,14 +81,15 @@ def _ahora() -> str:
 
 def crear_snapshot(doc_id: str, mensaje: str, archivos: dict[str, bytes],
                    autor: str | None = None, fuente: dict[str, bytes] | None = None,
-                   pendiente: bool = True) -> str:
+                   pendiente: bool = True, extra: dict[str, str] | None = None) -> str:
     """Commit ``archivos`` (name -> bytes) as a new snapshot for ``doc_id``.
     Returns the new snapshot id. ``fuente`` (optional) adds source blobs
     under ``_fuente/`` that are never returned by :func:`leer_snapshot`.
-    ``pendiente`` (G2): queue a post-change state commit for the request."""
+    ``pendiente`` (G2): queue a post-change state commit for the request.
+    ``extra`` (ADR-0022): trailers such as ``{"Accion": "deshacer"}``."""
     snapshot_id = uuid.uuid4().hex[:12]
     quien = autor or autor_actual.get()
-    git_store.commit(doc_id, archivos, mensaje, snapshot_id, _ahora(), quien, fuente)
+    git_store.commit(doc_id, archivos, mensaje, snapshot_id, _ahora(), quien, fuente, extra=extra)
     lista = cambios_pendientes.get()
     if pendiente and lista is not None:
         lista.append((doc_id, mensaje, quien))

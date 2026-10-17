@@ -236,7 +236,7 @@ geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
 
 ### Cotas vivas (F23a)
 
-En un documento creado por script, cada cota del plano que sale de un `PARAMETROS` se edita con su número: en el panel «Parámetros» del visor («Cotas del plano») o por MCP con `parametros(id, cotas={id: valor})`. Los ids salen de `exportar(id, "svg", detalle=true)`. Cada edición es una revisión nueva (`restaurar` la deshace). Las cotas sin parámetro salen como «Solo lectura» con su motivo. Importados STEP/STL, clic en el plano y cilindros o caras: F23b. Decisión en `docs/decisions/0022-cotas-vivas.md`.
+En un documento creado por script, cada cota del plano que sale de un `PARAMETROS` se edita con su número: en el panel «Parámetros» del visor («Cotas del plano») o por MCP con `parametros(id, cotas={id: valor})`. Los ids salen de `exportar(id, "svg", detalle=true)`. Cada edición es una revisión nueva (`restaurar` la deshace). Las cotas sin parámetro salen como «Solo lectura» con su motivo. Importados STEP/STL, clic en el plano y cilindros o caras: F23b. Decisión en `docs/decisions/0023-cotas-vivas.md`.
 
 ### Ramas, pasos y comparar (Plan G · G2/G3)
 
@@ -271,6 +271,8 @@ Visor: cajón «Ramas y fusiones» de la pestaña Historial y modo «Comparar» 
 | `GET /documentos/{id}/pasos/{sha}/miniatura.png?pieza=` | PNG 256×192 renderizado en el servidor, cacheado por revisión en `.cache/miniaturas_pasos/` (sin token; `sha` = 7–40 hex) |
 | `POST /documentos/{id}/piezas/{pieza}/restaurar` 🔑 | `{desde, forzar?, simular?}` — devuelve UNA pieza a ese paso con el motor de «traer pieza» (verificación, todo o nada); `resultado` también `sin_cambios` |
 | `POST /documentos/{id}/pasos/{sha}/restaurar` 🔑 | todo el documento a ese paso como paso NUEVO de la rama activa (`restaurado`/`sin_cambios`) |
+| `GET /documentos/{id}/deshacer` | cursor de deshacer y rehacer: `puede_deshacer`, `puede_rehacer`, `cabeza`, `destino_deshacer`, `destino_rehacer` (calculado del historial, ADR-0022) |
+| `POST /documentos/{id}/deshacer` 🔑 · `POST /documentos/{id}/rehacer` 🔑 | `{esperado}` = `cabeza` leída; 409 si el historial cambió. Crea una revisión nueva; nunca reescribe el historial |
 
 MCP: acción `restaurar_pieza` en `rama` (`desde` + `piezas=[nombre]`).
 Visor: pestaña **Historial** = grafo SVG con carriles de color por rama (curvas de

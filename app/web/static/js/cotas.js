@@ -1,4 +1,4 @@
-// Forja — cotas vivas (F23a, ADR-0022). Dentro del panel de parámetros de un
+// Forja — cotas vivas (F23a, ADR-0023). Dentro del panel de parámetros de un
 // script paramétrico: cada cota del plano que sale de un PARAMETROS se edita
 // con su número; las demás muestran su razón. Mismo endpoint que la
 // herramienta MCP `parametros(cotas=...)`. Todo texto va por textContent.

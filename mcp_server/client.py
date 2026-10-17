@@ -338,7 +338,7 @@ def parametros(
     -> apply them (token-protected POST, re-runs the stored script).
     `materiales` (fdm-D) -> POST /materiales first (no re-run); the answer
     then carries `materiales` (and, alone, also the read of the schema).
-    `cotas` (F23a, ADR-0022) -> live dimensions `{id_cota: valor}` applied
+    `cotas` (F23a, ADR-0023) -> live dimensions `{id_cota: valor}` applied
     through POST /cotas/aplicar; `revision` is the one the ids were read at
     (default: the current one). Exclusive with `valores`."""
     if cotas is not None and valores is not None:

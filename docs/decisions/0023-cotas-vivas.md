@@ -1,4 +1,4 @@
-# ADR 0022 — Cotas vivas (F23a): editar una cota de un script editando su parámetro
+# ADR 0023 — Cotas vivas (F23a): editar una cota de un script editando su parámetro
 
 Date: 2026-10-17. Status: implemented in F23a (branch `phase-23a-cotas-vivas`). F23b (documentos importados STEP/STL: cilindros, caras paralelas, escala por eje) queda para una fase aparte. Supersedes nothing; extends ADR 0021 (descriptor de cota) and ADR 0003 (versionado).
 
