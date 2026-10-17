@@ -9,10 +9,21 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ### Added (cotas vivas, F23a)
 
-- Cada cota del plano que sale de un `PARAMETROS` de un script es editable: `GET /documentos/{id}/cotas` lista `{revision, cotas}` con `operacion: "parametro"` (y `min`/`max`) o `solo_lectura` con `razon`; `POST /documentos/{id}/cotas/aplicar` con `{revision, cotas: {id: valor}}` la aplica por el camino de `parametros` (una revisión nueva, restaurable con `restaurar`). Decisión en `docs/decisions/0023-cotas-vivas.md`.
+- Cada cota del plano que sale de un `PARAMETROS` de un script es editable: `GET /documentos/{id}/cotas` lista `{revision, cotas}` con `operacion: "parametro"` (y `min`/`max`) o `solo_lectura` con `razon`; `POST /documentos/{id}/cotas/aplicar` con `{revision, cotas: {id_cota: valor}}` la aplica por el camino de `parametros` (una revisión nueva, restaurable con `restaurar`). Decisión en `docs/decisions/0023-cotas-vivas.md`.
 - MCP: `parametros(id, cotas={id: valor}, revision=None)` (sin herramienta nueva; excluyente con `valores`). `exportar(id, "svg", detalle=true)` añade `revision` y `operacion`/`solo_lectura`/`razon` a cada cota.
-- Visor: «Cotas del plano» dentro del panel «Parámetros»; un 409 recarga el listado.
-- Sin revertir si la cota no sigue al parámetro: la respuesta lo marca con `no_sigue_al_parametro` (ver la decisión, desviaciones 1 y 4). Los documentos importados y las mallas no son editables todavía (F23b).
+- Visor: «Cotas del plano» dentro del panel «Parámetros»; un 409 recarga el listado. La acción «Cotas» de la barra abre ese panel y lleva el foco a la sección (sin PARAMETROS, lo dice en la franja de estado). Clic sobre la cota en el plano o en el overlay 3D: pendiente para una sub-fase posterior.
+- Los documentos importados y las mallas no son editables todavía (F23b).
+
+### Changed (cotas vivas, F23a revisión 1)
+
+- **Verificar antes de escribir.** La edición se ejecuta en staging y la geometría resultante se mide antes de cualquier escritura. Si una cota editada no vuelve a su valor (±0,01 mm), la respuesta es 422 `{error: true, mensaje}` en español y nada se guarda: sin revisión nueva, sin snapshot, sidecars, repositorio git ni cursor de deshacer cambiados. Sustituye al «sin revertir» de la primera versión.
+- `no_sigue_al_parametro` ya no aparece en una respuesta 200; `editadas` añade `pedido_mm`.
+- Fallo del script en el camino de cotas: igual que `parametros` (422 y snapshot preventivo, ADR 0003). Solo el rechazo por no seguir no deja rastro.
+- Vínculo por valor: una cota ligada a una clave que el script nunca lee (`PARAMS["clave"]`) sale de solo lectura con `razon: "ligada por valor: ..."`. Comprobación estática, sin ejecutar el script (ver límites en la decisión).
+- Caché del listado por (documento, revisión, entradas): un render del panel no vuelve a proyectar; máximo 32 entradas.
+- El cliente MCP muestra el `mensaje` de los 422 `{error, mensaje}` en lugar del JSON crudo.
+- Cambios de caché: `api.js?v=13` en todos sus importadores (antes convivían v=11, v=12 y v=13: dos instancias con el estado del token); `toolbar-actions.js?v=6`, `toolbar-ui.js?v=7`, `app.js?v=52` (en `index.html`), `tabs.js?v=49`, `parametros.js?v=14`, `cupon.js?v=4`, `cotas.js?v=2`, `notes.js?v=24`, `design.js?v=9`, `historial2.js?v=5`, `ramas.js?v=4`, `library.js?v=12`, `live.js?v=12`, `perfil.js?v=2`, `materiales.js?v=2`, `pieces.js?v=10`.
+- Pruebas: `tests/test_cotas_parametros.py` (no sigue: sin revisión, sidecars y repositorio idénticos; fallo de script con snapshot preventivo; caché; vínculo por valor; MCP con mensaje), `tests/web/toolbar.test.mjs` (acción «Cotas»).
 
 ### Refactored
 

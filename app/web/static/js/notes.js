@@ -12,14 +12,14 @@ import {
   crearTrazo,
   borrarTrazo,
   actualizarVisibilidadTrazo,
-} from "./api.js?v=12";
+} from "./api.js?v=13";
 import {
   createIntent,
   sendIntentAction,
   designPiecesOf,
   resolveDesignPiece,
   subsamplePoints,
-} from "./design.js?v=8";
+} from "./design.js?v=9";
 
 // ---------------- Diálogos compartidos (uno solo puede estar abierto a la vez) ----------------
 

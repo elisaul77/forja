@@ -1,6 +1,6 @@
 // Forja — panel «Ramas» (Plan G · G2) y modo «Comparar» (G3).
 // Las mutaciones llevan el token de sesión, igual que restaurar.
-import { obtenerTokenSesion } from "./api.js?v=12";
+import { obtenerTokenSesion } from "./api.js?v=13";
 
 const panelRamas = document.getElementById("fj-panel-ramas");
 const enc = encodeURIComponent;

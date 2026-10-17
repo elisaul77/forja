@@ -236,7 +236,7 @@ geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
 
 ### Cotas vivas (F23a)
 
-En un documento creado por script, cada cota del plano que sale de un `PARAMETROS` se edita con su número: en el panel «Parámetros» del visor («Cotas del plano») o por MCP con `parametros(id, cotas={id: valor})`. Los ids salen de `exportar(id, "svg", detalle=true)`. Cada edición es una revisión nueva (`restaurar` la deshace). Las cotas sin parámetro salen como «Solo lectura» con su motivo. Importados STEP/STL, clic en el plano y cilindros o caras: F23b. Decisión en `docs/decisions/0023-cotas-vivas.md`.
+En un documento creado por script, cada cota del plano que sale de un `PARAMETROS` se edita con su número: en el panel «Parámetros» del visor («Cotas del plano»; la acción «Cotas» de la barra lo abre) o por MCP con `parametros(id, cotas={id: valor})`. Los ids salen de `exportar(id, "svg", detalle=true)`. Cada edición es una revisión nueva (`restaurar` la deshace). Las cotas sin parámetro salen como «Solo lectura» con su motivo. Cada edición se verifica antes de escribir: si la cota no vuelve a su valor, 422 y nada se guarda. Clic en el plano o en el overlay 3D, importados STEP/STL, cilindros o caras: pendiente (F23b y sub-fase posterior). Decisión en `docs/decisions/0023-cotas-vivas.md`.
 
 ### Ramas, pasos y comparar (Plan G · G2/G3)
 

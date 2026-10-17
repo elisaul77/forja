@@ -2,7 +2,7 @@
 // script paramétrico: cada cota del plano que sale de un PARAMETROS se edita
 // con su número; las demás muestran su razón. Mismo endpoint que la
 // herramienta MCP `parametros(cotas=...)`. Todo texto va por textContent.
-import { obtenerTokenSesion } from "./api.js?v=11";
+import { obtenerTokenSesion } from "./api.js?v=13";
 
 const ETIQUETAS_TIPO = { tamano_total: "Tamaño", diametro: "Diámetro", posicion: "Posición" };
 const ETIQUETAS_EJE = { x: "X", y: "Y", z: "Z" };
