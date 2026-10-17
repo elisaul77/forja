@@ -294,6 +294,51 @@ test('Seleccionar cancela la herramienta: notas, pizarra, selección y picking d
   assert.equal(e.lienzo.listeners.pointerup?.length ?? 0, 0, 'el picking sigue armado');
 });
 
+// Medidas de la cinta sin layout: cada grupo mide `anchoGrupo` y la fila `medida.fila`.
+function medirCinta(anchoGrupo, medida) {
+  const proto = crearDocumento().createElement('div').constructor.prototype;
+  Object.defineProperty(proto, 'offsetWidth', { configurable: true, get() { return this.classes.has('fj-cinta__grupo') ? anchoGrupo : 0; } });
+  Object.defineProperty(proto, 'clientWidth', { configurable: true, get() { return this.classes.has('fj-cinta__grupos') ? medida.fila : 0; } });
+  return () => { delete proto.offsetWidth; delete proto.clientWidth; };
+}
+const gruposDe = (pestana) => [...new Set(ACCIONES.filter((a) => a.pestana === pestana).map((a) => a.grupo))];
+
+test('cinta de una fila: los grupos que no caben van al menú «más», accesible por teclado', () => {
+  const medida = { fila: 700 };
+  const restaurar = medirCinta(200, medida);
+  try {
+    const { doc, barra } = montarEscena();
+    const grupos = gruposDe('vista');
+    const bloques = doc.querySelectorAll('.fj-cinta__grupo');
+    const visibles = bloques.filter((b) => !b.hidden).length;
+    assert.equal(visibles, Math.floor((700 - 64) / 200));
+    assert.ok(grupos.length > visibles, 'el caso de prueba necesita grupos ocultos');
+    const mas = doc.querySelector('.fj-cinta__mas');
+    assert.equal(mas.hidden, false);
+    assert.equal(mas.getAttribute('aria-haspopup'), 'menu');
+    assert.equal(mas.getAttribute('aria-expanded'), 'false');
+    const menu = doc.querySelector('.fj-cinta__menu');
+    assert.equal(menu.hidden, true, 'el menú debe nacer cerrado');
+    // Enter/clic abre; las flechas bajan al primer elemento.
+    mas.click();
+    assert.equal(mas.getAttribute('aria-expanded'), 'true');
+    assert.equal(menu.hidden, false);
+    const items = doc.querySelectorAll('[role="menuitem"]');
+    const esperadas = ACCIONES.filter((a) => a.pestana === 'vista' && grupos.indexOf(a.grupo) >= visibles);
+    assert.equal(items.length, esperadas.length);
+    items[0].dispatch('keydown', { key: 'Escape' });
+    assert.equal(mas.getAttribute('aria-expanded'), 'false');
+    assert.equal(doc.activeElement, mas, 'Escape debe devolver el foco al botón «más»');
+    // Con la fila más ancha ya no hay nada que ocultar.
+    medida.fila = 2000;
+    barra.actualizar();
+    assert.equal(doc.querySelector('.fj-cinta__mas-wrap').hidden, true);
+    assert.equal(doc.querySelectorAll('.fj-cinta__grupo').filter((b) => b.hidden).length, 0);
+  } finally {
+    restaurar();
+  }
+});
+
 test('las alternancias reflejan aria-pressed e is-on y conservan el foco', () => {
   const { doc, e } = montarEscena();
   assert.equal(boton(doc, 'vista-ortografica').getAttribute('aria-pressed'), 'false');

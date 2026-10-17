@@ -18,10 +18,23 @@ export function calcularEncuadre({ ortogonal = false, fov, aspecto, radio }) {
   const fovUsable = !ortogonal && Number.isFinite(fov) && fov > 0 ? fov : FOV_REFERENCIA;
   const vertical = (fovUsable / 2) * (Math.PI / 180);
   const horizontal = Math.atan(Math.tan(vertical) * a);
+  // Medio alto de la ortográfica: el medio ancho (alto × aspecto) también debe cubrir la
+  // esfera, así que con un visor más estrecho que cuadrado el alto crece en 1 / aspecto.
   return {
     distancia: (r / Math.sin(Math.min(vertical, horizontal))) * MARGEN_ENCUADRE,
-    altura: r * MARGEN_ENCUADRE,
+    altura: (r * MARGEN_ENCUADRE) / Math.min(a, 1),
   };
+}
+
+/**
+ * Medio alto del marco ortográfico al redimensionar. Se conserva el que dejó el último
+ * encuadre (la distancia de la cámara no es esa altura); sin encuadre previo se deriva
+ * de la distancia con el fov de referencia.
+ */
+export function alturaAlRedimensionar({ alturaGuardada, distancia }) {
+  if (Number.isFinite(alturaGuardada) && alturaGuardada > 0) return alturaGuardada;
+  const d = Number.isFinite(distancia) && distancia > 0 ? distancia : 1;
+  return d * Math.tan((FOV_REFERENCIA / 2) * (Math.PI / 180));
 }
 
 /**

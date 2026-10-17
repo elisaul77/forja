@@ -6,13 +6,19 @@ import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=2";
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo, buscarPorAtajo,
   nuevaPilaRevisiones, sincronizarPilaRevisiones, tomarDeshacer, tomarRehacer, fijarCabeza, devolverPaso,
-} from "./toolbar.js?v=2";
+  repartirGrupos,
+} from "./toolbar.js?v=3";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js";
 import { obtenerHistorial } from "./api.js?v=11";
 
 const NS = "http://www.w3.org/2000/svg";
 const SPRITE = "/static/icons/forja-icons.svg?v=2";
 const RETRASO_TOOLTIP_MS = 350;
+// Reserva del botón «más» al repartir la fila (igual que su min-width en forja-toolbar.css).
+const ANCHO_MAS_PX = 64;
+// Sin layout (DOM de pruebas) no hay medida: se toma 0 y todo cabe. En un navegador
+// offsetWidth y clientWidth son siempre números finitos.
+const medirEn = (elemento, propiedad) => (Number.isFinite(elemento[propiedad]) ? elemento[propiedad] : 0);
 
 /**
  * Monta la barra sobre #fj-cinta. `tabs` es el TabManager de app.js.
@@ -32,6 +38,9 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
   // Pilas de deshacer/rehacer por documento (sesión) y documentos con un paso en curso.
   const pilas = new Map();
   const enCurso = new Set();
+  // Cinta de una fila: pestaña activa, grupos que no caben y estado del menú «más».
+  let entradasGrupos = [];
+  let masAbierto = false;
 
   // ---------------- Estado y avisos ----------------
   const entradaActiva = () => tabs.tabs.get(tabs.activeId) ?? null;
@@ -317,11 +326,106 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
   gruposEl.setAttribute("aria-label", "Herramientas de la pestaña");
   cinta.replaceChildren(fila, gruposEl);
 
+  // «Más»: menú con los grupos que no caben en la fila (teclado: Enter/flechas/Escape).
+  const masEnvoltorio = documento.createElement("div");
+  masEnvoltorio.className = "fj-cinta__mas-wrap";
+  masEnvoltorio.hidden = true;
+  const masBoton = documento.createElement("button");
+  masBoton.type = "button";
+  masBoton.className = "fj-cinta__mas";
+  masBoton.dataset.mas = "mas";
+  masBoton.textContent = "Más";
+  masBoton.setAttribute("aria-haspopup", "menu");
+  masBoton.setAttribute("aria-controls", "fj-cinta-menu");
+  masBoton.setAttribute("aria-expanded", "false");
+  masBoton.setAttribute("aria-label", "Más herramientas");
+  const menuMas = documento.createElement("div");
+  menuMas.id = "fj-cinta-menu";
+  menuMas.className = "fj-cinta__menu";
+  menuMas.setAttribute("role", "menu");
+  menuMas.setAttribute("aria-label", "Más herramientas");
+  menuMas.hidden = true;
+  masEnvoltorio.append(masBoton, menuMas);
+  const elementosMenu = () => [...menuMas.querySelectorAll('[role="menuitem"]')];
+
+  function pintarMas() {
+    const abierto = masAbierto && !masEnvoltorio.hidden;
+    masBoton.setAttribute("aria-expanded", String(abierto));
+    menuMas.hidden = !abierto;
+  }
+
+  function llenarMenu(ocultos, estado) {
+    menuMas.replaceChildren();
+    for (const { nombre, acciones } of ocultos) {
+      const titulo = documento.createElement("div");
+      titulo.className = "fj-cinta__menu-grupo";
+      titulo.setAttribute("aria-hidden", "true");
+      titulo.textContent = nombre;
+      menuMas.append(titulo);
+      for (const accion of acciones) {
+        const { habilitada } = estadoAccion(accion, estado);
+        const item = documento.createElement("button");
+        item.type = "button";
+        item.className = `fj-cinta__menu-item${habilitada ? "" : " is-disabled"}`;
+        item.setAttribute("role", "menuitem");
+        item.setAttribute("aria-disabled", String(!habilitada));
+        item.dataset.accion = accion.id;
+        item.textContent = accion.etiqueta;
+        item.addEventListener("click", () => {
+          masAbierto = false;
+          ejecutarAccion(accion);
+        });
+        menuMas.append(item);
+      }
+    }
+  }
+
+  // Mide cada grupo con todos visibles y oculta desde el final los que no caben.
+  function repartirCinta() {
+    for (const entrada of entradasGrupos) entrada.bloque.hidden = false;
+    const anchos = entradasGrupos.map((entrada) => medirEn(entrada.bloque, "offsetWidth"));
+    const { visibles, ocultos } = repartirGrupos(anchos, medirEn(gruposEl, "clientWidth"), ANCHO_MAS_PX);
+    for (const indice of ocultos) entradasGrupos[indice].bloque.hidden = true;
+    masEnvoltorio.hidden = ocultos.length === 0;
+    if (ocultos.length === 0) masAbierto = false;
+    llenarMenu(ocultos.map((indice) => entradasGrupos[indice]), estadoActual());
+    pintarMas();
+    return visibles;
+  }
+
+  masBoton.addEventListener("click", () => {
+    masAbierto = !masAbierto;
+    pintarMas();
+    if (masAbierto) elementosMenu()[0]?.focus();
+  });
+  masBoton.addEventListener("keydown", (evento) => {
+    if (evento.key !== "ArrowDown") return;
+    evento.preventDefault();
+    masAbierto = true;
+    pintarMas();
+    elementosMenu()[0]?.focus();
+  });
+  menuMas.addEventListener("keydown", (evento) => {
+    if (evento.key === "Escape") {
+      evento.preventDefault();
+      masAbierto = false;
+      pintarMas();
+      masBoton.focus();
+      return;
+    }
+    if (evento.key !== "ArrowDown" && evento.key !== "ArrowUp") return;
+    evento.preventDefault();
+    const items = elementosMenu();
+    const indice = items.indexOf(documento.activeElement);
+    const siguiente = evento.key === "ArrowDown" ? indice + 1 : indice - 1;
+    items[(siguiente + items.length) % items.length]?.focus();
+  });
+
   function renderizar() {
     sincronizarVisor();
     // Redibujar la cinta reemplaza sus botones: se devuelve el foco al mismo control.
     const enCinta = documento.activeElement?.closest?.("#fj-cinta");
-    const idFoco = enCinta ? documento.activeElement.dataset?.accion ?? null : null;
+    const idFoco = enCinta ? documento.activeElement.dataset?.accion ?? documento.activeElement.dataset?.mas ?? null : null;
     const estado = estadoActual();
     const pestanas = PESTANAS.filter((p) => !p.cluster);
     pestanasEl.replaceChildren();
@@ -347,12 +451,12 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
       pestanasEl.append(boton);
     }
 
-    gruposEl.replaceChildren();
     const grupos = new Map();
     for (const accion of ACCIONES.filter((a) => a.pestana === pestanaActiva)) {
       if (!grupos.has(accion.grupo)) grupos.set(accion.grupo, []);
       grupos.get(accion.grupo).push(accion);
     }
+    entradasGrupos = [];
     for (const [nombre, acciones] of grupos) {
       const bloque = documento.createElement("div");
       bloque.className = "fj-cinta__grupo";
@@ -366,14 +470,17 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
       titulo.setAttribute("aria-hidden", "true");
       titulo.textContent = nombre;
       bloque.append(botones, titulo);
-      gruposEl.append(bloque);
+      entradasGrupos.push({ nombre, acciones, bloque });
     }
+    gruposEl.replaceChildren(...entradasGrupos.map((entrada) => entrada.bloque), masEnvoltorio);
+    repartirCinta();
 
     claudeEl.replaceChildren();
     for (const accion of ACCIONES.filter((a) => a.pestana === "claude")) {
       claudeEl.append(crearBoton(accion, estado, { ia: true }));
     }
-    if (idFoco) documento.querySelector(`#fj-cinta [data-accion="${idFoco}"]`)?.focus();
+    if (idFoco === "mas") masBoton.focus();
+    else if (idFoco) documento.querySelector(`#fj-cinta [data-accion="${idFoco}"]`)?.focus();
   }
 
   // ---------------- Paleta de comandos (Ctrl+K) ----------------
@@ -533,7 +640,15 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
 
   // Los clics del visor (Cuadrícula, Malla) llegan aquí al burbujear: la cinta se
   // redibuja para reflejar el estado nuevo sin esperar a una acción de la barra.
-  documento.addEventListener("click", () => renderizar());
+  // Un clic fuera del «más» cierra su menú; uno dentro (o en sus elementos) lo deja decidir.
+  documento.addEventListener("click", (evento) => {
+    if (masAbierto && !evento.target?.closest?.(".fj-cinta__mas-wrap")) masAbierto = false;
+    renderizar();
+  });
+  // Redibujar al cambiar el ancho de la cinta (ventana, panel lateral, pantalla completa).
+  if (typeof globalThis.ResizeObserver === "function") {
+    new globalThis.ResizeObserver(() => repartirCinta()).observe(cinta);
+  }
   // La pila de deshacer es de la sesión del documento activo: al cambiar de documento
   // o cerrarlo se descarta (al volver se reconstruye desde el historial).
   tabs.onEstadoCambio = () => {

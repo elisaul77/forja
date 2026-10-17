@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  calcularEncuadre, aplicarMarcosOrtograficos, liberarAristas, liberarMalla,
+  calcularEncuadre, aplicarMarcosOrtograficos, alturaAlRedimensionar, liberarAristas, liberarMalla,
 } from '../../app/web/static/js/viewer-geometria.js';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
@@ -94,4 +94,36 @@ test('viewer.js cablea el encuadre y la liberación compartidos', () => {
   assert.ok(aristas.length > 0, 'no encuentro setAristas');
   assert.doesNotMatch(aristas, /\.dispose\(\)/, 'setAristas libera las aristas a mano');
   assert.ok((visor.match(/liberarMalla\(/g) ?? []).length >= 3, 'faltan liberaciones con liberarMalla');
+});
+
+// ---------------- Ortográfica (fase 24a, revisión 2) ----------------
+
+test('encuadre ortográfico: ambas dimensiones contienen la esfera también en vertical (aspecto 0.5)', () => {
+  const radio = 10;
+  const e = calcularEncuadre({ ortogonal: true, aspecto: 0.5, radio });
+  // Medio alto y medio ancho (= medio alto × aspecto) deben cubrir el radio.
+  assert.ok(e.altura >= radio, `medio alto ${e.altura} no cubre el radio`);
+  assert.ok(e.altura * 0.5 >= radio, `medio ancho ${e.altura * 0.5} no cubre el radio`);
+  // Con aspecto ≥ 1 el alto sigue siendo radio × margen.
+  assert.equal(calcularEncuadre({ ortogonal: true, aspecto: 2, radio }).altura, radio * 1.15);
+});
+
+test('reajustar con el mismo tamaño tras el encuadre da el mismo marco', () => {
+  const aspecto = 1.6;
+  const enc = calcularEncuadre({ ortogonal: true, aspecto, radio: 10 });
+  const marco = (camara) => [camara.left, camara.right, camara.top, camara.bottom];
+  const camara = { zoom: 1, left: 0, right: 0, top: 0, bottom: 0, updateProjectionMatrix() {} };
+  aplicarMarcosOrtograficos(camara, { altura: enc.altura, aspecto, reiniciarZoom: true });
+  const trasEncuadre = marco(camara);
+  // El redimensionado usa la altura guardada por el encuadre, no la distancia de la cámara.
+  const alturaTrasResize = alturaAlRedimensionar({ alturaGuardada: enc.altura, distancia: enc.distancia });
+  aplicarMarcosOrtograficos(camara, { altura: alturaTrasResize, aspecto });
+  assert.deepEqual(marco(camara), trasEncuadre);
+  assert.equal(camara.zoom, 1);
+});
+
+test('reajustar sin encuadre previo usa la altura de referencia desde la distancia', () => {
+  const alturaRef = alturaAlRedimensionar({ alturaGuardada: undefined, distancia: 30 });
+  assert.ok(Number.isFinite(alturaRef) && alturaRef > 0);
+  assert.equal(alturaRef, 30 * Math.tan((22.5 * Math.PI) / 180));
 });

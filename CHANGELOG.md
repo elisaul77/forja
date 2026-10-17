@@ -31,6 +31,17 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - «Vistas estándar» ya no queda cortado en pantallas de 1280 px: los grupos de la cinta se envuelven en lugar de desplazarse.
 - Pruebas: `tests/web/viewer-geometria.test.mjs` (9), `tests/web/toolbar-ui.test.mjs` (12), `tests/web/toolbar.test.mjs` (18).
 
+### Fixed (barra de herramientas, revisión 2 de fase 24a)
+
+- Ortográfica: el medio alto del encuadre es radio × margen / min(aspecto, 1), así que la esfera cabe también en vertical en visores más estrechos que cuadrados (`app/web/static/js/viewer-geometria.js`).
+- Ortográfica: redimensionar conserva la altura del último encuadre y el zoom; encuadrar y redimensionar al mismo tamaño dan el mismo marco (antes la altura salía de la distancia de la cámara).
+- Cinta de una sola fila: los grupos de la pestaña activa ya no envuelven en tres filas. Los que no caben pasan a un menú «Más», accesible con teclado (Flecha abajo abre, flechas recorren, Escape cierra y devuelve el foco). La cinta mide 95 px a 1280 y 900 px de ancho (antes ~410 px).
+- La cinta reparte los grupos con `repartirGrupos` (`app/web/static/js/toolbar.js`): nunca salta un grupo para meter uno más pequeño.
+- La línea Claude queda en la misma fila de pestañas también en pantallas de 1100 px o menos; sus botones muestran el icono junto al texto.
+- Pendiente: deshacer y rehacer siguen como en la revisión 1. Su rediseño depende de un cambio en el servidor (las restauraciones de deshacer no se distinguen de las demás en el historial).
+- Cambios de caché: `forja-toolbar.css?v=5`, `app.js?v=46`, `tabs.js?v=45`, `toolbar-ui.js?v=3`, `toolbar.js?v=3`, `viewer.js?v=design1-20`, `viewer-geometria.js?v=2`.
+- Pruebas: `tests/web/viewer-geometria.test.mjs` (12), `tests/web/toolbar-ui.test.mjs` (13), `tests/web/toolbar.test.mjs` (20).
+
 ### Changed (indicaciones unificadas)
 
 - La pestaña Diseño pasa a ser **Indicaciones**: la única lista donde se explica lo que se quiere cambiar. Las notas y trazos del visor son las marcas de una indicación; se enlazan por id y no se copian ni migran. Las notas antiguas sin indicación aparecen como marcas sueltas con «Convertir en indicación». `notas.json` y `design.json` antiguos cargan sin cambios. Decisión en `docs/decisions/0019-unified-intents.md`.

@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { decodePieceBundle } from "./piece-data.js?v=8";
-import { calcularEncuadre, aplicarMarcosOrtograficos, liberarAristas, liberarMalla } from "./viewer-geometria.js?v=1";
+import { calcularEncuadre, aplicarMarcosOrtograficos, alturaAlRedimensionar, liberarAristas, liberarMalla } from "./viewer-geometria.js?v=2";
 
 const loader = new STLLoader();
 
@@ -355,10 +355,13 @@ export class ForjaViewer {
     this._aspecto = ancho / alto;
     if (this.ortogonal) {
       // El zoom de la rueda se conserva al redimensionar (solo el encuadre explícito lo reinicia).
-      aplicarMarcosOrtograficos(this.camera, {
-        altura: this.camera.position.distanceTo(this.controls.target) * Math.tan(THREE.MathUtils.degToRad(22.5)),
-        aspecto: this._aspecto,
+      // La altura del marco es la del último encuadre (no la distancia): así, encuadrar y
+      // redimensionar al mismo tamaño deja exactamente el mismo marco.
+      this._alturaOrtogonal = alturaAlRedimensionar({
+        alturaGuardada: this._alturaOrtogonal,
+        distancia: this.camera.position.distanceTo(this.controls.target),
       });
+      aplicarMarcosOrtograficos(this.camera, { altura: this._alturaOrtogonal, aspecto: this._aspecto });
     } else {
       this.camera.aspect = this._aspecto;
       this.camera.updateProjectionMatrix();
@@ -459,6 +462,7 @@ export class ForjaViewer {
     this.camera.far = distancia * 50;
     if (this.ortogonal) {
       // Encuadre explícito: el zoom vuelve a 1.
+      this._alturaOrtogonal = altura;
       aplicarMarcosOrtograficos(this.camera, { altura, aspecto: this._aspecto, reiniciarZoom: true });
     } else {
       this.camera.updateProjectionMatrix();

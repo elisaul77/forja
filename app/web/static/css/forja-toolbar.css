@@ -38,7 +38,7 @@
   color: var(--fj-ink-3);
   font: inherit;
   font-size: var(--fj-text-sm);
-  padding: var(--fj-space-2) var(--fj-space-3);
+  padding: var(--fj-space-1) var(--fj-space-3);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -51,7 +51,7 @@
   display: flex;
   align-items: center;
   gap: var(--fj-space-1);
-  padding: var(--fj-space-1) var(--fj-space-3);
+  padding: 0 var(--fj-space-3);
   border-left: 1px solid var(--fj-line);
   background: var(--fj-ai-soft);
   flex: 0 0 auto;
@@ -61,20 +61,24 @@
 
 .fj-cinta__grupos {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: stretch;
   gap: 0;
-  min-height: 74px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .fj-cinta__grupo {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: var(--fj-space-1) var(--fj-space-2) 0;
+  padding: 0 var(--fj-space-2);
   border-right: 1px solid var(--fj-line);
   flex: 0 0 auto;
 }
+
+.fj-cinta__grupo[hidden] { display: none; }
 
 .fj-cinta__botones {
   display: flex;
@@ -82,11 +86,81 @@
   gap: 2px;
 }
 
+/* «Más»: los grupos que no caben en la fila, en un menú desplegable. */
+.fj-cinta__mas-wrap {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  padding: var(--fj-space-1) var(--fj-space-2) 0;
+}
+
+.fj-cinta__mas-wrap[hidden] { display: none; }
+
+.fj-cinta__mas {
+  appearance: none;
+  min-width: 64px;
+  padding: var(--fj-space-2) var(--fj-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--fj-r-sm);
+  background: transparent;
+  color: var(--fj-ink-2);
+  font: inherit;
+  font-size: var(--fj-text-sm);
+  cursor: pointer;
+}
+
+.fj-cinta__mas:hover { background: var(--fj-line); border-color: var(--fj-line-strong); }
+.fj-cinta__mas[aria-expanded="true"] { background: var(--fj-accent-soft); border-color: var(--fj-accent); color: var(--fj-ink-1); }
+.fj-cinta__mas:focus-visible { outline: 2px solid var(--fj-accent); outline-offset: 1px; }
+
+.fj-cinta__menu {
+  position: absolute;
+  top: 100%;
+  right: var(--fj-space-2);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--fj-space-1);
+  background: var(--fj-surface);
+  border: 1px solid var(--fj-line);
+  border-radius: var(--fj-r-md);
+  box-shadow: var(--fj-shadow-md);
+}
+
+.fj-cinta__menu[hidden] { display: none; }
+
+.fj-cinta__menu-grupo {
+  padding: var(--fj-space-2) var(--fj-space-2) var(--fj-space-1);
+  font-size: var(--fj-text-xs);
+  color: var(--fj-ink-4);
+}
+
+.fj-cinta__menu-item {
+  appearance: none;
+  padding: var(--fj-space-2) var(--fj-space-3);
+  border: 0;
+  border-radius: var(--fj-r-sm);
+  background: transparent;
+  color: var(--fj-ink-1);
+  font: inherit;
+  font-size: var(--fj-text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fj-cinta__menu-item:hover,
+.fj-cinta__menu-item:focus-visible { background: var(--fj-line); outline: none; }
+.fj-cinta__menu-item.is-disabled { color: var(--fj-ink-5); cursor: not-allowed; }
+
 .fj-cinta__titulo {
   font-size: var(--fj-text-xs);
   color: var(--fj-ink-4);
   text-align: center;
-  padding: var(--fj-space-1) 0;
+  padding: 0;
   white-space: nowrap;
 }
 
@@ -99,7 +173,7 @@
   gap: 2px;
   min-width: 64px;
   max-width: 88px;
-  padding: var(--fj-space-1) var(--fj-space-2);
+  padding: 2px var(--fj-space-2);
   border: 1px solid transparent;
   border-radius: var(--fj-r-sm);
   background: transparent;
@@ -117,8 +191,9 @@
 .fj-cinta__boton.is-disabled { color: var(--fj-ink-5); cursor: not-allowed; }
 .fj-cinta__boton.is-disabled:hover { background: transparent; border-color: transparent; }
 .fj-cinta__boton--ia { color: var(--fj-ink-2); }
-.fj-cinta__claude .fj-cinta__boton { min-width: 60px; max-width: 76px; }
+.fj-cinta__claude .fj-cinta__boton { min-width: 60px; max-width: 76px; flex-direction: row; padding: 2px 6px; }
 .fj-cinta__claude .fj-cinta__icono { width: 18px; height: 18px; }
+.fj-cinta__grupos .fj-cinta__icono { width: 20px; height: 20px; }
 .fj-cinta__claude .fj-cinta__texto { max-width: 74px; font-size: 0.6875rem; }
 .fj-cinta__boton--ia.is-disabled { color: var(--fj-ink-5); }
 
@@ -133,7 +208,7 @@
   flex: 0 0 auto;
 }
 
-.fj-cinta__texto { max-width: 84px; overflow: hidden; text-overflow: ellipsis; }
+.fj-cinta__texto { max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Tooltip propio: el texto entra solo como texto plano. */
 .fj-tooltip {
@@ -200,12 +275,8 @@
 .fj-app--enfoque .fj-topbar,
 .fj-app--enfoque .fj-tabs { display: none; }
 
-/* Pantallas estrechas: el bloque Claude baja a su propia fila para que todas
-   las pestañas sigan visibles; los grupos se desplazan en horizontal. */
-@media (max-width: 1100px) {
-  .fj-cinta__fila { flex-direction: column; align-items: stretch; }
-  .fj-cinta__claude { border-left: 0; border-top: 1px solid var(--fj-line); }
-}
+/* Pantallas estrechas: la cinta sigue en una sola fila de pestañas, bloque Claude
+   incluido (las pestañas se desplazan en horizontal); los grupos que no caben van a «Más». */
 
 @media (max-width: 900px) {
   .fj-cinta__boton { min-width: 56px; }

@@ -8,7 +8,7 @@ import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo,
   buscarPorAtajo, validarRegistro, ATAJOS_RESERVADOS,
   nuevaPilaRevisiones, sincronizarPilaRevisiones, tomarDeshacer, tomarRehacer, fijarCabeza, devolverPaso,
-  pilaDesdeHistorial,
+  pilaDesdeHistorial, repartirGrupos,
 } from '../../app/web/static/js/toolbar.js';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
@@ -195,10 +195,34 @@ test('pila de revisiones: un fallo devuelve el paso a su pila', () => {
   assert.equal(tomarDeshacer(sincronizarPilaRevisiones(nuevaPilaRevisiones(), [])), null, 'sin historial no hay paso');
 });
 
-test('la cinta envuelve sus grupos para que «Vistas estándar» no quede cortado a 1280 px', () => {
-  const regla = leer('app/web/static/css/forja-toolbar.css').match(/\.fj-cinta__grupos\s*\{[^}]*\}/)?.[0] ?? '';
-  assert.match(regla, /flex-wrap:\s*wrap/);
-  assert.doesNotMatch(regla, /overflow-x:\s*auto/);
+test('la cinta es una sola fila (no envuelve) y los grupos ocultos y el «más» se ocultan con [hidden]', () => {
+  const css = leer('app/web/static/css/forja-toolbar.css');
+  const regla = css.match(/\.fj-cinta__grupos\s*\{[^}]*\}/)?.[0] ?? '';
+  assert.match(regla, /flex-wrap:\s*nowrap/);
+  assert.doesNotMatch(regla, /flex-wrap:\s*wrap/);
+  assert.match(css, /\.fj-cinta__grupo\[hidden\]\s*\{[^}]*display:\s*none/);
+  assert.match(css, /\.fj-cinta__mas-wrap\[hidden\]\s*\{[^}]*display:\s*none/);
+});
+
+test('repartirGrupos: los grupos que no caben pasan al «más» en orden, sin saltar huecos', () => {
+  assert.deepEqual(repartirGrupos([200, 200, 200, 200], 700, 64), { visibles: 3, ocultos: [3] });
+  // Todo cabe: no hay «más».
+  assert.deepEqual(repartirGrupos([100, 100], 300, 64), { visibles: 2, ocultos: [] });
+  // Justo cabe el total: tampoco hay «más».
+  assert.deepEqual(repartirGrupos([100, 100], 200, 64), { visibles: 2, ocultos: [] });
+  // El 50 cabría, pero no se salta al 300: el orden de la cinta manda.
+  assert.deepEqual(repartirGrupos([100, 300, 50], 400, 64), { visibles: 1, ocultos: [1, 2] });
+  // Ni el primero cabe junto al «más».
+  assert.deepEqual(repartirGrupos([300], 200, 64), { visibles: 0, ocultos: [0] });
+  // Sin medida (fila oculta o sin layout) todo se considera visible.
+  assert.deepEqual(repartirGrupos([0, 0], 0, 64), { visibles: 2, ocultos: [] });
+});
+
+test('repartirGrupos rechaza medidas no finitas o negativas en vez de ocultar grupos en silencio', () => {
+  assert.throws(() => repartirGrupos([Number.NaN], 100, 64), TypeError);
+  assert.throws(() => repartirGrupos([-1], 100, 64), TypeError);
+  assert.throws(() => repartirGrupos([10], Number.NaN, 64), TypeError);
+  assert.throws(() => repartirGrupos([10], 100, -5), TypeError);
 });
 
 test('pila desde el historial: una restauración de documento rebobina; una de pieza cuenta como edición', () => {

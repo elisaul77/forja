@@ -200,3 +200,27 @@ export function validarRegistro(acciones) {
   }
   return problemas;
 }
+
+// ---------------- Cinta de una fila: reparto con «más» (fase 24a, revisión 2) ----------------
+const medidaValida = (valor) => Number.isFinite(valor) && valor >= 0;
+
+/**
+ * Reparte los grupos de una pestaña en una sola fila. `anchos` es el ancho de cada grupo
+ * en orden de cinta, `disponible` el de la fila y `anchoMas` la reserva del botón «más»
+ * cuando algo no cabe. Devuelve cuántos grupos (desde el principio) caben y los índices
+ * que pasan al menú «más»: nunca se salta un grupo para meter otro más pequeño.
+ */
+export function repartirGrupos(anchos, disponible, anchoMas) {
+  if (!anchos.every(medidaValida)) throw new TypeError('ancho de grupo no válido');
+  if (!medidaValida(disponible)) throw new TypeError('ancho de la cinta no válido');
+  if (!medidaValida(anchoMas)) throw new TypeError('ancho del botón «más» no válido');
+  const total = anchos.reduce((suma, ancho) => suma + ancho, 0);
+  if (total <= disponible) return { visibles: anchos.length, ocultos: [] };
+  let visibles = 0;
+  let usado = 0;
+  while (visibles < anchos.length && usado + anchos[visibles] <= disponible - anchoMas) {
+    usado += anchos[visibles];
+    visibles += 1;
+  }
+  return { visibles, ocultos: anchos.slice(visibles).map((_, indice) => visibles + indice) };
+}
