@@ -2,17 +2,18 @@
 // fijo a la derecha, tooltips propios, paleta de comandos (Ctrl+K) y hoja de
 // atajos (?). Todo sale de ACCIONES (toolbar-actions.js) y la lógica de
 // toolbar.js. Los textos se escriben solo con textContent.
-import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=8";
+import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=9";
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo, buscarPorAtajo,
   repartirGrupos,
 } from "./toolbar.js?v=5";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js?v=4";
-import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=13";
-import { prepararOperacion, pedirCambioPieza } from "./design.js?v=10";
+import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=14";
+import { abrirRasgo } from "./features.js?v=1";
+import { prepararOperacion, pedirCambioPieza } from "./design.js?v=11";
 
 const NS = "http://www.w3.org/2000/svg";
-const SPRITE = "/static/icons/forja-icons.svg?v=3";
+const SPRITE = "/static/icons/forja-icons.svg?v=4";
 const RETRASO_TOOLTIP_MS = 350;
 // Reserva del botón «más» al repartir la fila (igual que su min-width en forja-toolbar.css).
 const ANCHO_MAS_PX = 64;
@@ -180,6 +181,17 @@ export function montarBarraHerramientas({ tabs, documento = document, api = API_
     visor: () => requerirEntrada().viewer,
     entrada: () => entradaActiva(),
     pieza: () => entradaActiva()?.viewer.selectedPiece ?? null,
+    // Fase 24d (ADR-0029): formulario de un rasgo; crea un candidato, nunca cambia la geometría.
+    rasgo(tipo) {
+      const entrada = requerirEntrada();
+      return abrirRasgo({
+        documentoId: entrada.ficha.id,
+        tipo,
+        piezaInicial: entrada.viewer.selectedPiece ?? null,
+        mostrar,
+        panel: (seccion) => tabs.abrirPanel(seccion),
+      });
+    },
     enfoqueActivo: () => Boolean(app?.classList.contains("fj-app--enfoque")),
     clic(id) {
       const control = documento.getElementById(id);

@@ -4,8 +4,8 @@
 // para re-calcular. Cada cambio se agrupa 300 ms antes de enviarse; si llega
 // otro cambio mientras el servidor re-calcula, se envía uno solo al terminar
 // con los últimos valores.
-import { aplicarParametros, obtenerParametros } from "./api.js?v=13";
-import { renderizarCotas } from "./cotas.js?v=4";
+import { aplicarParametros, obtenerParametros } from "./api.js?v=14";
+import { renderizarCotas } from "./cotas.js?v=5";
 
 const panelParametros = document.getElementById("fj-panel-parametros");
 const ESPERA_MS = 300;

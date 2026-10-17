@@ -5,7 +5,7 @@ from collections import OrderedDict
 from copy import deepcopy
 import hashlib, json
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query as ParametroURL, UploadFile, File
 from fastapi.responses import Response, FileResponse
 from datetime import datetime, timezone
 import uuid
@@ -14,6 +14,7 @@ import design_state as ds
 import design_geometry as geo
 import design_analysis as analysis
 import design_operations as ops
+import design_features as features
 import design_jobs as jobs
 import design_assets
 
@@ -414,6 +415,19 @@ def prepare_route(doc_id: str, body: Prepare):
         ["design", "historial"],
     )
     return result
+
+
+@router.get("/documentos/{doc_id}/design/referencias")
+def referencias_route(
+    doc_id: str,
+    pieza: str = ParametroURL(min_length=1, max_length=128),
+    tipo: Literal["arista", "cara"] = "arista",
+):
+    """Aristas o caras de una pieza B-rep con su huella (solo lectura, ADR-0029)."""
+    try:
+        return features.referencias(doc_id, pieza, tipo)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("/documentos/{doc_id}/design/candidates")

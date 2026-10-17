@@ -12,6 +12,7 @@ import design_state as state
 import design_geometry as geo
 import design_analysis as analysis
 import documents, incorporar, mesh_parts, solids, parametros, ramas, versioning
+import design_features as features
 from kernel import b123d_kernel, mesh as km
 
 
@@ -259,6 +260,8 @@ def edit_mesh(m, op, auxiliar=None):
             raise ValueError("La región no contiene vértices")
         m.vertices += weight[:, None] * np.asarray(op.translation)
         return m
+    if op.kind in features.RASGOS:
+        return features.aplicar_malla(m, op)
     if op.other is not None:
         if auxiliar is None:
             raise ValueError("Falta la pieza auxiliar de la booleana")
@@ -288,6 +291,8 @@ def edit_shape(s, op, auxiliar=None):
         return transform_shape(s, op)
     if op.kind == "deform_region":
         raise ValueError("Deformación regional solo disponible para STL")
+    if op.kind in features.RASGOS:
+        return features.aplicar_brep(s, op)
     if op.other is not None:
         if auxiliar is None:
             raise ValueError("Falta la pieza auxiliar de la booleana")

@@ -1,6 +1,6 @@
 // Forja — material/filamento por pieza (fdm-D). Funciones puras arriba
 // (probadas con node), acceso HTTP abajo.
-import { obtenerTokenSesion } from "./api.js?v=13";
+import { obtenerTokenSesion } from "./api.js?v=14";
 
 const RE_COLOR = /^#[0-9A-Fa-f]{6}$/;
 

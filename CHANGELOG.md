@@ -7,6 +7,27 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (rasgos de modificación, fase 24d)
+
+- Rasgos de modificación como candidatos (ADR 0029): filete, chaflán, vaciado, desfase de cara, matriz lineal o circular, simetría, dividir por plano y reparación de malla. Son `kind` nuevas de `Operation` (`fillet`, `chamfer`, `shell`, `push_pull`, `pattern`, `mirror`, `split`, `mesh_repair`); no hay herramienta MCP nueva.
+- `GET /documentos/{id}/design/referencias?pieza=&tipo=arista|cara`: aristas o caras de una pieza B-rep con su huella, solo lectura y acotado a 400 elementos.
+- Referencias por huella geométrica (`naming.py`), resueltas contra la geometría actual. Una huella que ya no existe o es ambigua es 422 y no crea candidato.
+- Validación estricta del contrato: `Huella` nueva, `extra=forbid`, números finitos y topes (64 referencias, 32 copias, ángulo ≤ 360, ±1 000 mm).
+- Módulo `app/design_features.py` (lógica) y envoltorios en `app/kernel/b123d_kernel.py`.
+- Visor web: la cinta (Sólido) gana Filete, Chaflán, Vaciar, Desfasar cara, Dividir por plano, Reparar malla, Simetría y Matriz. Cada una abre un formulario en `app/web/static/js/features.js` que crea un candidato revisable en «Indicaciones».
+- Iconos nuevos en el sprite: chamfer, draft, heal, pattern, pushpull, repair, shell.
+
+### Changed (rasgos de modificación, 24d)
+
+- `design_operations.edit_shape` y `edit_mesh` delegan los `kind` de rasgo en `design_features`.
+- `api.js` sube a `?v=14` en todos sus importadores; `toolbar-actions.js` a `?v=9`; `toolbar-ui.js` a `?v=10`; el sprite a `?v=3`; `forja-toolbar.css` a `?v=6`.
+
+### Pending (24d)
+
+- No construidos (siguen «Próximamente · 24d»): combinar / separar cuerpos, malla a sólido, ángulo de desmoldeo, borrar cara y sanar.
+- Reparación de malla sin relleno de huecos: `trimesh.repair.fill_holes` necesita `networkx`, que no está en la imagen.
+- Selección de aristas por lista, no por clic en el visor.
+
 ### Added (captura enfocada y primer choque, F20)
 
 - Captura enfocada (ADR 0028): `captura(id, foco=[x,y,z], radio=mm)` (MCP) y `GET /documentos/{id}/captura?foco=x,y,z&radio=` encuadran un cuadrado de lado `2 × radio` centrado en el punto, recortando la misma proyección de la cámara. `foco` y `radio` van juntos; radio entre 0,5 mm y 5 veces la diagonal de lo dibujado; coordenadas finitas y acotadas (|v| ≤ 1 000 000 mm). Un foco que no ve ninguna pieza da el encuadre general con la nota «foco fuera de la geometria» (nunca una imagen vacía).

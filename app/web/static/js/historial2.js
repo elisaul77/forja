@@ -2,12 +2,12 @@
 // detalle por paso, historial por pieza y restaurar una pieza o todo.
 // La lógica pura (carriles, filtros, fechas, chips) vive en
 // `historial-grafo.js`; aquí solo DOM y peticiones.
-import { obtenerTokenSesion } from "./api.js?v=13";
+import { obtenerTokenSesion } from "./api.js?v=14";
 import {
   calcularCarriles, trazoArista, filtrarNodos, predicadoFiltros, fechaRelativa, fechaAbsoluta,
   chipsDeCambios, autor, coloresDeRamas, ramasPorPrimerPadre, PALETA_RAMAS, piezasTocadas, numeroEs, tituloPaso,
 } from "./historial-grafo.js?v=4";
-import { compararEstados, mallaDeEstado, crearRama, crearHito, activarRama } from "./ramas.js?v=4";
+import { compararEstados, mallaDeEstado, crearRama, crearHito, activarRama } from "./ramas.js?v=5";
 
 const enc = encodeURIComponent;
 const ALTO_FILA = 84;

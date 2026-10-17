@@ -1,7 +1,7 @@
 // Per-tab display state belongs to the viewer, never to the stored document.
 // Exception (fdm-D): the material of each piece IS document data, edited
 // through `materiales` ({materiales, guardar(cambios)}) and saved by POST.
-import { entradaDesdeFormulario, etiquetaMaterial } from "./materiales.js?v=2";
+import { entradaDesdeFormulario, etiquetaMaterial } from "./materiales.js?v=3";
 
 function element(tag, text, className) {
   const node = document.createElement(tag);

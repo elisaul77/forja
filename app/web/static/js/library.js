@@ -1,4 +1,4 @@
-import { listarDocumentos, eliminarDocumento } from "./api.js?v=13";
+import { listarDocumentos, eliminarDocumento } from "./api.js?v=14";
 
 export function latestStep(documents) {
   return documents.filter(doc => /^(step|stp)$/i.test(doc.formato ?? doc.nombre.split('.').pop()))

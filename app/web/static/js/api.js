@@ -238,3 +238,35 @@ async function moverHistoria(id, accion, esperado) {
   if (!resp.ok) throw await parseError(resp);
   return resp.json();
 }
+
+// ---------------- Fase 24d: rasgos de modificación (ADR-0029) ----------------
+
+/** Diseño del documento: `revision`, `state_revision`, `pieces` y `design.parts`. */
+export async function obtenerDisenoDocumento(id) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/design`);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+/** `{pieza, tipo, total, truncado, elementos: [{id, huella}]}`: solo lectura. */
+export async function obtenerReferenciasDiseno(id, pieza, tipo) {
+  const query = new URLSearchParams({ pieza, tipo });
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/design/referencias?${query}`);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+/** Crea un candidato (nunca cambia la geometría): se aplica desde Indicaciones. */
+export async function prepararCandidatoDiseno(id, cuerpo) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/design/candidates`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Forja-Token": obtenerTokenSesion(),
+    },
+    body: JSON.stringify(cuerpo),
+  });
+  if (resp.status === 401) sessionStorage.removeItem(CLAVE_TOKEN_SESION);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}

@@ -3,7 +3,7 @@
 // o una característica reconocida en un documento importado) se edita con su
 // número y muestra qué hará la edición; las demás muestran su razón. Mismo
 // endpoint que la herramienta MCP `parametros(cotas=...)`. Todo texto va por textContent.
-import { obtenerTokenSesion } from "./api.js?v=13";
+import { obtenerTokenSesion } from "./api.js?v=14";
 
 const ETIQUETAS_TIPO = { tamano_total: "Tamaño", diametro: "Diámetro", posicion: "Posición" };
 const ETIQUETAS_EJE = { x: "X", y: "Y", z: "Z" };
