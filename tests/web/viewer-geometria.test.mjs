@@ -86,7 +86,7 @@ test('liberarMalla admite materiales en array y tolera objetos nulos', () => {
 
 test('viewer.js cablea el encuadre y la liberación compartidos', () => {
   const visor = leer('app/web/static/js/viewer.js');
-  assert.match(visor, /from "\.\/viewer-geometria\.js"/, 'no importa viewer-geometria.js');
+  assert.match(visor, /from "\.\/viewer-geometria\.js(\?v=\d+)?"/, 'no importa viewer-geometria.js');
   assert.match(visor, /calcularEncuadre\(/, 'ajustarVista no usa calcularEncuadre');
   // Sin el campo de perspectiva en la rama ortográfica.
   assert.doesNotMatch(visor, /_ajustarFrustum/, 'queda el frustum antiguo que reinicia el zoom');

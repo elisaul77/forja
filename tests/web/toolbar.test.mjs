@@ -8,6 +8,7 @@ import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo,
   buscarPorAtajo, validarRegistro, ATAJOS_RESERVADOS,
   nuevaPilaRevisiones, sincronizarPilaRevisiones, tomarDeshacer, tomarRehacer, fijarCabeza, devolverPaso,
+  pilaDesdeHistorial,
 } from '../../app/web/static/js/toolbar.js';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
@@ -198,4 +199,34 @@ test('la cinta envuelve sus grupos para que «Vistas estándar» no quede cortad
   const regla = leer('app/web/static/css/forja-toolbar.css').match(/\.fj-cinta__grupos\s*\{[^}]*\}/)?.[0] ?? '';
   assert.match(regla, /flex-wrap:\s*wrap/);
   assert.doesNotMatch(regla, /overflow-x:\s*auto/);
+});
+
+test('pila desde el historial: una restauración de documento rebobina; una de pieza cuenta como edición', () => {
+  const h = (id, mensaje = '') => ({ id, mensaje });
+  // r1 → r2 → r3, y luego «restaurar todo a r2» (creada como n4): deshacer debe ir a r1.
+  const conRestauracion = [h('aaaaaaa001'), h('aaaaaaa002'), h('aaaaaaa003'),
+    h('bbbbbbb004', 'restaurar todo el documento a aaaaaaa002')];
+  assert.deepEqual(pilaDesdeHistorial(conRestauracion), ['aaaaaaa001']);
+  // Restaurar una pieza no rebobina: es una edición más.
+  const conPieza = [h('aaaaaaa001'), h('aaaaaaa002'), h('bbbbbbb003', 'restaurar pieza eje a aaaaaaa001')];
+  assert.deepEqual(pilaDesdeHistorial(conPieza), ['aaaaaaa001', 'aaaaaaa002']);
+  // Un sha que no está en el historial vacía la pila: no se deshace a un estado desconocido.
+  const desconocido = [h('aaaaaaa001'), h('aaaaaaa002'), h('bbbbbbb003', 'restaurar todo el documento a ffffffffff')];
+  assert.deepEqual(pilaDesdeHistorial(desconocido), []);
+});
+
+test('sincronizar desde historial con mensajes deja la pila correcta para deshacer', () => {
+  const estado = nuevaPilaRevisiones();
+  sincronizarPilaRevisiones(estado, [
+    { id: 'aaaaaaa001', mensaje: '' }, { id: 'aaaaaaa002', mensaje: '' },
+    { id: 'bbbbbbb003', mensaje: 'restaurar todo el documento a aaaaaaa002' },
+  ]);
+  assert.equal(estado.cabeza, 'bbbbbbb003');
+  assert.equal(tomarDeshacer(estado), 'aaaaaaa001');
+});
+
+test('rehacer tiene su glifo en el sprite de la barra', () => {
+  const sprite = leer('app/web/static/icons/forja-icons.svg');
+  assert.equal(porId('hist-rehacer').icono, 'redo');
+  assert.match(sprite, /<symbol id="i-redo"/);
 });

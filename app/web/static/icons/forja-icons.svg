@@ -55,5 +55,6 @@
 <symbol id="i-stack" viewBox="0 0 24 24"><path d="M12 4l9 4.5-9 4.5-9-4.5zM3 12.5l9 4.5 9-4.5M3 16.5l9 4.5 9-4.5"/></symbol>
 <symbol id="i-swatch" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM12 4v16"/></symbol>
 <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+<symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3"/></symbol>
 <symbol id="i-wire" viewBox="0 0 24 24"><path d="M12 3l8 5v8l-8 5-8-5V8zM12 3v18M4 8l16 8M20 8L4 16"/></symbol>
 </svg>

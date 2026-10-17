@@ -214,8 +214,7 @@ export const ACCIONES = [
   listo({ id: 'hist-deshacer', etiqueta: 'Deshacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'undo',
     atajo: 'Ctrl+Z', requiere: DOC, tooltip: 'Vuelve a la revisión anterior. Crea una revisión nueva: el historial no se borra.',
     ejecutar: (c) => c.deshacer() }),
-  // El glifo de rehacer no está en el sprite: se reutiliza el de deshacer.
-  listo({ id: 'hist-rehacer', etiqueta: 'Rehacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'undo',
+  listo({ id: 'hist-rehacer', etiqueta: 'Rehacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'redo',
     atajo: 'Ctrl+Shift+Z', atajoAlterno: 'Ctrl+Y', requiere: DOC,
     tooltip: 'Vuelve a la revisión que dejó Deshacer. Una edición nueva lo invalida.',
     ejecutar: (c) => c.rehacer() }),

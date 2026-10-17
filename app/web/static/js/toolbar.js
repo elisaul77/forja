@@ -83,21 +83,48 @@ export function nuevaPilaRevisiones() {
   return { cabeza: null, pila: [], rehacer: [] };
 }
 
+const RESTAURAR_DOCUMENTO = /^restaurar todo el documento a ([0-9a-f]{7,})$/;
+
 /**
- * `ids`: revisiones en el orden del servidor (la más reciente al final).
- * Si la cabeza cambió sin pasar por deshacer o rehacer, es una edición nueva: la
- * cabeza anterior queda como paso a deshacer y el rehacer se invalida.
+ * Pila de deshacer reconstruida desde el historial del servidor (orden cronológico,
+ * `entradas`: [{id, mensaje}]). Una restauración de documento («restaurar todo el
+ * documento a <sha>») vuelve a esa revisión: los pasos posteriores dejan de contar.
+ * Una restauración de pieza es una edición más. Si el sha no se resuelve, la pila
+ * se vacía: es mejor no deshacer que deshacer a un estado equivocado.
+ * Devuelve las revisiones a las que se puede volver (la última es la inmediatamente anterior).
  */
-export function sincronizarPilaRevisiones(estado, ids) {
-  if (ids.length === 0) {
+export function pilaDesdeHistorial(entradas) {
+  const cadena = [];
+  for (const entrada of entradas) {
+    const restauracion = RESTAURAR_DOCUMENTO.exec(entrada.mensaje ?? '');
+    if (!restauracion) {
+      cadena.push(entrada.id);
+      continue;
+    }
+    const posicion = cadena.findIndex((id) => id.startsWith(restauracion[1]));
+    if (posicion === -1) cadena.length = 0;
+    else cadena.length = posicion + 1;
+  }
+  return cadena.slice(0, -1);
+}
+
+/**
+ * `entradas`: historial en el orden del servidor (la más reciente al final); cada
+ * elemento es {id, mensaje} o solo el id. Si la cabeza cambió sin pasar por
+ * deshacer o rehacer, es una edición nueva: la cabeza anterior queda como paso a
+ * deshacer y el rehacer se invalida.
+ */
+export function sincronizarPilaRevisiones(estado, entradas) {
+  const normalizadas = entradas.map((e) => (typeof e === 'string' ? { id: e, mensaje: '' } : e));
+  if (normalizadas.length === 0) {
     estado.cabeza = null;
     estado.pila = [];
     estado.rehacer = [];
     return estado;
   }
-  const cabeza = ids[ids.length - 1];
+  const cabeza = normalizadas[normalizadas.length - 1].id;
   if (estado.cabeza === null) {
-    estado.pila = ids.slice(0, -1);
+    estado.pila = pilaDesdeHistorial(normalizadas);
     estado.rehacer = [];
   } else if (cabeza !== estado.cabeza) {
     estado.pila.push(estado.cabeza);

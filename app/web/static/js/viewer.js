@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { decodePieceBundle } from "./piece-data.js?v=8";
-import { calcularEncuadre, aplicarMarcosOrtograficos, liberarAristas, liberarMalla } from "./viewer-geometria.js";
+import { calcularEncuadre, aplicarMarcosOrtograficos, liberarAristas, liberarMalla } from "./viewer-geometria.js?v=1";
 
 const loader = new STLLoader();
 

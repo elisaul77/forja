@@ -2,16 +2,16 @@
 // fijo a la derecha, tooltips propios, paleta de comandos (Ctrl+K) y hoja de
 // atajos (?). Todo sale de ACCIONES (toolbar-actions.js) y la lógica de
 // toolbar.js. Los textos se escriben solo con textContent.
-import { PESTANAS, ACCIONES } from "./toolbar-actions.js";
+import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=2";
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo, buscarPorAtajo,
   nuevaPilaRevisiones, sincronizarPilaRevisiones, tomarDeshacer, tomarRehacer, fijarCabeza, devolverPaso,
-} from "./toolbar.js";
+} from "./toolbar.js?v=2";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js";
-import { obtenerHistorial } from "./api.js";
+import { obtenerHistorial } from "./api.js?v=11";
 
 const NS = "http://www.w3.org/2000/svg";
-const SPRITE = "/static/icons/forja-icons.svg";
+const SPRITE = "/static/icons/forja-icons.svg?v=2";
 const RETRASO_TOOLTIP_MS = 350;
 
 /**
@@ -132,8 +132,7 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
     pilas.set(id, estado);
     enCurso.add(id);
     try {
-      const ids = (await historialApi.obtenerHistorial(id)).map((entradaHistorial) => entradaHistorial.id);
-      sincronizarPilaRevisiones(estado, ids);
+      sincronizarPilaRevisiones(estado, await historialApi.obtenerHistorial(id));
       const destino = sentido === "deshacer" ? tomarDeshacer(estado) : tomarRehacer(estado);
       if (destino === null) {
         mostrar(sentido === "deshacer" ? "No hay pasos anteriores que deshacer." : "No hay pasos que rehacer.");
@@ -535,7 +534,10 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
   // Los clics del visor (Cuadrícula, Malla) llegan aquí al burbujear: la cinta se
   // redibuja para reflejar el estado nuevo sin esperar a una acción de la barra.
   documento.addEventListener("click", () => renderizar());
+  // La pila de deshacer es de la sesión del documento activo: al cambiar de documento
+  // o cerrarlo se descarta (al volver se reconstruye desde el historial).
   tabs.onEstadoCambio = () => {
+    for (const id of [...pilas.keys()]) if (id !== tabs.activeId) pilas.delete(id);
     sincronizarPick();
     renderizar();
   };

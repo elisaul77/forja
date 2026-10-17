@@ -422,3 +422,49 @@ test('Ctrl+Z dentro de un campo deja el deshacer nativo del campo', async () => 
   await tick();
   assert.deepEqual(servidor.restauraciones, []);
 });
+
+test('cambiar de documento o cerrarlo descarta su pila; al volver se reconstruye desde el historial', async () => {
+  const servidor = {
+    revisiones: [{ id: 'aaaaaaa001', mensaje: '' }, { id: 'aaaaaaa002', mensaje: '' }, { id: 'aaaaaaa003', mensaje: '' }],
+    restauraciones: [],
+  };
+  const api = { obtenerHistorial: async () => servidor.revisiones.map((r) => ({ ...r })) };
+  const controlador = {
+    restaurar: async (id) => {
+      servidor.restauraciones.push(id);
+      servidor.revisiones.push({ id: `bbbbbbb00${servidor.revisiones.length}`, mensaje: `restaurar todo el documento a ${id.slice(0, 10)}` });
+    },
+  };
+  const { doc, tabs, e } = montarEscena({ historialApi: api, historial: controlador });
+  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
+  await tick();
+  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002']);
+
+  // Cambio a otro documento y vuelta: el rehacer de la sesión anterior ya no existe.
+  const otra = crearEntrada(doc, 'd2');
+  tabs.tabs.set('d2', otra.entrada);
+  tabs.activeId = 'd2';
+  tabs.onEstadoCambio();
+  tabs.activeId = 'd1';
+  tabs.onEstadoCambio();
+  doc.dispatch('keydown', { key: 'Z', ctrlKey: true, shiftKey: true, target: doc.body });
+  await tick();
+  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002'], 'rehizo tras cambiar de documento');
+  assert.match(textoFeedback(doc), /No hay pasos que rehacer/);
+
+  // Deshacer sigue funcionando: la pila se reconstruyó desde el historial (restauración incluida).
+  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
+  await tick();
+  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002', 'aaaaaaa001']);
+
+  // Cerrar el documento también descarta la pila.
+  tabs.tabs.delete('d1');
+  tabs.activeId = 'd2';
+  tabs.onEstadoCambio();
+  tabs.tabs.set('d1', e.entrada);
+  tabs.activeId = 'd1';
+  tabs.onEstadoCambio();
+  doc.dispatch('keydown', { key: 'Z', ctrlKey: true, shiftKey: true, target: doc.body });
+  await tick();
+  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002', 'aaaaaaa001'], 'rehizo tras cerrar el documento');
+});
