@@ -556,11 +556,30 @@ def ensamble(
     articulaciones: list[dict[str, Any]] | None = None,
     valores: dict[str, float] | None = None,
     quitar: bool = False,
+    barrido: str | list[str] | None = None,
+    detalle: bool = False,
 ) -> dict[str, Any]:
     """Ensamblaje de un documento (Fase 6): definirlo, posarlo, leerlo o
     quitarlo. UN solo modo por llamada, como `parametros(id, valores=None)`;
     dos modos juntos devuelven `{error: true, mensaje}` sin tocar el
     documento.
+
+    - `barrido="todas"` o `barrido=["bisagra", ...]` (solo lectura, Fase 18):
+      recorre cada articulacion de su `limites` (o de `desde`/`hasta` del
+      REST) con avance continuo conservador, sin muestrear. Devuelve `{ok,
+      garantia: "continua"|"muestreada", completo, barrido: {articulacion:
+      {ok, primer_choque: {valor (grados o mm), par, volumen_mm3, tipo},
+      ultimo_seguro, holgura_minima_mm, valor_holgura_minima,
+      volumen_maximo_mm3, pares_en_contacto_inicial, unidad, tolerancia,
+      agotado?, agotado_en?}}, omitidas, frase, ms}`. "continua" cubre los
+      pares que empiezan separados y solo si nada se agoto; un par que empieza
+      en contacto (pasador en su agujero, pieza apoyada) se muestrea por
+      volumen, se lista y deja la garantia en "muestreada". Las articulaciones
+      `fijo` se omiten en "todas" (quedan en `omitidas`); nombrar una fija da
+      error. Un presupuesto compartido (2000 evaluaciones o 25 s por peticion)
+      que se agota da `ok: false`, `agotado` y `muestreada`, nunca un choque.
+      Un choque confirmado se distingue en `frase`. `detalle=True` agrega
+      `muestras` (hasta 64). Ni escribe ni cambia la geometria ni el historial.
 
     - Sin argumentos (leer): `{id, piezas, articulaciones, valores,
       obsoleto}`. `piezas` son los solidos CON NOMBRE del documento;
@@ -593,7 +612,8 @@ def ensamble(
     `409` si la geometria cambio, `422` si la definicion o la pose no pasan
     la validacion.
     """
-    return client.ensamble(id, articulaciones=articulaciones, valores=valores, quitar=quitar)
+    return client.ensamble(id, articulaciones=articulaciones, valores=valores, quitar=quitar,
+                           barrido=barrido, detalle=detalle)
 
 
 def suspension(

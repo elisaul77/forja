@@ -420,6 +420,32 @@ def test_ensamble_rechaza_modos_mezclados_sin_tocar_el_documento():
     assert "no encontrado" in tools.ensamble("no-existe")["mensaje"]  # el id si se consulta al leer
 
 
+def test_ensamble_barrido_via_mcp_es_solo_lectura_y_exclusivo():
+    """Phase 18: `barrido` is a mode of `ensamble` (no new tool). It is read-only,
+    compact, and refuses to share a call with a write mode."""
+    creado = tools.ejecutar_script(_ENSAMBLE_SCRIPT, nombre="barrido_mcp")
+    assert "error" not in creado, creado
+    doc_id = creado["id"]
+    assert tools.ensamble(doc_id, articulaciones=[dict(_ENSAMBLE_ARTICULACION)])["articulaciones"]
+    antes = tools.resumen_documento(doc_id)
+    historial = len(tools.leer_historial(doc_id))
+
+    barrido = tools.ensamble(doc_id, barrido="todas")
+    assert "error" not in barrido, barrido
+    assert set(barrido["barrido"]) == {"bisagra"}
+    assert barrido["garantia"] in {"continua", "muestreada"}
+    assert isinstance(barrido["ok"], bool)
+    assert tools.ensamble(doc_id, barrido=["bisagra"], detalle=True)["barrido"]["bisagra"]["unidad"] == "grados"
+    assert tools.resumen_documento(doc_id)["bbox"] == antes["bbox"]
+    assert len(tools.leer_historial(doc_id)) == historial
+
+    mezcla = tools.ensamble(doc_id, barrido="todas", valores={"bisagra": 10})
+    assert mezcla["error"] is True and "un solo modo" in mezcla["mensaje"]
+    assert tools.ensamble(doc_id, barrido=[])["error"] is True
+    assert tools.ensamble(doc_id, detalle=True)["error"] is True
+    tools.ensamble(doc_id, quitar=True)
+
+
 def test_ensamble_surface_el_409_del_formato_verbatim(monkeypatch):
     """The one new failure the agent must be able to act on (Phase 6.3): a
     `state.json` from before the rename is refused with its own actionable

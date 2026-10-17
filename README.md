@@ -321,6 +321,10 @@ headless real), `check_colisiones`, `percibir`, `parametros`, `check_fdm`,
 `leer_notas`, `crear_nota`, `borrar_nota`, `leer_historial`, `restaurar`,
 `ensamble`, `suspension`, `puentes` (19).
 
+### Barrido continuo de articulaciones (Fase 18)
+
+`ensamble(id, barrido="todas")` recorre cada articulación sobre su rango sin saltar entre muestras: avance conservador hasta el primer contacto real (hueco ≤ 0,05 mm o penetración), luego bisección a la tolerancia. Reporta el valor en grados o mm, el par, el volumen de penetración y `garantia: "continua"`. Un par que empieza en contacto (pasador, pieza apoyada) se muestrea por volumen en pasos de hasta 0,2 mm, se lista y deja la garantía en `"muestreada"`. Las articulaciones fijas se omiten en «todas» (`omitidas`). Un presupuesto compartido de 2000 evaluaciones o 25 s agotado da `ok: false`, nunca un choque. Solo lectura. Ver `docs/decisions/0020-barrido-continuo.md`.
+
 ### Ensambles y puentes (Fase 6)
 
 `ensamble(id, ...)` es UNA herramienta de MCP con modos excluyentes: sin

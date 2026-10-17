@@ -590,14 +590,18 @@ def ensamble(
     articulaciones: list[dict[str, Any]] | None = None,
     valores: dict[str, float] | None = None,
     quitar: bool = False,
+    barrido: str | list[str] | None = None,
+    detalle: bool = False,
 ) -> dict[str, Any]:
-    """Read (`None`), define (`articulaciones`), pose (`valores`) or clear
-    (`quitar=True`) a document's assembly, one mode at a time. The GET is
-    token-free; the three mutations carry `X-Forja-Token`."""
+    """Read (`None`), define (`articulaciones`), pose (`valores`), clear
+    (`quitar=True`) or sweep (`barrido`, read-only) a document's assembly,
+    one mode at a time. The GET and the sweep are token-free; the three
+    mutations carry `X-Forja-Token`."""
     modos = [nombre for nombre, activo in (
         ("articulaciones", articulaciones is not None),
         ("valores", valores is not None),
         ("quitar", bool(quitar)),
+        ("barrido", barrido is not None),
     ) if activo]
     if len(modos) > 1:
         return {"error": True, "mensaje": "un solo modo a la vez: " + " y ".join(modos)}
@@ -609,6 +613,11 @@ def ensamble(
         return {"error": True, "mensaje": "valores debe ser un objeto {articulacion: numero}"}
     if valores is not None and not valores:
         return {"error": True, "mensaje": "valores esta vacio; indica al menos una articulacion"}
+    if barrido is not None and barrido != "todas" and (
+            not isinstance(barrido, list) or not barrido or not all(isinstance(j, str) for j in barrido)):
+        return {"error": True, "mensaje": 'barrido debe ser "todas" o una lista de identificadores de articulacion'}
+    if detalle and barrido is None:
+        return {"error": True, "mensaje": "detalle solo aplica con barrido"}
 
     ruta = f"/documentos/{doc_id}/ensamble"
     try:
@@ -621,6 +630,11 @@ def ensamble(
                 resp = c.post(f"{ruta}/pose", json={"valores": valores}, headers=_headers_con_token())
             elif quitar:
                 resp = c.delete(ruta, headers=_headers_con_token())
+            elif barrido is not None:
+                cuerpo: dict[str, Any] = {"detalle": bool(detalle)}
+                if barrido != "todas":
+                    cuerpo["articulaciones"] = list(barrido)
+                resp = c.post(f"{ruta}/barrido", json=cuerpo)
             else:
                 resp = c.get(ruta)
     except httpx.HTTPError as exc:
