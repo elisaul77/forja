@@ -87,6 +87,19 @@ test('catálogo 24a: acciones EXISTS/UI_ONLY y placeholders de fases F18-F23 pre
   assert.equal(porId('planos-generar').fase, 'F22');
 });
 
+test('Cotas (F23a, ADR-0023): listo, pide documento y llama a c.cotas() (abre Parámetros > Cotas del plano)', () => {
+  const cotas = porId('inspec-cotas-vivas');
+  assert.equal(cotas.estado, 'listo');
+  assert.equal(cotas.etiqueta, 'Cotas');
+  assert.equal(cotas.fase, undefined);
+  assert.deepEqual(cotas.requiere, ['documento']);
+  assert.equal(estadoAccion(cotas, { documento: null, seleccion: null }).habilitada, false);
+  assert.equal(estadoAccion(cotas, { documento: DOC_STEP, seleccion: null }).habilitada, true);
+  const llamadas = [];
+  cotas.ejecutar({ cotas: () => llamadas.push('cotas') });
+  assert.deepEqual(llamadas, ['cotas']);
+});
+
 test('habilitación: sin documento, STL, sin selección y próximas', () => {
   const ajustar = porId('vista-ajustar');
   const sinDoc = estadoAccion(ajustar, { documento: null, seleccion: null });

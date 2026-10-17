@@ -169,8 +169,9 @@ def exportar(
     isometrica; por defecto todas), `escala` (1:1, 1:2, 1:5, 1:10, 2:1, 5:1;
     por defecto la mayor que cabe), `papel` (A4 por defecto o A3),
     `proyeccion` (tercer_angulo por defecto o primer_angulo) y `detalle`
-    (lista las cotas con su id, tipo, valor_mm, eje, vista, origen y
-    parametro). Responde `{ruta, tamano_bytes, vistas, escala, papel,
+    (lista las cotas con su id, tipo, valor_mm, eje, vista, origen,
+    parametro, operacion y, si no es editable, solo_lectura y razon; y la
+    revision a la que pertenecen, para `parametros(cotas=...)`). Responde `{ruta, tamano_bytes, vistas, escala, papel,
     proyeccion, cotas, parametros_ligados, omitidas}`; `completo: false`
     si el tope de aristas obligo a omitir ocultas; `aviso` en mallas STL o
     agujeros con eje no paralelo a un eje global. Una malla STL se dibuja
@@ -328,7 +329,7 @@ def percibir(
 
 def parametros(
     id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None,
-    confirmar_script: bool = False,
+    confirmar_script: bool = False, cotas: dict[str, Any] | None = None, revision: str | None = None,
 ) -> dict[str, Any]:
     """Parametros de un documento creado con un script parametrico (Fase 5C):
     iterar cambiando NUMEROS, sin volver a mandar el script.
@@ -361,12 +362,22 @@ def parametros(
     `MATERIALES = {...}` a nivel de modulo. El 3MF descargado/abierto en
     Orca lleva el extrusor de cada pieza y su color.
 
+    - `cotas={"<id>": 50, ...}` (aplicar, en vez de `valores`; Fase 23a): edita
+      cotas vivas del plano. Los ids y su `operacion` salen de
+      `exportar(id, "svg", detalle=true)` (campo `cotas_detalle`, con
+      `revision`); `operacion: "parametro"` = editable, las demas traen
+      `solo_lectura` y `razon`. Se traduce a su parametro y pasa por el mismo
+      camino que `valores` (min/max, snapshot, una revision nueva). `revision`
+      opcional: la de la lectura de los ids; si no, la vigente (la lectura
+      de cotas con revision vieja responde error 409). Una cota que no mueve
+      su parametro sale con `no_sigue_al_parametro: true`.
+
     Si un cambio de rama dejo el aviso `script_divergente` (el script por
     `ruta` en disco no es el de esa rama), aplicar `valores` responde error
     hasta restaurar el archivo o pasar `confirmar_script=true` (usa el
     archivo tal como esta). La lectura incluye `avisos` en ese estado.
     """
-    return client.parametros(id, valores, materiales, confirmar_script)
+    return client.parametros(id, valores, materiales, confirmar_script, cotas=cotas, revision=revision)
 
 
 def check_fdm(
