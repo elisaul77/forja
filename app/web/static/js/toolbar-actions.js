@@ -16,11 +16,8 @@
 //   c.enfoque()        alterna el modo de pantalla completa del visor
 //   c.elegirCara(fn)  siguiente clic sobre el visor -> fn(golpe)
 //   c.cancelar()       cancela la herramienta (picking, notas, pizarra) y la selección
-//   c.deshacer()       vuelve a la revisión anterior (restaurar; el historial no se borra)
-//   c.rehacer()        vuelve a la revisión que dejó deshacer
 //
 // `activo(c)`: estado de un botón de conmutación (aria-pressed), solo con documento abierto.
-// `atajoAlterno`: segundo atajo de la misma acción (Ctrl+Y para rehacer).
 // Estados: "listo" (ejecuta) | "proximamente" (visible y deshabilitada, con
 // `fase`). `requiere`: "documento" | "seleccion" | "b-rep" | "malla".
 
@@ -211,13 +208,11 @@ export const ACCIONES = [
     requiere: DOC, tooltip: 'Valores con nombre que controlan la pieza.', ejecutar: (c) => c.panel('parametros') }),
   pronto('F23', { id: 'inspec-cotas-vivas', etiqueta: 'Cotas vivas', pestana: 'inspeccionar', grupo: 'Diseño', icono: 'sliders',
     tooltip: 'Edita una cota directamente en el visor.' }),
-  listo({ id: 'hist-deshacer', etiqueta: 'Deshacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'undo',
-    atajo: 'Ctrl+Z', requiere: DOC, tooltip: 'Vuelve a la revisión anterior. Crea una revisión nueva: el historial no se borra.',
-    ejecutar: (c) => c.deshacer() }),
-  listo({ id: 'hist-rehacer', etiqueta: 'Rehacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'redo',
-    atajo: 'Ctrl+Shift+Z', atajoAlterno: 'Ctrl+Y', requiere: DOC,
-    tooltip: 'Vuelve a la revisión que dejó Deshacer. Una edición nueva lo invalida.',
-    ejecutar: (c) => c.rehacer() }),
+  // Diferidos a 24a2 (cursor de deshacer en el servidor): sin atajo y sin ejecutar.
+  pronto('24a2', { id: 'hist-deshacer', etiqueta: 'Deshacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'undo',
+    requiere: DOC, tooltip: 'Vuelve a la revisión anterior. Crea una revisión nueva: el historial no se borra.' }),
+  pronto('24a2', { id: 'hist-rehacer', etiqueta: 'Rehacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'redo',
+    requiere: DOC, tooltip: 'Vuelve a la revisión que dejó Deshacer. Una edición nueva lo invalida.' }),
   listo({ id: 'hist-historial', etiqueta: 'Historial', pestana: 'inspeccionar', grupo: 'Historia', icono: 'history',
     requiere: DOC, tooltip: 'Lista de pasos, hitos e instantáneas del documento.', ejecutar: (c) => c.panel('historial') }),
   listo({ id: 'hist-ramas', etiqueta: 'Ramas', pestana: 'inspeccionar', grupo: 'Historia', icono: 'branch',

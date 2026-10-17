@@ -2,14 +2,12 @@
 // fijo a la derecha, tooltips propios, paleta de comandos (Ctrl+K) y hoja de
 // atajos (?). Todo sale de ACCIONES (toolbar-actions.js) y la lógica de
 // toolbar.js. Los textos se escriben solo con textContent.
-import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=2";
+import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=3";
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo, buscarPorAtajo,
-  nuevaPilaRevisiones, sincronizarPilaRevisiones, tomarDeshacer, tomarRehacer, fijarCabeza, devolverPaso,
   repartirGrupos,
-} from "./toolbar.js?v=3";
+} from "./toolbar.js?v=4";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js";
-import { obtenerHistorial } from "./api.js?v=11";
 
 const NS = "http://www.w3.org/2000/svg";
 const SPRITE = "/static/icons/forja-icons.svg?v=2";
@@ -24,7 +22,7 @@ const medirEn = (elemento, propiedad) => (Number.isFinite(elemento[propiedad]) ?
  * Monta la barra sobre #fj-cinta. `tabs` es el TabManager de app.js.
  * Devuelve { actualizar, ejecutar } para quien necesite refrescarla o lanzar una acción.
  */
-export function montarBarraHerramientas({ tabs, documento = document, historialApi = { obtenerHistorial } }) {
+export function montarBarraHerramientas({ tabs, documento = document }) {
   const cinta = documento.getElementById("fj-cinta");
   if (!cinta) throw new Error("falta el contenedor #fj-cinta de la barra de herramientas");
   const feedback = documento.getElementById("fj-feedback");
@@ -35,9 +33,6 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
   let desarmarCara = null;
   let visorArmado = null;
   let temporizadorTooltip = null;
-  // Pilas de deshacer/rehacer por documento (sesión) y documentos con un paso en curso.
-  const pilas = new Map();
-  const enCurso = new Set();
   // Cinta de una fila: pestaña activa, grupos que no caben y estado del menú «más».
   let entradasGrupos = [];
   let masAbierto = false;
@@ -129,38 +124,6 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
     entrada.acciones?.pizarra?.classList.toggle("is-active", String(modo ?? "").startsWith("pizarra"));
   }
 
-  // Deshacer/rehacer: cada paso es una restauración del servidor (historial append-only).
-  async function moverRevision(sentido) {
-    const entrada = requerirEntrada();
-    const { id } = entrada.ficha;
-    if (enCurso.has(id)) {
-      mostrar("Espera a que termine el paso anterior.");
-      return;
-    }
-    const estado = pilas.get(id) ?? nuevaPilaRevisiones();
-    pilas.set(id, estado);
-    enCurso.add(id);
-    try {
-      sincronizarPilaRevisiones(estado, await historialApi.obtenerHistorial(id));
-      const destino = sentido === "deshacer" ? tomarDeshacer(estado) : tomarRehacer(estado);
-      if (destino === null) {
-        mostrar(sentido === "deshacer" ? "No hay pasos anteriores que deshacer." : "No hay pasos que rehacer.");
-        return;
-      }
-      try {
-        await entrada.historial.restaurar(destino);
-      } catch (error) {
-        devolverPaso(estado, destino, sentido);
-        throw error;
-      }
-      const tras = await historialApi.obtenerHistorial(id);
-      fijarCabeza(estado, tras.length ? tras[tras.length - 1].id : null);
-      mostrar(sentido === "deshacer" ? "Revisión anterior restaurada." : "Revisión rehecha.");
-    } finally {
-      enCurso.delete(id);
-    }
-  }
-
   // ---------------- Contexto de las acciones ----------------
   const contexto = {
     visor: () => requerirEntrada().viewer,
@@ -211,8 +174,6 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
       entrada.notas?.cancelarModos();
       entrada.viewer.selectPiece(null);
     },
-    deshacer: () => moverRevision("deshacer"),
-    rehacer: () => moverRevision("rehacer"),
   };
 
   function ejecutarAccion(accion) {
@@ -649,10 +610,7 @@ export function montarBarraHerramientas({ tabs, documento = document, historialA
   if (typeof globalThis.ResizeObserver === "function") {
     new globalThis.ResizeObserver(() => repartirCinta()).observe(cinta);
   }
-  // La pila de deshacer es de la sesión del documento activo: al cambiar de documento
-  // o cerrarlo se descarta (al volver se reconstruye desde el historial).
   tabs.onEstadoCambio = () => {
-    for (const id of [...pilas.keys()]) if (id !== tabs.activeId) pilas.delete(id);
     sincronizarPick();
     renderizar();
   };

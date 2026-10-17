@@ -13,8 +13,9 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - Las acciones de fases futuras aparecen deshabilitadas con «Próximamente · {fase}». Las que dependen del contexto explican el motivo (sin documento, sin pieza seleccionada, documento de malla en lugar de sólido B-rep).
 - Vistas estándar (1 a 6 y 0), proyección ortográfica o perspectiva, alambre, aristas vivas, rayos X, rejilla, ejes, plano de corte, aislar, mostrar u ocultar piezas, captura PNG, pantalla completa, mirar de frente a una cara, descarga 3MF y STL, abrir en OrcaSlicer y acceso a los paneles existentes (Indicaciones, Piezas, Historial, Ramas, Parámetros, Ensamble, Galería, Perfil y Cupón).
 - Paleta de comandos con Ctrl+K (búsqueda en español, sin tildes) y hoja de atajos con «?». Los atajos no actúan mientras se escribe en un campo ni con un diálogo abierto; las letras y dígitos sueltos solo actúan con el foco en el visor o en la cinta.
+- Deshacer y rehacer aparecen en Inspeccionar > Historia como «Próximamente · 24a2»: diferidos a la fase 24a2 (cursor de deshacer en el servidor). Ver «Changed (cierre de la barra, fase 24a)».
 - Ninguna acción de la barra cambia la geometría por sí sola: los cambios siguen el flujo existente de indicaciones y candidatos. No se añadieron herramientas MCP.
-- Límites conocidos: «Pasos de Claude» abre el Historial sin filtro por autor. La pila de deshacer vive en la sesión de cada documento: al cambiar de documento o cerrarlo se descarta y se reconstruye desde el historial del servidor al volver.
+- Límites conocidos: «Pasos de Claude» abre el Historial sin filtro por autor.
 
 ### Fixed (barra de herramientas, revisión 1 de fase 24a)
 
@@ -41,6 +42,13 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - Pendiente: deshacer y rehacer siguen como en la revisión 1. Su rediseño depende de un cambio en el servidor (las restauraciones de deshacer no se distinguen de las demás en el historial).
 - Cambios de caché: `forja-toolbar.css?v=5`, `app.js?v=46`, `tabs.js?v=45`, `toolbar-ui.js?v=3`, `toolbar.js?v=3`, `viewer.js?v=design1-20`, `viewer-geometria.js?v=2`.
 - Pruebas: `tests/web/viewer-geometria.test.mjs` (12), `tests/web/toolbar-ui.test.mjs` (13), `tests/web/toolbar.test.mjs` (20).
+
+### Changed (cierre de la barra, fase 24a)
+
+- Deshacer y rehacer quedan **«Próximamente · 24a2»**: visibles y deshabilitados, sin atajo y sin ejecutar desde la paleta ni el clic. Se retiran Ctrl+Z, Ctrl+Shift+Z y Ctrl+Y, la pila de deshacer del cliente (`toolbar.js`, `toolbar-ui.js`) y sus pruebas. Lo de la revisión 1 sobre deshacer y rehacer ya no está activo. Motivo: restaurar un paso del historial no se distingue en el servidor de una restauración normal, así que deshacer no puede ser fiable hasta un cursor de deshacer en el servidor (fase 24a2).
+- Registro: 97 acciones (52 listas, 45 próximas). Hoja de atajos (`?`): 23 filas (antes 26).
+- Cambios de caché: `toolbar-actions.js?v=3`, `toolbar.js?v=4`, `toolbar-ui.js?v=4`, `app.js?v=47`.
+- Pruebas: `tests/web/toolbar.test.mjs` (15), `tests/web/toolbar-ui.test.mjs` (7); suite `tests/web/` completa: 115 aprobadas, 0 fallos.
 
 ### Added (barrido continuo de articulaciones)
 

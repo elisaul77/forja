@@ -1,5 +1,5 @@
 // Prueba la barra real (toolbar-ui.js) sobre un DOM mínimo sin dependencias:
-// el keydown global, la cinta, el cancelar, las alternancias y el deshacer.
+// el keydown global, la cinta, el cancelar y las alternancias.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ACCIONES } from '../../app/web/static/js/toolbar-actions.js';
@@ -231,7 +231,7 @@ function crearEntrada(doc, id, historial) {
 const tick = () => new Promise((resolver) => setTimeout(resolver, 0));
 const porId = (id) => ACCIONES.find((a) => a.id === id);
 
-function montarEscena({ historialApi, historial } = {}) {
+function montarEscena({ historial } = {}) {
   const doc = crearDocumento();
   const cinta = doc.createElement('div');
   cinta.id = 'fj-cinta';
@@ -241,7 +241,7 @@ function montarEscena({ historialApi, historial } = {}) {
   const primera = crearEntrada(doc, 'd1', historial);
   const tabs = { tabs: new Map([['d1', primera.entrada]]), activeId: 'd1', onEstadoCambio: null, abrirPanel() {} };
   doc.body.append(primera.entrada.contenedor);
-  const barra = montarBarraHerramientas({ tabs, documento: doc, historialApi });
+  const barra = montarBarraHerramientas({ tabs, documento: doc });
   return { doc, tabs, barra, feedback, e: primera };
 }
 
@@ -377,139 +377,20 @@ test('el picking de cara se desarma al cambiar de pestaña o cerrar el documento
   assert.equal(otra.lienzo.listeners.pointerup?.length ?? 0, 0, 'el listener sobrevivió al cierre');
 });
 
-// Historial falso: `revisiones` en orden del servidor (la más reciente al final).
-function historialFalso(servidor) {
-  const api = {
-    obtenerHistorial: async () => servidor.revisiones.map((id) => ({ id, fecha: '', mensaje: '' })),
-  };
-  const controlador = {
-    restaurar: async (id) => {
-      if (servidor.fallar) throw new Error('boom');
-      servidor.restauraciones.push(id);
-      servidor.revisiones.push(`n${servidor.revisiones.length}`);
-    },
-  };
-  return { api, controlador };
-}
-
-function escenaHistorial(revisiones = ['r1', 'r2', 'r3']) {
-  const servidor = { revisiones: [...revisiones], restauraciones: [], fallar: false };
-  const { api, controlador } = historialFalso(servidor);
-  const escena = montarEscena({ historialApi: api, historial: controlador });
-  return { ...escena, servidor };
-}
-
-test('Ctrl+Z vuelve a la revisión anterior y Ctrl+Shift+Z rehace, con la historia en modo append', async () => {
-  const { doc, servidor } = escenaHistorial();
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
+// Deshacer y rehacer están próximamente (24a2): ningún atajo, paleta ni clic restaura nada.
+test('deshacer y rehacer están próximamente: ni los atajos ni la paleta restauran nada', async () => {
+  const restauraciones = [];
+  const historial = { restaurar: async (id) => { restauraciones.push(id); } };
+  const { doc, barra, feedback } = montarEscena({ historial });
+  for (const evento of [{ key: 'z', ctrlKey: true }, { key: 'Z', ctrlKey: true, shiftKey: true }, { key: 'y', ctrlKey: true }]) {
+    const despachado = doc.dispatch('keydown', { ...evento, target: doc.body });
+    assert.equal(despachado.defaultPrevented, false, `${evento.key}: el atajo no debe capturarse`);
+  }
+  barra.ejecutar(porId('hist-deshacer'));
+  assert.match(textoFeedback(doc), /Próximamente · 24a2/);
+  barra.ejecutar(porId('hist-rehacer'));
+  assert.match(textoFeedback(doc), /Próximamente · 24a2/);
   await tick();
-  assert.deepEqual(servidor.restauraciones, ['r2']);
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['r2', 'r1']);
-  doc.dispatch('keydown', { key: 'Z', ctrlKey: true, shiftKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['r2', 'r1', 'n3']);
-  assert.equal(servidor.revisiones.length, 3 + 3, 'la historia no creció solo con restauraciones');
-});
-
-test('Ctrl+Y también rehace', async () => {
-  const { doc, servidor } = escenaHistorial();
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  doc.dispatch('keydown', { key: 'y', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['r2', 'r3']);
-});
-
-test('una edición nueva invalida el rehacer y el deshacer toma la revisión previa a la edición', async () => {
-  const { doc, servidor } = escenaHistorial();
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  servidor.revisiones.push('e9');
-  doc.dispatch('keydown', { key: 'Z', ctrlKey: true, shiftKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['r2'], 'rehizo tras una edición nueva');
-  assert.match(textoFeedback(doc), /No hay pasos que rehacer/);
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['r2', 'n3'], 'no volvió a la revisión previa a la edición');
-});
-
-test('sin pasos anteriores avisa y no restaura nada', async () => {
-  const { doc, servidor } = escenaHistorial(['r1']);
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, []);
-  assert.match(textoFeedback(doc), /No hay pasos anteriores/);
-});
-
-test('si la restauración falla, el error se muestra y el paso vuelve a estar disponible', async () => {
-  const { doc, servidor, feedback } = escenaHistorial();
-  servidor.fallar = true;
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.match(textoFeedback(doc), /boom/);
-  assert.equal(feedback.classes.has('is-error'), true);
-  servidor.fallar = false;
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['r2']);
-});
-
-test('Ctrl+Z dentro de un campo deja el deshacer nativo del campo', async () => {
-  const { doc, servidor } = escenaHistorial();
-  const campo = doc.createElement('input');
-  campo.tagName = 'INPUT';
-  doc.body.append(campo);
-  doc.activeElement = campo;
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: campo });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, []);
-});
-
-test('cambiar de documento o cerrarlo descarta su pila; al volver se reconstruye desde el historial', async () => {
-  const servidor = {
-    revisiones: [{ id: 'aaaaaaa001', mensaje: '' }, { id: 'aaaaaaa002', mensaje: '' }, { id: 'aaaaaaa003', mensaje: '' }],
-    restauraciones: [],
-  };
-  const api = { obtenerHistorial: async () => servidor.revisiones.map((r) => ({ ...r })) };
-  const controlador = {
-    restaurar: async (id) => {
-      servidor.restauraciones.push(id);
-      servidor.revisiones.push({ id: `bbbbbbb00${servidor.revisiones.length}`, mensaje: `restaurar todo el documento a ${id.slice(0, 10)}` });
-    },
-  };
-  const { doc, tabs, e } = montarEscena({ historialApi: api, historial: controlador });
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002']);
-
-  // Cambio a otro documento y vuelta: el rehacer de la sesión anterior ya no existe.
-  const otra = crearEntrada(doc, 'd2');
-  tabs.tabs.set('d2', otra.entrada);
-  tabs.activeId = 'd2';
-  tabs.onEstadoCambio();
-  tabs.activeId = 'd1';
-  tabs.onEstadoCambio();
-  doc.dispatch('keydown', { key: 'Z', ctrlKey: true, shiftKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002'], 'rehizo tras cambiar de documento');
-  assert.match(textoFeedback(doc), /No hay pasos que rehacer/);
-
-  // Deshacer sigue funcionando: la pila se reconstruyó desde el historial (restauración incluida).
-  doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002', 'aaaaaaa001']);
-
-  // Cerrar el documento también descarta la pila.
-  tabs.tabs.delete('d1');
-  tabs.activeId = 'd2';
-  tabs.onEstadoCambio();
-  tabs.tabs.set('d1', e.entrada);
-  tabs.activeId = 'd1';
-  tabs.onEstadoCambio();
-  doc.dispatch('keydown', { key: 'Z', ctrlKey: true, shiftKey: true, target: doc.body });
-  await tick();
-  assert.deepEqual(servidor.restauraciones, ['aaaaaaa002', 'aaaaaaa001'], 'rehizo tras cerrar el documento');
+  assert.deepEqual(restauraciones, []);
+  assert.equal(feedback.classes.has('is-error'), false, 'próximamente no es un error');
 });
