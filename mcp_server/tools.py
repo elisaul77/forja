@@ -371,6 +371,13 @@ def parametros(
       opcional: la de la lectura de los ids; si no, la vigente (la lectura
       de cotas con revision vieja responde error 409). Una cota que no mueve
       su parametro sale con `no_sigue_al_parametro: true`.
+      En un STEP/STL importado (sin script; Fase 23b) las cotas editables son
+      `operacion` `rellenar_y_taladrar` (un grupo de agujeros: diametro nuevo,
+      mismo eje y profundidad), `mover_cara` (dos caras paralelas: distancia
+      nueva, por biseccion) o `escalar_eje` (medida total de un eje). Una cota
+      por peticion; la respuesta trae `editadas` (valor antes, despues y error).
+      Si la verificacion no cuadra o la pared se rompe, error 422 con el
+      `mensaje` y nada se guarda.
 
     Si un cambio de rama dejo el aviso `script_divergente` (el script por
     `ruta` en disco no es el de esa rama), aplicar `valores` responde error

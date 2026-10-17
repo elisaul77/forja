@@ -28,12 +28,8 @@ import ezdxf
 import numpy as np
 import trimesh
 from build123d import GeomType
-from OCP.BRepAdaptor import BRepAdaptor_Surface
-from OCP.BRepClass3d import BRepClass3d_SolidClassifier
-from OCP.BRepTools import BRepTools
-from OCP.GeomAbs import GeomAbs_Cylinder
-from OCP.gp import gp_Pnt
-from OCP.TopAbs import TopAbs_IN
+
+from kernel import b123d_kernel
 
 FORMATOS_PLANO = ("svg", "pdf", "dxf")
 VISTAS = ("frontal", "superior", "derecha", "isometrica")
@@ -55,7 +51,6 @@ CAP_ARISTAS = 200_000
 # Meshes above this many triangles are refused (projection is per edge in Python).
 MAX_TRIANGULOS_PLANO = 100_000
 # Angular tolerance (rad) for a closed cylinder: a hole is a full turn of faces.
-TOLERANCIA_GIRO = 1e-3
 # First position dimension line sits this far (mm of paper) outside the view.
 DISTANCIA_COTA_POSICION = 20.0
 DESPLAZAMIENTO_COTA_POSICION = 6.0
@@ -255,70 +250,19 @@ def _proyectar_malla(malla: trimesh.Trimesh, v: np.ndarray, r: np.ndarray, u: np
     return segmentos
 
 
-def _eje_global(d: tuple[float, float, float]) -> str | None:
-    for eje, idx in zip(_EJES, range(3)):
-        if abs(abs(d[idx]) - 1.0) < 1e-6:
-            return eje
-    return None
-
-
 def _agujeros(shape: Any, lo: np.ndarray) -> tuple[list[dict[str, Any]], int]:
-    """Holes: closed cylinders (a full turn, possibly split into several faces)
-    in material-free space. Returns ([{eje, d, c}], omitidas): `c` is the centre
-    in the two in-plane axes measured from the bbox min corner, in the order of
-    `_ejes_plano(eje)`. Cylinders whose axis is not parallel to a global axis
-    are counted in `omitidas`, never guessed. A partial cylinder (a concave
-    fillet or a round) covers less than a turn and is not a hole."""
-    solidos = list(shape.solids())
-    grupos: dict[tuple, dict[str, Any]] = {}
-    for cara in shape.faces():
-        if cara.geom_type != GeomType.CYLINDER:
-            continue
-        superficie = BRepAdaptor_Surface(cara.wrapped)
-        if superficie.GetType() != GeomAbs_Cylinder:
-            continue
-        cilindro = superficie.Cylinder()
-        eje_ax = cilindro.Axis()
-        d = eje_ax.Direction()
-        loc = eje_ax.Location()
-        dvec = (d.X(), d.Y(), d.Z())
-        # A hole has no material on its axis at the face's height; a boss does.
-        c = cara.center()
-        t = (c.X - loc.X()) * dvec[0] + (c.Y - loc.Y()) * dvec[1] + (c.Z - loc.Z()) * dvec[2]
-        punto = gp_Pnt(loc.X() + t * dvec[0], loc.Y() + t * dvec[1], loc.Z() + t * dvec[2])
-        en_material = any(
-            BRepClass3d_SolidClassifier(s.wrapped, punto, 1e-6).State() == TopAbs_IN for s in solidos
-        )
-        if en_material:
-            continue
-        radio = cilindro.Radius()
-        eje = _eje_global(dvec)
-        if eje is None:
-            clave: tuple = (
-                "oblicuo", round(dvec[0], 3), round(dvec[1], 3), round(dvec[2], 3),
-                round(loc.X(), 3), round(loc.Y(), 3), round(loc.Z(), 3), round(radio, 3),
-            )
-            entrada = grupos.setdefault(clave, {"eje": None, "d": round(2 * radio, 3), "c": None, "giro": 0.0})
-        else:
-            coord = {"x": loc.X(), "y": loc.Y(), "z": loc.Z()}
-            ejes_plano = _ejes_plano(eje)
-            c1 = coord[ejes_plano[0]] - float(lo[_EJES.index(ejes_plano[0])])
-            c2 = coord[ejes_plano[1]] - float(lo[_EJES.index(ejes_plano[1])])
-            clave = (eje, round(c1, 3), round(c2, 3), round(2 * radio, 3))
-            entrada = grupos.setdefault(
-                clave, {"eje": eje, "d": round(2 * radio, 3), "c": (round(c1, 3), round(c2, 3)), "giro": 0.0}
-            )
-        umin, umax, _vmin, _vmax = BRepTools.UVBounds_s(cara.wrapped)
-        entrada["giro"] += float(umax - umin)
+    """Holes (F22): closed cylinders in material-free space, recognised by the
+    kernel (`b123d_kernel.global_axis_holes`, shared with F23b). Returns
+    ([{eje, d, c}], omitidas): `c` is the centre in the two in-plane axes measured
+    from the bbox min corner, in the order of `_ejes_plano(eje)`. Cylinders whose
+    axis is not parallel to a global axis are counted in `omitidas`, never guessed."""
+    crudos, omitidas = b123d_kernel.global_axis_holes(shape)
     agujeros: list[dict[str, Any]] = []
-    omitidas = 0
-    for entrada in grupos.values():
-        if entrada["giro"] < 2.0 * math.pi - TOLERANCIA_GIRO:
-            continue  # a fillet or a round: part of a turn, not a hole
-        if entrada["eje"] is None:
-            omitidas += 1
-            continue
-        agujeros.append({"eje": entrada["eje"], "d": entrada["d"], "c": entrada["c"]})
+    for h in crudos:
+        ejes_p = _ejes_plano(h["eje"])
+        c1 = h["c"][0] - float(lo[_EJES.index(ejes_p[0])])
+        c2 = h["c"][1] - float(lo[_EJES.index(ejes_p[1])])
+        agujeros.append({"eje": h["eje"], "d": h["d"], "c": (round(c1, 3), round(c2, 3))})
     return agujeros, omitidas
 
 
