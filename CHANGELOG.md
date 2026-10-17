@@ -7,6 +7,21 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (cotas vivas importadas, F23b)
+
+- Un STEP o una malla STL importados editan sus cotas reconocidas (ADR 0025). Cada cota del listado trae `operacion`: `rellenar_y_taladrar` (un grupo de agujeros: rellena el diámetro viejo y retaladra el nuevo, mismo eje y profundidad; `afectadas: n`), `mover_cara` (dos caras planas paralelas: estira o comprime por biseccion hasta ±0,01 mm) o `escalar_eje` (medida total: escala ese eje solo; también en mallas). Lo que no es una característica reconocida sale `solo_lectura` con `razon`.
+- El listado añade un tipo `distancia` (descriptor `distancia:{eje}:{valor}:{lo}`) por cada par de caras paralelas reconocido. El plano no lo dibuja.
+- Cada edición se verifica en memoria antes de escribir: válido, mismo número de sólidos, volumen según el análisis (±1 %), bbox solo en el eje editado y la medida vuelta a medir (±0,01 mm). Un fallo es 422 `{error, mensaje}` (y `razon` para «el agujero rompe la pared») y no se escribe nada. Un acierto crea una revisión nueva (snapshot del estado anterior, `restaurar` lo devuelve).
+- Límites: 5 000 caras B-rep, 1 000 000 de triángulos en malla, 40 agujeros por edición, valor entre 0,1× y 10× la medida actual, y un presupuesto de 200 operaciones / 30 s (`Presupuesto` de `checks/barrido.py`).
+- Visor: una etiqueta por cota editable sobre el modelo; pulsarla enfoca su campo numérico en el panel «Parámetros». El panel muestra qué hará cada edición.
+- Los nombres de sólidos y las notas con referencia sobreviven a la edición (`_reresolver_notas` se extrae de la ruta de script).
+
+### Changed (cotas vivas importadas, F23b)
+
+- Supera la regla de F23a «documento importado = solo lectura»: sus dos tests (`test_documento_sin_script_es_todo_solo_lectura`, `test_stl_es_malla_solo_lectura`) pasan a fijar el nuevo comportamiento.
+- Cambios de caché: `cotas.js?v=3` (en `parametros.js`), `parametros.js?v=15` y `historial.js?v=3`/`ensamble.js?v=3` (en `tabs.js`), `tabs.js?v=50` (en `app.js`), `app.js?v=53` (en `index.html`). `historial.js` y `ensamble.js` importan `api.js?v=13` (antes sin `?v`).
+- `planos._agujeros` usa el reconocimiento de agujeros del núcleo (`kernel/b123d_kernel.global_axis_holes`), compartido con F23b. Salida de F22 sin cambios.
+
 ### Added (cotas vivas, F23a)
 
 - Cada cota del plano que sale de un `PARAMETROS` de un script es editable: `GET /documentos/{id}/cotas` lista `{revision, cotas}` con `operacion: "parametro"` (y `min`/`max`) o `solo_lectura` con `razon`; `POST /documentos/{id}/cotas/aplicar` con `{revision, cotas: {id_cota: valor}}` la aplica por el camino de `parametros` (una revisión nueva, restaurable con `restaurar`). Decisión en `docs/decisions/0023-cotas-vivas.md`.
