@@ -18,7 +18,7 @@ test('legacy extension, empty library and timestamp ties', () => {
 });
 
 test('delete cancellation sends no request; unauthorized clears saved token', async () => {
-  const { eliminarDocumento } = await import('../../app/web/static/js/api.js?v=9');
+  const { eliminarDocumento } = await import('../../app/web/static/js/api.js?v=13');
   let sent = 0;
   let removed = false;
   globalThis.sessionStorage = {getItem: () => null, setItem() {}, removeItem() { removed = true; }};

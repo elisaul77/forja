@@ -1146,3 +1146,18 @@ a.fj-btn { text-decoration: none; }
 .fj-auth { max-width: min(90vw, 28rem); padding: var(--fj-space-4); color: var(--fj-ink-2); background: var(--fj-surface); border: 1px solid var(--fj-line-strong); border-radius: var(--fj-r-md); }
 .fj-auth label { display: block; margin-bottom: var(--fj-space-4); }
 .fj-auth input { display: block; width: 100%; box-sizing: border-box; padding: var(--fj-space-2); color: var(--fj-ink-1); background: var(--fj-bg); border: 1px solid var(--fj-line-strong); }
+
+/* Fase 21: panel Medidas (medidas.js). Texto de sólidos siempre como texto. */
+.fj-medidas__titulo { margin: 0 0 var(--fj-space-2); font-size: var(--fj-text-base); }
+.fj-medidas__subtitulo { margin: var(--fj-space-3) 0 var(--fj-space-1); font-size: var(--fj-text-sm); }
+.fj-medidas__resumen, .fj-medidas__aviso { margin: var(--fj-space-1) 0; color: var(--fj-ink-2); font-size: var(--fj-text-sm); }
+.fj-medidas__aviso--error { color: var(--fj-err); }
+.fj-medidas__lista, .fj-medidas__parametros { list-style: none; margin: 0; padding: 0; }
+.fj-medidas__fila { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--fj-space-2); align-items: baseline; padding: var(--fj-space-1) 0; border-bottom: 1px solid var(--fj-line-strong); font-size: var(--fj-text-sm); }
+.fj-medidas__par { overflow-wrap: anywhere; }
+.fj-medidas__estado { font-weight: 600; }
+.fj-medidas__estado--choque { color: var(--fj-err); }
+.fj-medidas__estado--contacto { color: var(--fj-run); }
+.fj-medidas__estado--holgura { color: var(--fj-ink-2); }
+.fj-medidas__mm { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fj-medidas.is-obsoleto { opacity: 0.5; }

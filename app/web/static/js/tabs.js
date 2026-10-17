@@ -16,6 +16,7 @@ import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materia
 import { construirAnclas } from "./orca.js?v=4";
 import { createRefreshScheduler } from "./live-core.js?v=11";
 import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=4";
+import { ForjaMedidasControlador } from "./medidas.js?v=1";
 
 function formatoVolumen(mm3) {
   return `${mm3.toFixed(2)} mm³`;
@@ -51,6 +52,7 @@ export class TabManager {
     this.panelSeccionParametros = document.getElementById("fj-panel-parametros");
     this.panelSeccionEnsamble = document.getElementById("fj-panel-ensamble");
     this.panelSeccionPiezas = document.getElementById("fj-panel-piezas");
+    this.panelSeccionMedidas = document.getElementById("fj-panel-medidas");
     this.panelSeccionDesign = document.getElementById("fj-panel-design");
     // Indicaciones (antes «Diseño») es la lista única: notas, trazos y propuestas.
     this.panelActivo = "design";
@@ -81,6 +83,7 @@ export class TabManager {
     this.panel.classList.toggle("fj-panel-lateral--historial", seccion === "historial");
     this.panelSeccionParametros.hidden = seccion !== "parametros";
     this.panelSeccionEnsamble.hidden = seccion !== "ensamble";
+    this.panelSeccionMedidas.hidden = seccion !== "medidas";
     this.panelSeccionPiezas.hidden = seccion !== "piezas";
     for (const boton of document.querySelectorAll(".fj-panel-lateral__tab")) {
       boton.classList.toggle("is-active", boton.dataset.panel === seccion);
@@ -110,6 +113,7 @@ export class TabManager {
     renderizarPanelParametros(entrada.parametros);
     if (this.panelActivo === "ensamble") renderizarPanelEnsamble(entrada.ensamble);
     if (this.panelActivo === "piezas") renderPiecesPanel(entrada.viewer, entrada.ficha.nombre, entrada.materiales);
+    if (this.panelActivo === "medidas") entrada.medidas.mostrar(entrada.revision);
   }
 
   /** Abre (o reactiva si ya existe) una pestaña para el documento dado. */
@@ -366,8 +370,13 @@ export class TabManager {
     });
     contenedor.append(divisor);
 
+    const medidas = new ForjaMedidasControlador({
+      docId: ficha.id,
+      contenedor: this.panelSeccionMedidas,
+      visible: () => this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "medidas",
+    });
     const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, animation, btnParametros,
-      revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
+      medidas, revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
     // Controles que la barra de herramientas reutiliza (no se duplican).
     entry.acciones = { nota: btnNota, pizarra: btnPizarra, cupon: btnCupon };
     // Acciones del panel Indicaciones: mismos modos que los botones del visor.
@@ -633,9 +642,15 @@ export class TabManager {
     }
   }
 
+  /** Un script de `docId` se está construyendo: el panel Medidas muestra sus cifras en gris. */
+  medidasConstruyendo(docId) {
+    this.tabs.get(docId)?.medidas.marcarConstruyendo();
+  }
+
   aplicarCambioExterno(docId, cambios = [], revision = null) {
     const entry = this.tabs.get(docId);
     if (!entry) return;
+    entry.medidas.nuevaRevision(revision);
     if (cambios.includes("geometria") && (!revision || revision !== entry.revision)) {
       entry.scheduler.notify(revision);
     }
