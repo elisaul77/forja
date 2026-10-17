@@ -68,8 +68,77 @@ export function claveDesdeEvento(event) {
   return [...modificadores, tecla].join('+');
 }
 
+/** Acción cuyo atajo principal o alterno (p. ej. Ctrl+Y para rehacer) es `clave`. */
 export function buscarPorAtajo(acciones, clave) {
-  return acciones.find((accion) => accion.atajo === clave);
+  return acciones.find((accion) => accion.atajo === clave || accion.atajoAlterno === clave);
+}
+
+// ---------------- Deshacer y rehacer por revisiones (fase 24a, revisión 1) ----------------
+// Cada paso es una restauración del servidor: el historial sigue siendo
+// append-only y restaurar crea una revisión nueva. `pila` guarda las revisiones
+// a las que se puede volver (la última es la inmediatamente anterior) y `rehacer`
+// las dejadas por un deshacer. `cabeza` es la revisión que ve la barra.
+
+export function nuevaPilaRevisiones() {
+  return { cabeza: null, pila: [], rehacer: [] };
+}
+
+/**
+ * `ids`: revisiones en el orden del servidor (la más reciente al final).
+ * Si la cabeza cambió sin pasar por deshacer o rehacer, es una edición nueva: la
+ * cabeza anterior queda como paso a deshacer y el rehacer se invalida.
+ */
+export function sincronizarPilaRevisiones(estado, ids) {
+  if (ids.length === 0) {
+    estado.cabeza = null;
+    estado.pila = [];
+    estado.rehacer = [];
+    return estado;
+  }
+  const cabeza = ids[ids.length - 1];
+  if (estado.cabeza === null) {
+    estado.pila = ids.slice(0, -1);
+    estado.rehacer = [];
+  } else if (cabeza !== estado.cabeza) {
+    estado.pila.push(estado.cabeza);
+    estado.rehacer = [];
+  }
+  estado.cabeza = cabeza;
+  return estado;
+}
+
+/** Revisión a la que deshacer (o null). Mueve la cabeza actual al rehacer. */
+export function tomarDeshacer(estado) {
+  if (estado.cabeza === null || estado.pila.length === 0) return null;
+  const destino = estado.pila.pop();
+  estado.rehacer.push(estado.cabeza);
+  return destino;
+}
+
+/** Revisión a la que rehacer (o null). Mueve la cabeza actual a la pila. */
+export function tomarRehacer(estado) {
+  if (estado.cabeza === null || estado.rehacer.length === 0) return null;
+  const destino = estado.rehacer.pop();
+  estado.pila.push(estado.cabeza);
+  return destino;
+}
+
+/** Tras una restauración: la cabeza pasa a ser la última revisión del servidor. */
+export function fijarCabeza(estado, id) {
+  estado.cabeza = id;
+  return estado;
+}
+
+/** Si la restauración falla, el paso tomado vuelve a su pila. */
+export function devolverPaso(estado, destino, sentido) {
+  if (sentido === 'deshacer') {
+    estado.rehacer.pop();
+    estado.pila.push(destino);
+  } else {
+    estado.pila.pop();
+    estado.rehacer.push(destino);
+  }
+  return estado;
 }
 
 /**

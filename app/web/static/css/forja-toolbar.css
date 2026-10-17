@@ -61,11 +61,10 @@
 
 .fj-cinta__grupos {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 0;
-  overflow-x: auto;
   min-height: 74px;
-  scrollbar-width: thin;
 }
 
 .fj-cinta__grupo {

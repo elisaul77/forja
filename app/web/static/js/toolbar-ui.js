@@ -5,8 +5,10 @@
 import { PESTANAS, ACCIONES } from "./toolbar-actions.js";
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo, buscarPorAtajo,
+  nuevaPilaRevisiones, sincronizarPilaRevisiones, tomarDeshacer, tomarRehacer, fijarCabeza, devolverPaso,
 } from "./toolbar.js";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js";
+import { obtenerHistorial } from "./api.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const SPRITE = "/static/icons/forja-icons.svg";
@@ -16,7 +18,7 @@ const RETRASO_TOOLTIP_MS = 350;
  * Monta la barra sobre #fj-cinta. `tabs` es el TabManager de app.js.
  * Devuelve { actualizar, ejecutar } para quien necesite refrescarla o lanzar una acción.
  */
-export function montarBarraHerramientas({ tabs, documento = document }) {
+export function montarBarraHerramientas({ tabs, documento = document, historialApi = { obtenerHistorial } }) {
   const cinta = documento.getElementById("fj-cinta");
   if (!cinta) throw new Error("falta el contenedor #fj-cinta de la barra de herramientas");
   const feedback = documento.getElementById("fj-feedback");
@@ -25,7 +27,11 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
 
   let pestanaActiva = "vista";
   let desarmarCara = null;
+  let visorArmado = null;
   let temporizadorTooltip = null;
+  // Pilas de deshacer/rehacer por documento (sesión) y documentos con un paso en curso.
+  const pilas = new Map();
+  const enCurso = new Set();
 
   // ---------------- Estado y avisos ----------------
   const entradaActiva = () => tabs.tabs.get(tabs.activeId) ?? null;
@@ -64,6 +70,11 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
     const lienzo = visor.renderer.domElement;
     const alSoltar = (evento) => {
       if (evento.button !== 0) return;
+      // Si el documento ya no está en primer plano, el picking no le pertenece.
+      if (entradaActiva()?.viewer !== visor) {
+        desarmarPick();
+        return;
+      }
       const golpe = visor.raycastearMalla(evento.clientX, evento.clientY);
       if (!golpe) {
         mostrar("No hay ninguna cara bajo el cursor. Haz clic sobre el modelo o pulsa Esc.");
@@ -73,7 +84,11 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
       fn(golpe);
     };
     lienzo.addEventListener("pointerup", alSoltar);
-    desarmarCara = () => lienzo.removeEventListener("pointerup", alSoltar);
+    visorArmado = visor;
+    desarmarCara = () => {
+      lienzo.removeEventListener("pointerup", alSoltar);
+      visorArmado = null;
+    };
     mostrar("Haz clic en una cara del modelo para mirarla de frente. Esc cancela.");
   }
 
@@ -81,6 +96,60 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
     if (desarmarCara) {
       desarmarCara();
       desarmarCara = null;
+    }
+  }
+
+  // Cambiar de pestaña o cerrar el documento desarma el picking del visor anterior.
+  function sincronizarPick() {
+    if (visorArmado && visorArmado !== entradaActiva()?.viewer) desarmarPick();
+  }
+
+  // Única fuente del estado del visor: los botones de la cinta y los de la barra
+  // del visor (Cuadrícula, Malla) y los indicadores de notas/pizarra se leen de aquí.
+  function sincronizarVisor() {
+    const entrada = entradaActiva();
+    if (!entrada) return;
+    const visor = entrada.viewer;
+    for (const control of entrada.contenedor?.querySelectorAll("button") ?? []) {
+      const etiqueta = control.getAttribute("aria-label");
+      if (etiqueta === "Cuadrícula") control.setAttribute("aria-pressed", String(Boolean(visor.grid?.visible)));
+      else if (etiqueta === "Malla") control.setAttribute("aria-pressed", String(Boolean(visor.wireframe)));
+    }
+    const modo = entrada.notas?.modo ?? null;
+    entrada.acciones?.nota?.classList.toggle("is-active", modo === "nota");
+    entrada.acciones?.pizarra?.classList.toggle("is-active", String(modo ?? "").startsWith("pizarra"));
+  }
+
+  // Deshacer/rehacer: cada paso es una restauración del servidor (historial append-only).
+  async function moverRevision(sentido) {
+    const entrada = requerirEntrada();
+    const { id } = entrada.ficha;
+    if (enCurso.has(id)) {
+      mostrar("Espera a que termine el paso anterior.");
+      return;
+    }
+    const estado = pilas.get(id) ?? nuevaPilaRevisiones();
+    pilas.set(id, estado);
+    enCurso.add(id);
+    try {
+      const ids = (await historialApi.obtenerHistorial(id)).map((entradaHistorial) => entradaHistorial.id);
+      sincronizarPilaRevisiones(estado, ids);
+      const destino = sentido === "deshacer" ? tomarDeshacer(estado) : tomarRehacer(estado);
+      if (destino === null) {
+        mostrar(sentido === "deshacer" ? "No hay pasos anteriores que deshacer." : "No hay pasos que rehacer.");
+        return;
+      }
+      try {
+        await entrada.historial.restaurar(destino);
+      } catch (error) {
+        devolverPaso(estado, destino, sentido);
+        throw error;
+      }
+      const tras = await historialApi.obtenerHistorial(id);
+      fijarCabeza(estado, tras.length ? tras[tras.length - 1].id : null);
+      mostrar(sentido === "deshacer" ? "Revisión anterior restaurada." : "Revisión rehecha.");
+    } finally {
+      enCurso.delete(id);
     }
   }
 
@@ -126,10 +195,16 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
       app?.classList.toggle("fj-app--enfoque");
     },
     elegirCara: (fn) => armarCara(fn),
+    // Cancela por el estado de la pestaña: picking, modo de nota y de pizarra, y selección.
     cancelar() {
       desarmarPick();
-      entradaActiva()?.viewer.selectPiece(null);
+      const entrada = entradaActiva();
+      if (!entrada) return;
+      entrada.notas?.cancelarModos();
+      entrada.viewer.selectPiece(null);
     },
+    deshacer: () => moverRevision("deshacer"),
+    rehacer: () => moverRevision("rehacer"),
   };
 
   function ejecutarAccion(accion) {
@@ -138,11 +213,17 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
       mostrar(motivo);
       return;
     }
+    const fallo = (error) => mostrar(`No se pudo ejecutar «${accion.etiqueta}»: ${error.message}`, true);
     try {
-      accion.ejecutar(contexto);
+      const resultado = accion.ejecutar(contexto);
+      if (resultado && typeof resultado.then === "function") {
+        resultado.catch(fallo).finally(() => renderizar());
+        return;
+      }
     } catch (error) {
-      mostrar(`No se pudo ejecutar «${accion.etiqueta}»: ${error.message}`, true);
+      fallo(error);
     }
+    renderizar();
   }
 
   // ---------------- Tooltips propios ----------------
@@ -238,6 +319,10 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
   cinta.replaceChildren(fila, gruposEl);
 
   function renderizar() {
+    sincronizarVisor();
+    // Redibujar la cinta reemplaza sus botones: se devuelve el foco al mismo control.
+    const enCinta = documento.activeElement?.closest?.("#fj-cinta");
+    const idFoco = enCinta ? documento.activeElement.dataset?.accion ?? null : null;
     const estado = estadoActual();
     const pestanas = PESTANAS.filter((p) => !p.cluster);
     pestanasEl.replaceChildren();
@@ -289,6 +374,7 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
     for (const accion of ACCIONES.filter((a) => a.pestana === "claude")) {
       claudeEl.append(crearBoton(accion, estado, { ia: true }));
     }
+    if (idFoco) documento.querySelector(`#fj-cinta [data-accion="${idFoco}"]`)?.focus();
   }
 
   // ---------------- Paleta de comandos (Ctrl+K) ----------------
@@ -409,7 +495,10 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
     return fila;
   };
   filas.append(filaAtajo("?", "Mostrar esta ayuda"), filaAtajo("Ctrl+K", "Paleta de comandos"));
-  for (const accion of ACCIONES.filter((a) => a.atajo)) filas.append(filaAtajo(accion.atajo, accion.etiqueta));
+  for (const accion of ACCIONES.filter((a) => a.atajo)) {
+    filas.append(filaAtajo(accion.atajo, accion.etiqueta));
+    if (accion.atajoAlterno) filas.append(filaAtajo(accion.atajoAlterno, accion.etiqueta));
+  }
   atajos.append(cabeceraAtajos, filas);
   documento.body.append(atajos);
 
@@ -423,14 +512,15 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
   // ---------------- Atajos globales (un solo listener) ----------------
   documento.addEventListener("keydown", (evento) => {
     const dialogoAbierto = Boolean(documento.querySelector("dialog[open]"));
-    if (evento.ctrlKey && !evento.altKey && !evento.shiftKey && evento.key.toLowerCase() === "k") {
-      evento.preventDefault();
-      if (!dialogoAbierto) abrirPaleta();
-      return;
-    }
     const activo = documento.activeElement;
     const zonaVisor = !activo || activo === documento.body || Boolean(activo.closest?.("#fj-main, #fj-cinta"));
+    // Las guardas van primero: campos, zonas editables y diálogos conservan sus teclas (también Ctrl+K).
     if (debeIgnorarAtajo(evento, { target: evento.target, dialogoAbierto, zonaVisor })) return;
+    if (claveDesdeEvento(evento) === "Ctrl+K") {
+      evento.preventDefault();
+      abrirPaleta();
+      return;
+    }
     if (evento.key === "?") {
       evento.preventDefault();
       abrirAtajos();
@@ -442,7 +532,13 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
     ejecutarAccion(accion);
   });
 
-  tabs.onEstadoCambio = () => renderizar();
+  // Los clics del visor (Cuadrícula, Malla) llegan aquí al burbujear: la cinta se
+  // redibuja para reflejar el estado nuevo sin esperar a una acción de la barra.
+  documento.addEventListener("click", () => renderizar());
+  tabs.onEstadoCambio = () => {
+    sincronizarPick();
+    renderizar();
+  };
   renderizar();
   return { actualizar: renderizar, ejecutar: ejecutarAccion };
 }

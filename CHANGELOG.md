@@ -14,7 +14,20 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - Vistas estándar (1 a 6 y 0), proyección ortográfica o perspectiva, alambre, aristas vivas, rayos X, rejilla, ejes, plano de corte, aislar, mostrar u ocultar piezas, captura PNG, pantalla completa, mirar de frente a una cara, descarga 3MF y STL, abrir en OrcaSlicer y acceso a los paneles existentes (Indicaciones, Piezas, Historial, Ramas, Parámetros, Ensamble, Galería, Perfil y Cupón).
 - Paleta de comandos con Ctrl+K (búsqueda en español, sin tildes) y hoja de atajos con «?». Los atajos no actúan mientras se escribe en un campo ni con un diálogo abierto; las letras y dígitos sueltos solo actúan con el foco en el visor o en la cinta.
 - Ninguna acción de la barra cambia la geometría por sí sola: los cambios siguen el flujo existente de indicaciones y candidatos. No se añadieron herramientas MCP.
-- Límites conocidos: «Deshacer» abre el Historial para volver a un paso (no hay deshacer por clic); «Pasos de Claude» abre el Historial sin filtro por autor; los botones Cuadrícula y Malla de la barra del visor no reflejan aún los cambios hechos desde la cinta.
+- Límites conocidos: «Pasos de Claude» abre el Historial sin filtro por autor. El icono de «Rehacer» reutiliza el de «Deshacer» (el sprite no tiene glifo propio). La pila de deshacer vive en la sesión: tras recargar la página, el primer paso se calcula desde el historial del servidor.
+
+### Fixed (barra de herramientas, revisión 1 de fase 24a)
+
+- Ortográfica: encuadrar, las vistas estándar, enfocar una pieza y recargar la malla ya no producen posiciones NaN; el encuadre se calcula según el tipo de cámara (`app/web/static/js/viewer-geometria.js`).
+- Ortográfica: redimensionar el visor conserva el zoom de la rueda; solo Ajustar y las vistas estándar lo reinician.
+- Ctrl+K no abre la paleta mientras se escribe en campos, zonas editables o con un diálogo abierto: las guardas se evalúan antes que el atajo.
+- Seleccionar y Cancelar salen del modo de nota y de pizarra, quitan sus indicadores y la selección, y desarman el picking de cara.
+- Las alternancias (ortográfica, alambre, aristas, rayos X, rejilla, ejes) actualizan `aria-pressed` y el estado activo al cambiar, sin perder el foco; los botones Cuadrícula y Malla de la barra del visor se sincronizan con el mismo estado.
+- El picking de cara se desarma al cambiar de pestaña o cerrar el documento; ya no queda escuchando sobre un visor ajeno.
+- Mallas, piezas y aristas se liberan con un único helper: al recargar, al quitar piezas o al cerrar el visor no quedan geometrías ni materiales de las aristas en memoria.
+- Deshacer (Ctrl+Z) vuelve a la revisión anterior y Rehacer (Ctrl+Shift+Z o Ctrl+Y) a la que dejó deshacer, usando la restauración del historial: cada paso crea una revisión nueva y el historial no se borra. Una edición nueva invalida el rehacer.
+- «Vistas estándar» ya no queda cortado en pantallas de 1280 px: los grupos de la cinta se envuelven en lugar de desplazarse.
+- Pruebas: `tests/web/viewer-geometria.test.mjs` (9), `tests/web/toolbar-ui.test.mjs` (11), `tests/web/toolbar.test.mjs` (15).
 
 ### Changed (indicaciones unificadas)
 

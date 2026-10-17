@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { decodePieceBundle } from "./piece-data.js?v=8";
+import { calcularEncuadre, aplicarMarcosOrtograficos, liberarAristas, liberarMalla } from "./viewer-geometria.js";
 
 const loader = new STLLoader();
 
@@ -353,7 +354,11 @@ export class ForjaViewer {
     this.renderer.setSize(ancho, alto, false);
     this._aspecto = ancho / alto;
     if (this.ortogonal) {
-      this._ajustarFrustum(this.camera.position.distanceTo(this.controls.target) * Math.tan(THREE.MathUtils.degToRad(22.5)));
+      // El zoom de la rueda se conserva al redimensionar (solo el encuadre explícito lo reinicia).
+      aplicarMarcosOrtograficos(this.camera, {
+        altura: this.camera.position.distanceTo(this.controls.target) * Math.tan(THREE.MathUtils.degToRad(22.5)),
+        aspecto: this._aspecto,
+      });
     } else {
       this.camera.aspect = this._aspecto;
       this.camera.updateProjectionMatrix();
@@ -376,8 +381,7 @@ export class ForjaViewer {
 
     if (this.mesh) {
       this.scene.remove(this.mesh);
-      this.mesh.geometry.dispose();
-      this.mesh.material.dispose();
+      liberarMalla(this.mesh);
     }
 
     const colorMalla = cssVarColor("--fj-ink-3", "#a8a29e");
@@ -441,9 +445,10 @@ export class ForjaViewer {
     const radio = Math.max(esfera.radius, 1);
 
     this.controls.target.copy(centro);
-    const verticalFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
-    const horizontalFov = Math.atan(Math.tan(verticalFov) * this.camera.aspect);
-    const distancia = radio / Math.sin(Math.min(verticalFov, horizontalFov)) * 1.15;
+    // Ortográfica no tiene fov: calcularEncuadre usa la distancia de referencia y la altura del marco.
+    const { distancia, altura } = calcularEncuadre({
+      ortogonal: this.ortogonal, fov: this.camera.fov, aspecto: this._aspecto, radio,
+    });
     this.camera.up.set(0, 0, 1);
     // OrbitControls caches the Z-up frame at construction. Keep it fixed;
     // a tiny offset avoids a degenerate look-at at the exact vertical pole.
@@ -452,8 +457,12 @@ export class ForjaViewer {
     this.camera.position.copy(centro).add(viewDirection.normalize().multiplyScalar(distancia));
     this.camera.near = Math.max(radio / 100, 0.01);
     this.camera.far = distancia * 50;
-    this.camera.updateProjectionMatrix();
-    if (this.ortogonal) this._ajustarFrustum(radio * 1.15);
+    if (this.ortogonal) {
+      // Encuadre explícito: el zoom vuelve a 1.
+      aplicarMarcosOrtograficos(this.camera, { altura, aspecto: this._aspecto, reiniciarZoom: true });
+    } else {
+      this.camera.updateProjectionMatrix();
+    }
     this.controls.update();
     this.render();
   }
@@ -548,16 +557,6 @@ export class ForjaViewer {
     this.resize();
   }
 
-  /** Altura media del volumen visible de la cámara ortográfica (mismo encuadre que la perspectiva). */
-  _ajustarFrustum(altura) {
-    const media = Math.max(altura, 0.01);
-    const ancho = media * (this._aspecto ?? 1);
-    const cam = this.camera;
-    cam.left = -ancho; cam.right = ancho; cam.top = media; cam.bottom = -media;
-    cam.zoom = 1;
-    cam.updateProjectionMatrix();
-  }
-
   _objetosModelo() {
     return [this.mesh, ...[...this.pieces.values()].map((p) => p.mesh)].filter(Boolean);
   }
@@ -566,11 +565,7 @@ export class ForjaViewer {
   setAristas(enabled) {
     this.aristas = enabled;
     for (const objeto of this._objetosModelo()) {
-      for (const hijo of objeto.children.filter((h) => h.userData.esAristas)) {
-        objeto.remove(hijo);
-        hijo.geometry.dispose();
-        hijo.material.dispose();
-      }
+      liberarAristas(objeto);
       if (!enabled) continue;
       const lineas = new THREE.LineSegments(
         new THREE.EdgesGeometry(objeto.geometry, 30),
@@ -653,8 +648,7 @@ export class ForjaViewer {
   _clearPieces() {
     for (const piece of this.pieces.values()) {
       this.scene.remove(piece.mesh);
-      piece.mesh.geometry.dispose();
-      piece.mesh.material.dispose();
+      liberarMalla(piece.mesh);
     }
     this.pieces.clear();
     this.selectedPiece = null;
@@ -779,10 +773,7 @@ export class ForjaViewer {
     this._clearPieces();
     this._limpiarAnotaciones();
     this.ocultarPlanoPizarra();
-    if (this.mesh) {
-      this.mesh.geometry.dispose();
-      this.mesh.material.dispose();
-    }
+    liberarMalla(this.mesh);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }

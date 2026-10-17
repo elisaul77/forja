@@ -7,6 +7,7 @@ import { PESTANAS, ACCIONES } from '../../app/web/static/js/toolbar-actions.js';
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo,
   buscarPorAtajo, validarRegistro, ATAJOS_RESERVADOS,
+  nuevaPilaRevisiones, sincronizarPilaRevisiones, tomarDeshacer, tomarRehacer, fijarCabeza, devolverPaso,
 } from '../../app/web/static/js/toolbar.js';
 
 const aqui = path.dirname(fileURLToPath(import.meta.url));
@@ -142,4 +143,59 @@ test('los módulos de la barra no usan innerHTML, fetch, CDN ni colores fijos', 
     if (rel.endsWith('.js')) assert.doesNotMatch(texto, /\bfetch\(/, `${rel} llama a fetch directamente`);
   }
   assert.doesNotMatch(leer('app/web/static/css/forja-toolbar.css'), /#[0-9a-fA-F]{3,8}\b/, 'color fijo en CSS');
+});
+
+test('deshacer y rehacer están en el registro con sus atajos (Ctrl+Y como alterno)', () => {
+  const deshacer = porId('hist-deshacer');
+  assert.equal(deshacer.estado, 'listo');
+  assert.equal(deshacer.atajo, 'Ctrl+Z');
+  assert.equal(typeof deshacer.ejecutar, 'function');
+  const rehacer = porId('hist-rehacer');
+  assert.equal(rehacer.estado, 'listo');
+  assert.equal(rehacer.atajo, 'Ctrl+Shift+Z');
+  assert.equal(rehacer.atajoAlterno, 'Ctrl+Y');
+  assert.equal(buscarPorAtajo(ACCIONES, 'Ctrl+Y')?.id, 'hist-rehacer');
+  assert.deepEqual(validarRegistro(ACCIONES), []);
+});
+
+test('pila de revisiones: deshacer recorre hacia atrás y rehacer vuelve, sin borrar la historia', () => {
+  const estado = nuevaPilaRevisiones();
+  sincronizarPilaRevisiones(estado, ['r1', 'r2', 'r3']);
+  assert.equal(tomarDeshacer(estado), 'r2');
+  fijarCabeza(estado, 'n4');
+  assert.equal(tomarDeshacer(estado), 'r1');
+  fijarCabeza(estado, 'n5');
+  assert.equal(tomarDeshacer(estado), null, 'no hay más pasos');
+  assert.equal(tomarRehacer(estado), 'n4', 'rehacer debe volver a la revisión dejada');
+  fijarCabeza(estado, 'n6');
+  assert.equal(tomarRehacer(estado), 'r3');
+  fijarCabeza(estado, 'n7');
+  assert.equal(tomarRehacer(estado), null);
+});
+
+test('pila de revisiones: una edición nueva pasa la cabeza a la pila e invalida el rehacer', () => {
+  const estado = nuevaPilaRevisiones();
+  sincronizarPilaRevisiones(estado, ['r1', 'r2']);
+  assert.equal(tomarDeshacer(estado), 'r1');
+  fijarCabeza(estado, 'n3');
+  sincronizarPilaRevisiones(estado, ['r1', 'r2', 'n3', 'e4']);
+  assert.deepEqual(estado.rehacer, []);
+  assert.equal(tomarRehacer(estado), null);
+  assert.equal(tomarDeshacer(estado), 'n3', 'deshacer debe volver a la revisión anterior a la edición');
+});
+
+test('pila de revisiones: un fallo devuelve el paso a su pila', () => {
+  const estado = nuevaPilaRevisiones();
+  sincronizarPilaRevisiones(estado, ['r1', 'r2']);
+  const destino = tomarDeshacer(estado);
+  devolverPaso(estado, destino, 'deshacer');
+  assert.deepEqual(estado.pila, ['r1']);
+  assert.deepEqual(estado.rehacer, []);
+  assert.equal(tomarDeshacer(sincronizarPilaRevisiones(nuevaPilaRevisiones(), [])), null, 'sin historial no hay paso');
+});
+
+test('la cinta envuelve sus grupos para que «Vistas estándar» no quede cortado a 1280 px', () => {
+  const regla = leer('app/web/static/css/forja-toolbar.css').match(/\.fj-cinta__grupos\s*\{[^}]*\}/)?.[0] ?? '';
+  assert.match(regla, /flex-wrap:\s*wrap/);
+  assert.doesNotMatch(regla, /overflow-x:\s*auto/);
 });
