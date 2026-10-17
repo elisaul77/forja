@@ -1116,14 +1116,23 @@ def _escribir_geometria_importada(doc_id: str, edicion: Any, mensaje: str) -> di
         tmp_geometria.unlink(missing_ok=True)
         tmp_sidecar.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=f"la geometría editada no se pudo verificar: {exc}") from exc
+    cabeza_previa = git_store.cabeza(doc_id)
     snapshot = versioning.crear_snapshot(doc_id, mensaje, previos)
+    cabeza_snapshot = git_store.cabeza(doc_id)
     try:
         os.replace(tmp_geometria, ruta)
         if sidecar is not None:
             os.replace(tmp_sidecar, solids.ruta_solidos(doc_id))
-    except OSError as exc:  # noqa: BLE001 - rollback to the snapshot's bytes
+    except OSError as exc:  # noqa: BLE001 - rollback: history first, then the files' bytes
         tmp_geometria.unlink(missing_ok=True)
         tmp_sidecar.unlink(missing_ok=True)
+        try:
+            git_store.deshacer_commit(doc_id, cabeza_snapshot, cabeza_previa)
+        except git_store.GitError as exc_git:
+            raise HTTPException(
+                status_code=500,
+                detail=f"la edición falló y el historial no se pudo revertir: {exc_git}",
+            ) from exc_git
         ruta.write_bytes(previos[ruta.name])
         if "solidos.json" in previos:
             solids.ruta_solidos(doc_id).write_bytes(previos["solidos.json"])

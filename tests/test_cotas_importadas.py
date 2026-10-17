@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import math
+import os
 import tempfile
 import threading
 from pathlib import Path
@@ -302,6 +303,35 @@ def test_verificacion_fallida_revierte_sin_revision(monkeypatch):
     resp = _aplicar(doc, listado["revision"], {_cota(listado, "diametro")["id"]: 10.0})
     assert resp.status_code == 422 and resp.json()["error"] is True
     assert _estado_en_disco(doc) == antes
+
+
+@pytest.mark.parametrize("destino_fallido", ["geometria", "sidecar"])
+def test_replace_fallido_deshace_tambien_el_snapshot(monkeypatch, destino_fallido):
+    # El snapshot se crea antes de renombrar los archivos: si el renombrado falla, la rama
+    # vuelve a su punta anterior y el historial queda igual (ADR-0025).
+    doc = _importar(_step(_plancha(agujeros=[(10, 0, 8)])))
+    listado = _listado(doc)
+    ruta = documents._files[doc]
+    sidecar = solids.ruta_solidos(doc)
+    cabeza_previa = git_store.cabeza(doc)
+    historial_previo = [e["id"] for e in git_store.log(doc)]
+    bytes_previos = {ruta: ruta.read_bytes(), sidecar: sidecar.read_bytes() if sidecar.exists() else None}
+    destino = ruta if destino_fallido == "geometria" else sidecar
+    real_replace = os.replace
+
+    def fallar(origen, destino_real):
+        if Path(destino_real) == destino:
+            raise OSError("disco lleno simulado")
+        return real_replace(origen, destino_real)
+
+    monkeypatch.setattr(documents.os, "replace", fallar)
+    resp = _aplicar(doc, listado["revision"], {_cota(listado, "diametro")["id"]: 12.0})
+    assert resp.status_code == 422, resp.text
+    assert "se restauró" in resp.json()["detail"]
+    assert git_store.cabeza(doc) == cabeza_previa
+    assert [e["id"] for e in git_store.log(doc)] == historial_previo
+    assert ruta.read_bytes() == bytes_previos[ruta]
+    assert (sidecar.read_bytes() if sidecar.exists() else None) == bytes_previos[sidecar]
 
 
 def test_presupuesto_agotado_422_y_nada_escrito(monkeypatch):
