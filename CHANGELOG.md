@@ -7,6 +7,15 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (barra de herramientas, fase 24a)
+
+- Cinta de herramientas bajo las pestañas de documento: Vista, Croquis, Sólido, Ensamble, Inspeccionar, Planos e Imprimir, más un bloque **Claude** fijo a la derecha. Todas las acciones salen de un único registro (`app/web/static/js/toolbar-actions.js`); añadir una acción es añadir una entrada.
+- Las acciones de fases futuras aparecen deshabilitadas con «Próximamente · {fase}». Las que dependen del contexto explican el motivo (sin documento, sin pieza seleccionada, documento de malla en lugar de sólido B-rep).
+- Vistas estándar (1 a 6 y 0), proyección ortográfica o perspectiva, alambre, aristas vivas, rayos X, rejilla, ejes, plano de corte, aislar, mostrar u ocultar piezas, captura PNG, pantalla completa, mirar de frente a una cara, descarga 3MF y STL, abrir en OrcaSlicer y acceso a los paneles existentes (Indicaciones, Piezas, Historial, Ramas, Parámetros, Ensamble, Galería, Perfil y Cupón).
+- Paleta de comandos con Ctrl+K (búsqueda en español, sin tildes) y hoja de atajos con «?». Los atajos no actúan mientras se escribe en un campo ni con un diálogo abierto; las letras y dígitos sueltos solo actúan con el foco en el visor o en la cinta.
+- Ninguna acción de la barra cambia la geometría por sí sola: los cambios siguen el flujo existente de indicaciones y candidatos. No se añadieron herramientas MCP.
+- Límites conocidos: «Deshacer» abre el Historial para volver a un paso (no hay deshacer por clic); «Pasos de Claude» abre el Historial sin filtro por autor; los botones Cuadrícula y Malla de la barra del visor no reflejan aún los cambios hechos desde la cinta.
+
 ### Changed (indicaciones unificadas)
 
 - La pestaña Diseño pasa a ser **Indicaciones**: la única lista donde se explica lo que se quiere cambiar. Las notas y trazos del visor son las marcas de una indicación; se enlazan por id y no se copian ni migran. Las notas antiguas sin indicación aparecen como marcas sueltas con «Convertir en indicación». `notas.json` y `design.json` antiguos cargan sin cambios. Decisión en `docs/decisions/0019-unified-intents.md`.

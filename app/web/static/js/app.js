@@ -2,7 +2,8 @@
 // del servidor, subida de archivos y apertura de pestañas.
 import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=11";
 import { createLibrary, latestStep } from "./library.js?v=11";
-import { TabManager } from "./tabs.js?v=42";
+import { TabManager } from "./tabs.js?v=43";
+import { montarBarraHerramientas } from "./toolbar-ui.js?v=1";
 import { startLive } from "./live.js?v=11";
 import { iniciarPanelPerfil } from "./perfil.js?v=1";
 
@@ -18,6 +19,8 @@ const tabs = new TabManager({
     valido: document.getElementById("fj-status-valido"),
   },
 });
+
+montarBarraHerramientas({ tabs });
 
 const deletedDocuments = new Set();
 tabs.abrirDocumento = (id) => abrirDocumentoPorId(id);

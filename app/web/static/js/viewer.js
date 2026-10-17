@@ -8,6 +8,12 @@ import { decodePieceBundle } from "./piece-data.js?v=8";
 
 const loader = new STLLoader();
 
+// Vistas estándar (barra de herramientas): dirección desde la que mira la cámara.
+const VISTAS_ESTANDAR = {
+  frontal: [0, -1, 0], posterior: [0, 1, 0], izquierda: [-1, 0, 0],
+  derecha: [1, 0, 0], superior: [0, 0, 1], inferior: [0, 0, -1], isometrica: [1, -1, 0.75],
+};
+
 /**
  * Resuelve un token CSS (--fj-*) a un color usable por three.js.
  *
@@ -84,10 +90,16 @@ export class ForjaViewer {
     this.grid = new THREE.GridHelper(400, 40, colorGrid, colorGrid);
     this.grid.rotation.x = Math.PI / 2; // plano XY como suelo (convención Z arriba)
     this.scene.add(this.grid);
-    this.scene.add(new THREE.AxesHelper(100));
+    this.ejes = new THREE.AxesHelper(100);
+    this.scene.add(this.ejes);
 
     this.mesh = null;
     this.wireframe = false;
+    // Estado de la barra de herramientas (fase 24a).
+    this.ortogonal = false;
+    this.aristas = false;
+    this.rayosX = false;
+    this.corteActivo = false;
     this.pieces = new Map();
     this.selectedPiece = null;
     this.isolatedPiece = null;
@@ -169,6 +181,8 @@ export class ForjaViewer {
       punto: [hit.point.x, hit.point.y, hit.point.z],
       indiceTriangulo: hit.object.userData.triangleIds?.[hit.faceIndex] ?? hit.faceIndex,
       pieceName: hit.object.userData.pieceName ?? null,
+      // Normal de la cara en coordenadas del mundo (para «Mirar de frente»).
+      normal: hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld).toArray() : null,
     };
   }
 
@@ -192,6 +206,7 @@ export class ForjaViewer {
 
   /** Corta la escena por el plano: oculta lo que queda entre el plano y la cámara. */
   activarCorte(origen, normal) {
+    this.corteActivo = true;
     const n = new THREE.Vector3(...normal);
     const plano = new THREE.Plane(n.clone().negate(), n.dot(new THREE.Vector3(...origen)));
     // Local clipping: only the model is cut, never the plane or the strokes.
@@ -207,6 +222,7 @@ export class ForjaViewer {
   }
 
   desactivarCorte() {
+    this.corteActivo = false;
     this.scene.traverse((obj) => {
       if (obj.isMesh && obj.userData._ladoOriginal !== undefined) {
         obj.material.side = obj.userData._ladoOriginal;
@@ -335,8 +351,13 @@ export class ForjaViewer {
     const ancho = Math.max(1, Math.round(rect.width));
     const alto = Math.max(1, Math.round(rect.height));
     this.renderer.setSize(ancho, alto, false);
-    this.camera.aspect = ancho / alto;
-    this.camera.updateProjectionMatrix();
+    this._aspecto = ancho / alto;
+    if (this.ortogonal) {
+      this._ajustarFrustum(this.camera.position.distanceTo(this.controls.target) * Math.tan(THREE.MathUtils.degToRad(22.5)));
+    } else {
+      this.camera.aspect = this._aspecto;
+      this.camera.updateProjectionMatrix();
+    }
     this.render();
   }
 
@@ -402,6 +423,9 @@ export class ForjaViewer {
     this._applyPieceColors();
     this.selectPiece(this.pieces.has(selected) ? selected : null);
     this._applyPieceVisibility();
+    // La barra de herramientas conserva aristas y rayos X al recargar la malla.
+    if (this.aristas) this.setAristas(true);
+    if (this.rayosX) this.setRayosX(true);
     if (conservarVista) this.render();
     else this.ajustarVista();
   }
@@ -429,6 +453,7 @@ export class ForjaViewer {
     this.camera.near = Math.max(radio / 100, 0.01);
     this.camera.far = distancia * 50;
     this.camera.updateProjectionMatrix();
+    if (this.ortogonal) this._ajustarFrustum(radio * 1.15);
     this.controls.update();
     this.render();
   }
@@ -495,6 +520,90 @@ export class ForjaViewer {
     for (const [name, piece] of this.pieces) {
       piece.mesh.material.color.set(this.pieceColors?.[name] ?? neutro);
     }
+  }
+
+  /** Vista estándar (1-6 y 0 en la barra): la cámara mira desde la cara indicada. */
+  setVistaEstandar(nombre) {
+    const direccion = VISTAS_ESTANDAR[nombre];
+    if (!direccion) throw new Error(`vista estándar desconocida: ${nombre}`);
+    this.ajustarVista(direccion);
+  }
+
+  /** Ortográfica (true) o perspectiva (false). Mantiene la posición y la luz frontal. */
+  setOrtogonal(enabled) {
+    if (enabled === this.ortogonal) return;
+    const previa = this.camera;
+    const nueva = enabled
+      ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1e6)
+      : new THREE.PerspectiveCamera(45, 1, 0.1, 1e6);
+    nueva.up.set(0, 0, 1);
+    nueva.position.copy(previa.position);
+    nueva.quaternion.copy(previa.quaternion);
+    for (const hijo of [...previa.children]) { previa.remove(hijo); nueva.add(hijo); }
+    this.scene.remove(previa);
+    this.scene.add(nueva);
+    this.camera = nueva;
+    this.controls.object = nueva;
+    this.ortogonal = enabled;
+    this.resize();
+  }
+
+  /** Altura media del volumen visible de la cámara ortográfica (mismo encuadre que la perspectiva). */
+  _ajustarFrustum(altura) {
+    const media = Math.max(altura, 0.01);
+    const ancho = media * (this._aspecto ?? 1);
+    const cam = this.camera;
+    cam.left = -ancho; cam.right = ancho; cam.top = media; cam.bottom = -media;
+    cam.zoom = 1;
+    cam.updateProjectionMatrix();
+  }
+
+  _objetosModelo() {
+    return [this.mesh, ...[...this.pieces.values()].map((p) => p.mesh)].filter(Boolean);
+  }
+
+  /** Aristas vivas: líneas en los bordes con ángulo mayor de 30 grados. */
+  setAristas(enabled) {
+    this.aristas = enabled;
+    for (const objeto of this._objetosModelo()) {
+      for (const hijo of objeto.children.filter((h) => h.userData.esAristas)) {
+        objeto.remove(hijo);
+        hijo.geometry.dispose();
+        hijo.material.dispose();
+      }
+      if (!enabled) continue;
+      const lineas = new THREE.LineSegments(
+        new THREE.EdgesGeometry(objeto.geometry, 30),
+        new THREE.LineBasicMaterial({ color: cssVarColor("--fj-ink-1", "#fafaf9") }),
+      );
+      lineas.userData.esAristas = true;
+      objeto.add(lineas);
+    }
+    this.render();
+  }
+
+  /** Rayos X: el modelo se ve translúcido para revisar el interior. */
+  setRayosX(enabled) {
+    this.rayosX = enabled;
+    for (const objeto of this._objetosModelo()) {
+      const material = objeto.material;
+      material.transparent = enabled;
+      material.opacity = enabled ? 0.3 : 1;
+      material.depthWrite = !enabled;
+      material.needsUpdate = true;
+    }
+    this.render();
+  }
+
+  setEjes(enabled) {
+    this.ejes.visible = enabled;
+    this.render();
+  }
+
+  /** PNG de la vista actual (para descargar). */
+  capturar() {
+    this.render();
+    return this.renderer.domElement.toDataURL("image/png");
   }
 
   setGridVisible(enabled) {
