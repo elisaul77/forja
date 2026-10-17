@@ -57,4 +57,12 @@
 <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
 <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3"/></symbol>
 <symbol id="i-wire" viewBox="0 0 24 24"><path d="M12 3l8 5v8l-8 5-8-5V8zM12 3v18M4 8l16 8M20 8L4 16"/></symbol>
+<symbol id="i-scale" viewBox="0 0 24 24"><path d="M4 4h6M4 4v6M20 20h-6M20 20v-6M4 4l16 16"/></symbol>
+<symbol id="i-align" viewBox="0 0 24 24"><path d="M3 3v18M7 7h10v4H7zM7 14h6v5H7z"/></symbol>
+<symbol id="i-bed" viewBox="0 0 24 24"><path d="M3 19h18M7 14h10v5H7zM12 4v8M9 9l3 3 3-3"/></symbol>
+<symbol id="i-sphere" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-16 0 8 8 0 1 1 16 0zM4 12h16"/></symbol>
+<symbol id="i-cone" viewBox="0 0 24 24"><path d="M12 3l8 16M12 3L4 19M4 19a8 2.5 0 0 0 16 0"/></symbol>
+<symbol id="i-torus" viewBox="0 0 24 24"><path d="M3 12a9 5 0 1 0 18 0 9 5 0 1 0-18 0M7 12a5 2 0 1 0 10 0 5 2 0 1 0-10 0"/></symbol>
+<symbol id="i-wedge" viewBox="0 0 24 24"><path d="M4 19h16M4 5v14M4 5l16 14"/></symbol>
+<symbol id="i-tube" viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M9 7c0-.8 1.3-1.5 3-1.5S15 6.2 15 7"/></symbol>
 </svg>
