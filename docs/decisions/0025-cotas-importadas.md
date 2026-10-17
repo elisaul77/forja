@@ -65,11 +65,11 @@ La edición construye geometría a partir de un número de la petición, así qu
 - Cotas por eje de **posiciones** de agujeros (mover el centro): fuera de alcance, solo lectura.
 - Agujeros oblicuos, chaflanes, redondeos, roscas, formas libres: solo lectura, con su razón.
 - Distancias entre caras no paralelas o en documentos de varios sólidos: solo lectura.
-- Ruta de la verificación visual en navegador (headless Chrome, `docs/FRONTEND-VERIFICATION.md`): no ejecutada en esta fase.
+- Verificación visual en navegador (headless Chrome, `docs/FRONTEND-VERIFICATION.md`): no ejecutada en esta fase; se hizo en la revisión. `?abrir=` cuelga el Chrome headless: el EventSource de `/eventos` no termina la carga, así que la captura se hace abriendo la app sin `?abrir=`.
 
 ## Pruebas
 
-- `tests/test_cotas_importadas.py`: clasificación por operación (STEP y STL); re-taladro pasante, ciego y de grupo con volumen analítico; pared rota (422 con `razon`, nada escrito byte a byte); estirado y comprimido por distancia; escalado de un eje; `posicion` y valores fuera de límites (422, nada escrito); igual al actual; revisión obsoleta (409); varias cotas (422); verificación forzada fallida; presupuesto agotado; tope de caras; nombres de sólidos; concurrencia (una 200, una 409); MCP `parametros(cotas=...)` por el mismo endpoint; ancla.
+- `tests/test_cotas_importadas.py`: clasificación por operación (STEP y STL); re-taladro pasante, ciego y de grupo con volumen analítico; pared rota (422 con `razon`, nada escrito byte a byte); estirado y comprimido por distancia; escalado de un eje; `posicion` y valores fuera de límites (422, nada escrito); igual al actual; revisión obsoleta (409); varias cotas (422); verificación forzada fallida; presupuesto agotado; tope de caras; fallo de renombrado (rama y archivos vuelven a su estado previo); nombres de sólidos; concurrencia (una 200, una 409); MCP `parametros(cotas=...)` por el mismo endpoint; ancla.
 - `tests/test_cotas_parametros.py`: los dos tests de «documento importado solo lectura» se actualizan al nuevo comportamiento (ver la desviación de F23a abajo).
 - `tests/web/cotas.test.mjs`: texto de operación, validación geométrica (suelo 0,1×, cambio nulo), etiquetas del visor y guarda contra HTML.
 
