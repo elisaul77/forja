@@ -282,3 +282,63 @@
   .fj-cinta__boton { min-width: 56px; }
   .fj-cinta__texto { max-width: 70px; }
 }
+
+/* Fase 24d (ADR-0029): formulario de rasgos de modificación. Colores solo con --fj-*. */
+.fj-rasgo {
+  position: fixed;
+  top: 96px;
+  right: var(--fj-space-4);
+  z-index: 60;
+  width: min(360px, calc(100vw - 2 * var(--fj-space-4)));
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--fj-space-3);
+  padding: var(--fj-space-4);
+  background: var(--fj-surface);
+  color: var(--fj-ink-2);
+  border: 1px solid var(--fj-line-strong);
+  border-radius: var(--fj-r-lg);
+  box-shadow: var(--fj-shadow-md);
+  font-family: var(--fj-sans);
+  font-size: var(--fj-text-sm);
+}
+.fj-rasgo__titulo {
+  margin: 0;
+  color: var(--fj-ink-1);
+  font-size: var(--fj-text-base);
+}
+.fj-rasgo__refs {
+  margin: 0;
+  padding: var(--fj-space-2);
+  border: 1px solid var(--fj-line);
+  border-radius: var(--fj-r-md);
+}
+.fj-rasgo__refs legend { color: var(--fj-ink-3); font-size: var(--fj-text-xs); }
+.fj-rasgo__fila { display: flex; gap: var(--fj-space-2); align-items: flex-start; padding: 2px 0; }
+.fj-rasgo__fila label { color: var(--fj-ink-2); font-family: var(--fj-mono); font-size: var(--fj-text-xs); }
+.fj-rasgo__campos { display: grid; grid-template-columns: 1fr 1fr; gap: var(--fj-space-2); }
+.fj-rasgo__campo { display: flex; flex-direction: column; gap: var(--fj-space-1); }
+.fj-rasgo__campo label { color: var(--fj-ink-3); font-size: var(--fj-text-xs); }
+.fj-rasgo input, .fj-rasgo select {
+  background: var(--fj-sunk);
+  color: var(--fj-ink-1);
+  border: 1px solid var(--fj-line-strong);
+  border-radius: var(--fj-r-sm);
+  padding: var(--fj-space-1) var(--fj-space-2);
+  font: inherit;
+}
+.fj-rasgo button {
+  background: var(--fj-surface);
+  color: var(--fj-ink-1);
+  border: 1px solid var(--fj-line-strong);
+  border-radius: var(--fj-r-sm);
+  padding: var(--fj-space-1) var(--fj-space-3);
+  font: inherit;
+  cursor: pointer;
+}
+.fj-rasgo button:hover { border-color: var(--fj-accent); }
+.fj-rasgo button:disabled { color: var(--fj-ink-5); cursor: default; }
+.fj-rasgo__acciones { display: flex; justify-content: flex-end; gap: var(--fj-space-2); }
+.fj-rasgo__nota { margin: 0; color: var(--fj-warn); font-size: var(--fj-text-xs); }

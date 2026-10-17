@@ -6,8 +6,43 @@ from pydantic import Field, FiniteFloat, model_validator
 import design_state as ds
 
 
+class Huella(ds.Model):
+    """Huella geométrica (`naming.Fingerprint`) de una arista o cara del estado
+    actual. El servidor la vuelve a resolver contra la geometría; si ya no
+    existe, la operación se rechaza (ADR-0029)."""
+
+    tipo: Literal["cara", "arista"]
+    subtipo: str = Field(min_length=1, max_length=32)
+    centroide: tuple[FiniteFloat, FiniteFloat, FiniteFloat]
+    direccion: tuple[FiniteFloat, FiniteFloat, FiniteFloat]
+    medida: FiniteFloat = Field(ge=0, le=1000000)
+
+
+# Tipo de referencia que exige cada rasgo que las usa.
+REFERENCIA_RASGO = {
+    "fillet": "arista",
+    "chamfer": "arista",
+    "shell": "cara",
+    "push_pull": "cara",
+}
+
+
 class Operation(ds.Model):
-    kind: Literal["transform", "union", "subtract", "intersect", "deform_region"]
+    kind: Literal[
+        "transform",
+        "union",
+        "subtract",
+        "intersect",
+        "deform_region",
+        "fillet",
+        "chamfer",
+        "shell",
+        "push_pull",
+        "pattern",
+        "mirror",
+        "split",
+        "mesh_repair",
+    ]
     piece: str = Field(min_length=1, max_length=128)
     translation: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (0, 0, 0)
     rotation_deg: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (0, 0, 0)
@@ -19,6 +54,32 @@ class Operation(ds.Model):
     size: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (10, 10, 10)
     center: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (0, 0, 0)
     radius_mm: FiniteFloat = Field(default=5, gt=0, le=1000)
+    # Rasgos de modificación (fase 24d, ADR-0029). Cada `kind` usa solo sus campos.
+    huellas: list[Huella] = Field(default_factory=list, max_length=64)
+    valor_mm: FiniteFloat = Field(default=1, ge=-1000, le=1000)
+    eje: Literal["x", "y", "z"] = "z"
+    plano_mm: FiniteFloat = Field(default=0, ge=-1000, le=1000)
+    patron: Literal["lineal", "circular"] = "lineal"
+    cantidad: int = Field(default=2, ge=2, le=32)
+    angulo_deg: FiniteFloat = Field(default=360, gt=0, le=360)
+
+    @model_validator(mode="after")
+    def validate_rasgo(self):
+        esperada = REFERENCIA_RASGO.get(self.kind)
+        if esperada is not None:
+            if not self.huellas or any(h.tipo != esperada for h in self.huellas):
+                raise ValueError(f"{self.kind} requiere referencias de tipo {esperada}")
+            if self.kind == "push_pull" and len(self.huellas) != 1:
+                raise ValueError("Desfasar cara requiere exactamente una cara")
+        elif self.huellas:
+            raise ValueError(f"{self.kind} no admite referencias de aristas o caras")
+        if self.kind in ("fillet", "chamfer", "shell") and self.valor_mm <= 0:
+            raise ValueError("El valor debe ser positivo")
+        if self.kind == "push_pull" and self.valor_mm == 0:
+            raise ValueError("La distancia de desfase no puede ser cero")
+        if self.kind == "pattern" and self.patron == "lineal" and self.valor_mm <= 0:
+            raise ValueError("La separación de la matriz debe ser positiva")
+        return self
 
     @model_validator(mode="after")
     def validate_matrix(self):

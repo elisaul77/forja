@@ -373,3 +373,77 @@ def union_extruded(shape: Shape, caras: list[Any], delta: float, eje: str) -> Sh
 
 def area_of(caras: list[Any]) -> float:
     return float(sum(cara.area for cara in caras))
+
+
+# ---------------- Fase 24d: rasgos de modificación (ADR-0029) ----------------
+
+_NORMAL_EJE = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
+# x_dir perpendicular a la normal del eje: build123d exige un marco completo.
+_X_EJE = {"x": (0.0, 1.0, 0.0), "y": (1.0, 0.0, 0.0), "z": (1.0, 0.0, 0.0)}
+
+
+def plano_de_eje(eje: str, desplazamiento: float):
+    """Plano perpendicular a `eje` (x|y|z) desplazado `desplazamiento` mm
+    a lo largo de ese mismo eje."""
+    from build123d import Plane
+
+    normal = _NORMAL_EJE[eje]
+    origen = tuple(desplazamiento * c for c in normal)
+    return Plane(origin=origen, x_dir=_X_EJE[eje], z_dir=normal)
+
+
+def filete_aristas(solido: Shape, aristas: list[Any], radio: float) -> Shape:
+    return solido.fillet(radio, aristas)
+
+
+def chaflan_aristas(solido: Shape, aristas: list[Any], longitud: float) -> Shape:
+    return solido.chamfer(longitud, None, aristas)
+
+
+def vaciar_caras(solido: Shape, caras: list[Any], espesor: float) -> Shape:
+    """Vacía el sólido hacia dentro dejando `caras` abiertas (offset negativo)."""
+    from build123d import offset
+
+    return offset(solido, amount=-espesor, openings=caras)
+
+
+def desfasar_cara(solido: Shape, cara: Any, distancia: float) -> Shape:
+    """Empuja (`distancia` > 0, añade material) o tira (< 0, quita material)
+    una cara plana a lo largo de su normal exterior."""
+    from build123d import Solid, Vector
+
+    normal = cara.normal_at(cara.center()) * distancia
+    prisma = Solid.extrude(cara, Vector(normal.X, normal.Y, normal.Z))
+    return solido.fuse(prisma) if distancia > 0 else solido.cut(prisma)
+
+
+def espejar(solido: Shape, eje: str, desplazamiento: float) -> Shape:
+    return solido.mirror(plano_de_eje(eje, desplazamiento))
+
+
+def dividir_por_plano(solido: Shape, eje: str, desplazamiento: float) -> Shape:
+    from build123d import Keep, split
+
+    return split(solido, bisect_by=plano_de_eje(eje, desplazamiento), keep=Keep.BOTH)
+
+
+def trasladar_eje(solido: Shape, eje: str, distancia: float) -> Shape:
+    from build123d import Pos
+
+    return Pos(*(c * distancia for c in _NORMAL_EJE[eje])) * solido
+
+
+def girar_eje(solido: Shape, eje: str, grados: float) -> Shape:
+    """Gira alrededor del eje global que pasa por el origen."""
+    from build123d import Axis
+
+    return solido.rotate(Axis((0, 0, 0), _NORMAL_EJE[eje]), grados)
+
+
+def unir_formas(base: Shape, otras: list[Shape]) -> Shape:
+    return base.fuse(*otras) if otras else base
+
+
+def compuesto(solidos: list[Any]) -> Shape:
+    """Compound de sólidos (sin fusionarlos)."""
+    return Compound(children=list(solidos))

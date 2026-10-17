@@ -3,7 +3,7 @@
 // Nada de lo que aquí se guarda se envía a una IA: queda disponible para el
 // agente cuando el usuario le pide revisar Forja (contexto_diseno).
 import { requestSessionToken, forgetSessionToken } from "./auth.js";
-import { restaurarDocumento } from "./api.js?v=13";
+import { restaurarDocumento } from "./api.js?v=14";
 
 const controllers = new Map();
 const draftsByDocument = new Map();

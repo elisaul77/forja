@@ -12,6 +12,7 @@ import design_state as state
 import design_geometry as geo
 import design_analysis as analysis
 import documents, incorporar, mesh_parts, solids, parametros, ramas, versioning
+import design_features as features
 from kernel import b123d_kernel, mesh as km
 
 
@@ -86,6 +87,8 @@ def edit_mesh(m, op):
             raise ValueError("La región no contiene vértices")
         m.vertices += weight[:, None] * np.asarray(op.translation)
         return m
+    if op.kind in features.RASGOS:
+        return features.aplicar_malla(m, op)
     _validar_util(op)
     tool = (
         trimesh.creation.box(extents=op.size)
@@ -113,6 +116,8 @@ def edit_shape(s, op):
         return transform_shape(s, op)
     if op.kind == "deform_region":
         raise ValueError("Deformación regional solo disponible para STL")
+    if op.kind in features.RASGOS:
+        return features.aplicar_brep(s, op)
     _validar_util(op)
     tool = (
         Box(*op.size) if op.primitive == "box" else Cylinder(op.size[0] / 2, op.size[2])

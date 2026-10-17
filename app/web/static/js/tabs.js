@@ -1,21 +1,21 @@
-import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor } from "./design.js?v=9";
+import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor } from "./design.js?v=10";
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
 import { ForjaViewer } from "./viewer.js?v=design1-22";
-import { ForjaNotasControlador } from "./notes.js?v=24";
-import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=3";
-import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=5";
-import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=15";
-import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=13";
+import { ForjaNotasControlador } from "./notes.js?v=25";
+import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=4";
+import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=6";
+import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=16";
+import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=14";
 import { crearBotonCupon } from "./cupon.js?v=4";
-import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=3";
+import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=4";
 import { AnimationView } from "./animation.js?v=7";
 import { renderPiecesPanel } from "./pieces.js?v=10";
-import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=2";
+import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=3";
 import { construirAnclas } from "./orca.js?v=4";
 import { createRefreshScheduler } from "./live-core.js?v=11";
-import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=4";
+import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=5";
 import { ForjaMedidasControlador } from "./medidas.js?v=1";
 
 function formatoVolumen(mm3) {
