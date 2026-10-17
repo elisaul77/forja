@@ -2,8 +2,8 @@ import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor 
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=design1-16";
-import { ForjaNotasControlador } from "./notes.js?v=22";
+import { ForjaViewer } from "./viewer.js?v=design1-20";
+import { ForjaNotasControlador } from "./notes.js?v=23";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
@@ -38,6 +38,8 @@ export class TabManager {
     this.activeId = null;
     // Lo asigna app.js: abre (o activa) la pestaña de un documento por id.
     this.abrirDocumento = null;
+    // Barra de herramientas (24a): avisa cuando cambian pestaña activa o selección.
+    this.onEstadoCambio = null;
 
     // Panel lateral (Fase 4), compartido entre pestañas: muestra siempre
     // los datos de la pestaña activa.
@@ -262,7 +264,7 @@ export class TabManager {
       },
     });
     toolbar.append(btnCupon);
-    viewer.onSeleccion = () => anclasOrca.refrescar?.();
+    viewer.onSeleccion = () => { anclasOrca.refrescar?.(); this.onEstadoCambio?.(); };
     contenedor.appendChild(toolbar);
     const animation = new AnimationView(contenedor, viewer, toolbar, () => {
       if (notas.ocupado()) {
@@ -364,6 +366,8 @@ export class TabManager {
 
     const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, animation, btnParametros,
       revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
+    // Controles que la barra de herramientas reutiliza (no se duplican).
+    entry.acciones = { nota: btnNota, pizarra: btnPizarra, cupon: btnCupon };
     // Acciones del panel Indicaciones: mismos modos que los botones del visor.
     entry.designActions = {
       pointMode: () => { if (notas.modo !== "nota") btnNota.click(); },
@@ -444,6 +448,7 @@ export class TabManager {
     this._actualizarStatusBar(entrada.ficha);
     if (!this.panel.hidden) this._renderizarPanelPestanaActiva();
     entrada.scheduler.flush(true);
+    this.onEstadoCambio?.();
   }
 
   /** Callback del panel de historial tras un `restaurar` exitoso: recarga
@@ -703,6 +708,7 @@ export class TabManager {
     entrada.boton.remove();
     disposeDesign(docId);
     this.tabs.delete(docId);
+    this.onEstadoCambio?.();
     if (hadFocus && this.activeId !== docId) this.tabs.get(this.activeId)?.boton.focus();
 
     if (this.activeId === docId) {
