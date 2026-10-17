@@ -34,7 +34,7 @@ import notes
 import parametros
 import solids
 import versioning
-from checks import pose_clearance
+from checks import barrido, pose_clearance
 from kernel import b123d_kernel as kernel
 
 router = APIRouter(prefix="/documentos/{doc_id}/ensamble")
@@ -55,6 +55,14 @@ class SceneCheck(BaseModel):
     revision: str = Field(min_length=1)
     valores: dict[str, float]
     articulaciones_activas: list[str] = Field(min_length=1, max_length=60)
+
+
+class Sweep(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    articulaciones: list[str] | None = Field(default=None, min_length=1, max_length=60)
+    desde: dict[str, float] | None = Field(default=None, max_length=60)
+    hasta: dict[str, float] | None = Field(default=None, max_length=60)
+    detalle: bool = False
 
 
 class MotionCheck(BaseModel):
@@ -301,6 +309,118 @@ def check_assembly_motion(doc_id: str, body: MotionCheck, response: Response):
                 "muestras_comprobadas": checked, "primer_choque": first_hit,
                 "fraccion_segura_muestreada": last_safe,
                 "choques_iniciales": initial_hits, "ultima_posicion": last_result}
+
+
+def _barrido_ensamble(state: dict, rest: dict, body: Sweep,
+                      presupuesto: barrido.Presupuesto) -> dict[str, Any]:
+    """Continuous sweep of each requested joint over its range (Phase 18).
+
+    Other joints stay at their stored values. The bound for each joint is
+    measured on the moving group BEFORE the joint's own rotation: that is the
+    rest pose after the descendant joints only, so the joint's axis is still
+    the rest-frame axis and ancestors (applied after) do not change distances.
+    Implicit selection (`barrido` = "todas") skips fixed joints and lists them
+    in `omitidas`; naming a fixed joint explicitly is refused. All joints share
+    one `presupuesto`.
+    """
+    joints = state["articulaciones"]
+    por_id = {joint["id"]: joint for joint in joints}
+    fijas = [j["id"] for j in joints if j["tipo"] == "fijo"]
+    if body.articulaciones is not None:
+        ids = list(body.articulaciones)
+        omitidas: list[str] = []
+    else:
+        ids = [j["id"] for j in joints if j["tipo"] != "fijo"]
+        omitidas = fijas
+    if len(set(ids)) != len(ids):
+        raise ValueError("articulaciones repetidas")
+    if set(ids) - set(por_id):
+        raise ValueError("articulación desconocida")
+    desde, hasta = body.desde or {}, body.hasta or {}
+    if (set(desde) | set(hasta)) - set(ids):
+        raise ValueError("desde/hasta solo pueden nombrar articulaciones barridas")
+    resultados: dict[str, Any] = {}
+    for joint_id in ids:
+        joint = por_id[joint_id]
+        if joint["tipo"] == "fijo":
+            raise ValueError(f"la articulación fija {joint_id} no se mueve; no hay nada que barrer")
+        lo, hi = joint["limites"]
+        inicio = desde.get(joint_id, lo)
+        fin = hasta.get(joint_id, hi)
+        assemblies._values(state, {joint_id: inicio})  # 422 outside limites
+        assemblies._values(state, {joint_id: fin})
+        moviles = pose_clearance.moving_names(joints, joint_id)
+        descendientes = [j for j in joints if j["hijo"] in moviles and j["id"] != joint_id]
+        visibles = {j["id"] for j in descendientes}
+        previa_state = {**state, "articulaciones": descendientes,
+                        "valores": {k: v for k, v in state["valores"].items() if k in visibles}}
+        previas = assemblies.pose_shapes_from_rest(previa_state, rest, {})
+        if joint["tipo"] == "giro":
+            tasa = barrido.tasa_giro(previas, moviles, joint["origen"], joint["eje"])
+            unidad = "grados"
+        else:
+            tasa = barrido.tasa_deslizamiento(joint["eje"])
+            unidad = "mm"
+
+        def evaluar(valor, _id=joint_id):
+            return assemblies.pose_shapes_from_rest(state, rest, {_id: valor})
+
+        resultado = barrido.barrer(evaluar, moviles, float(inicio), float(fin), tasa,
+                                   unidad=unidad, detalle=body.detalle, presupuesto=presupuesto)
+        resultado.pop("frase", None)
+        resultados[joint_id] = resultado
+    ok = all(r["ok"] for r in resultados.values())
+    continua = all(r["garantia"] == "continua" for r in resultados.values())
+    completo = all(r["completo"] for r in resultados.values())
+    choques = [jid for jid, r in resultados.items() if r["primer_choque"] is not None]
+    limites = ("Cubre cada articulación por separado, con cota conservadora hasta la tolerancia; "
+               "no cubre varias articulaciones a la vez, y los pares que empiezan en contacto "
+               "se muestrean, no se prueban.")
+    if not ids:
+        frase = "Ninguna articulación móvil: no hay nada que barrer; las fijas no se mueven."
+    elif choques:
+        frase = (f"Choque o contacto confirmado en {', '.join(choques)}: "
+                 "mira primer_choque de cada articulación.")
+    elif not ok:
+        frase = ("No concluyente: un error de geometría o el presupuesto de evaluaciones o de "
+                 "tiempo impide cerrar el barrido. No hay choque confirmado, pero tampoco prueba "
+                 "de ausencia.")
+    else:
+        frase = f"Sin choques ni contactos en {len(ids)} articulación(es) barridas. {limites}"
+    return {"ok": ok, "garantia": "continua" if continua else "muestreada",
+            "completo": completo, "barrido": resultados, "omitidas": omitidas, "frase": frase}
+
+
+@router.post("/barrido")
+def sweep_assembly(doc_id: str, body: Sweep, response: Response):
+    """Read-only continuous sweep of the joints (ADR-0020).
+
+    The lock covers only the load of the rest shapes, which are immutable once
+    read; the sweep itself runs outside `parametros.bloqueo`. One budget
+    (`barrido.CAP_EVALUACIONES`) and one deadline (`barrido.PLAZO_SEGUNDOS`)
+    cover the whole request. Never exports STEP, writes history or changes the
+    registry. A clean sweep is `garantia: "continua"`; a capped, timed-out or
+    failed one is `muestreada` with `completo: false` and `ok: false`.
+    """
+    _path(doc_id)
+    comienzo = time.monotonic()
+    with parametros.bloqueo(doc_id):
+        _path(doc_id)
+        state = _estado_actual(doc_id)
+        if state is None:
+            raise HTTPException(422, "el documento no tiene ensamble")
+        if assemblies.is_stale(doc_id):
+            raise HTTPException(409, "el ensamble está desactualizado")
+        try:
+            state, rest = assemblies.rest_shapes(doc_id)
+        except (ValueError, OverflowError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+    try:
+        resultado = _barrido_ensamble(state, rest, body, barrido.Presupuesto())
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    response.headers["Cache-Control"] = "no-store"
+    return {**resultado, "ms": round((time.monotonic() - comienzo) * 1000)}
 
 
 @router.post("", dependencies=[Depends(auth.requiere_token)])
