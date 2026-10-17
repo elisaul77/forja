@@ -65,17 +65,17 @@ def test_escala_por_eje_conserva_el_centro_de_la_caja():
     assert (lo + hi) / 2 == pytest.approx([40, 0, 0], abs=1e-4)
 
 
-def test_escala_no_uniforme_de_cilindro_volumen_de_malla():
+def test_escala_no_uniforme_de_cilindro_volumen_preciso():
     # GTransform pasa las caras analiticas del cilindro a BSPLINE: el .volume de
-    # OCC queda ~0,86 % alto. El volumen que reporta el diseno es el de malla.
+    # OCC queda ~0,86 % alto. La integral preciso del B-rep queda dentro de 0,01 %.
     from build123d import Cylinder
 
-    from kernel import mesh as km
+    from kernel import b123d_kernel
 
     r, h, f = 5.0, 10.0, (2.0, 1.0, 0.5)
     analitico = math.pi * r * r * h * f[0] * f[1] * f[2]
     escalado = ops.edit_shape(Cylinder(r, h), op(kind="scale", factor=f))
-    assert km.volumen_malla(escalado) == pytest.approx(analitico, rel=1e-3)
+    assert b123d_kernel.volumen_preciso(escalado) == pytest.approx(analitico, rel=1e-4)
 
 # ---------------------------------------------------------------- alinear
 

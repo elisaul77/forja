@@ -478,13 +478,13 @@ def _aplicar_traslacion(d):
 
 def test_apply_conserva_el_volumen_brep_y_sobrevive_a_la_recarga(tmp_path, monkeypatch):
     # F24b (revision): el registro guarda el volumen B-rep (como _analyze, ramas y
-    # solids.json); la malla no se usa al aplicar ni se reimporta el STEP.
-    from kernel import mesh as km
+    # solids.json); la medida precisa no se usa al aplicar ni se reimporta el STEP.
+    from kernel import b123d_kernel
 
     d = _cilindro_escalado_step(tmp_path)
     try:
         llamadas = []
-        monkeypatch.setattr(km, "volumen_malla", lambda *a, **k: llamadas.append(1) or 0.0)
+        monkeypatch.setattr(b123d_kernel, "volumen_preciso", lambda *a, **k: llamadas.append(1) or 0.0)
         _aplicar_traslacion(d)
         assert llamadas == []
         vivo = documents._registry[d]["volumen"]

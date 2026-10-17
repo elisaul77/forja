@@ -83,6 +83,22 @@ def escalar(forma: Shape, factor: tuple[float, float, float], centro: tuple[floa
     return escalada
 
 
+def volumen_preciso(shape: Shape, eps: float = 1e-3) -> float:
+    """Volumen en mm3 de ``shape`` integrado sobre el B-rep con cuadratura adaptativa
+    de OCC (``BRepGProp``, ``eps`` = tolerancia de integración), sin teselar (valor absoluto).
+
+    ``.volume`` da ~0,9 % alto en un cilindro escalado en no uniforme (GTransform deja
+    caras BSPLINE); con ``eps`` 1e-3 esta integral queda en ~0,004 % del valor analítico,
+    en fracciones de milisegundo en el cilindro y ~0,4 s en un loft de 240 secciones.
+    Con 1e-5 el error baja a ~0,0002 % pero el loft tarda ~3 s por medida (ADR-0026)."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+
+    propiedades = GProp_GProps()
+    BRepGProp.VolumeProperties_s(shape.wrapped, propiedades, eps, False)
+    return float(abs(propiedades.Mass()))
+
+
 def analyze(shape: Shape) -> ShapeInfo:
     """Analytic volume/bbox/solid-count/validity straight from the B-rep."""
     bb = shape.bounding_box()

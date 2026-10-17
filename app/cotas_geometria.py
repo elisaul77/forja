@@ -38,7 +38,7 @@ from cotas import (
     OPERATION_STRETCH,
     REASON_SEVERAL_SOLIDS,
 )
-from kernel import b123d_kernel, mesh as km
+from kernel import b123d_kernel
 
 EJES = b123d_kernel.EJES
 VISTA_DE_EJE = {"x": "frontal", "y": "superior", "z": "frontal"}
@@ -166,11 +166,11 @@ def _tamano(forma: Any, idx: int) -> float:
     return hi[idx] - lo[idx]
 
 
-def _volumen_teselado(forma: Any, presupuesto: Presupuesto) -> float:
-    """Volumen de malla fina (F24b) cobrado al presupuesto. Gastar antes de teselar
-    hace que el plazo agotado corte antes de la segunda malla (422 por _Agotado)."""
+def _volumen_medido(forma: Any, presupuesto: Presupuesto) -> float:
+    """Volumen preciso del B-rep (F24b, ADR-0026) cobrado al presupuesto. Gastar antes
+    de medir hace que un plazo agotado corte antes de la segunda medida (422 por _Agotado)."""
     presupuesto.gastar(1)
-    return km.volumen_malla(forma)
+    return b123d_kernel.volumen_preciso(forma)
 
 
 def _cap_brep(forma: Any) -> None:
@@ -186,7 +186,7 @@ def _check_result(
     """Refuses any result that is not valid, that changed the solid count, whose
     volume change differs from the analytic one, or whose bbox moved outside the
     axes allowed to change. Por defecto mide con el B-rep; `volumen_antes` y
-    `medir_despues` permiten usar la malla fina (`_scale_brep`). La medida del
+    `medir_despues` permiten medir con el volumen preciso (`_scale_brep`). La medida del
     resultado solo se calcula si pasa las comprobaciones de validez y sólidos."""
     if not despues.is_valid:
         raise EditRejected("la geometría resultante no es válida")
@@ -257,14 +257,14 @@ def _scale_brep(forma: Any, cota: dict[str, Any], valor: float, presupuesto: Pre
     factor = valor / _tamano(forma, idx)
     presupuesto.gastar(2)
     nueva = b123d_kernel.scale_axis(forma, eje, factor, lo[idx])
-    # Cuerpo escalado: el volumen B-rep de OCC sale ~0,9 % alto (BSPLINE), así que
-    # la comprobación compara mallas finas. Cada cuerpo se tesela una sola vez.
-    volumen_original = _volumen_teselado(forma, presupuesto)
+    # Cuerpo escalado: el `.volume` de OCC sale ~0,9 % alto (BSPLINE); la comprobación
+    # usa el volumen preciso del B-rep (ADR-0026). Cada cuerpo se mide una sola vez.
+    volumen_original = _volumen_medido(forma, presupuesto)
     _check_result(
         forma, nueva, permitidos={idx}, solidos=len(forma.solids()),
         delta_volumen=volumen_original * (factor - 1.0),
         volumen_antes=volumen_original,
-        medir_despues=lambda s: _volumen_teselado(s, presupuesto),
+        medir_despues=lambda s: _volumen_medido(s, presupuesto),
     )
     medido = _tamano(nueva, idx)
     if abs(medido - valor) > TOLERANCE_MM:
