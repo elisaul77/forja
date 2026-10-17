@@ -7,6 +7,11 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (escala de cuerpos curvos, revisión de 24b)
+
+- Un cilindro escalado en no uniforme dejaba caras BSPLINE y su `.volume` de OCC salía ~0,86 % alto. Ahora el volumen que reporta el diseño (candidato, vista previa de la pieza, registro tras aplicar) y la comprobación de volumen de «Escalar eje» en cotas usan la malla fina (`kernel/mesh.volumen_malla`, 0,001 mm / 0,05 rad). Antes, la cota rechazaba ediciones correctas de cilindros.
+- Pruebas: `test_escala_no_uniforme_de_cilindro_volumen_de_malla` (`tests/test_design_ops_transform.py`) y `test_escalar_eje_acepta_cilindro_y_verifica_volumen_con_malla` (`tests/test_cotas_importadas.py`).
+
 ### Added (barra de herramientas, fase 24b)
 
 - Sólido > Transformar: **Mover / Rotar**, **Escalar** (por eje, en torno al centro de la pieza), **Alinear** (centros, caras mínimas o máximas por eje, o apilar sobre otra pieza) y **Apoyar sobre cama** (la cara elegida mira a la cama y la base queda en Z = 0). Cada una abre «Preparar una alternativa manual» en Indicaciones ya ajustada; el resultado es un candidato que se compara antes de aplicar.

@@ -38,7 +38,7 @@ from cotas import (
     OPERATION_STRETCH,
     REASON_SEVERAL_SOLIDS,
 )
-from kernel import b123d_kernel
+from kernel import b123d_kernel, mesh as km
 
 EJES = b123d_kernel.EJES
 VISTA_DE_EJE = {"x": "frontal", "y": "superior", "z": "frontal"}
@@ -173,17 +173,19 @@ def _cap_brep(forma: Any) -> None:
 
 
 def _check_result(
-    antes: Any, despues: Any, *, permitidos: set[int], solidos: int, delta_volumen: float
+    antes: Any, despues: Any, *, permitidos: set[int], solidos: int, delta_volumen: float,
+    volumen: Any = None,
 ) -> None:
     """Refuses any result that is not valid, that changed the solid count, whose
     volume change differs from the analytic one, or whose bbox moved outside the
-    axes allowed to change."""
+    axes allowed to change. `volumen` mide un cuerpo (por defecto el B-rep)."""
     if not despues.is_valid:
         raise EditRejected("la geometría resultante no es válida")
     n = len(despues.solids())
     if n != solidos:
         raise EditRejected(f"la pieza pasó de {solidos} a {n} sólidos")
-    real = despues.volume - antes.volume
+    medir = volumen or (lambda s: s.volume)
+    real = medir(despues) - medir(antes)
     if abs(real - delta_volumen) > VOLUME_TOLERANCE_REL * abs(delta_volumen) + 1e-6:
         raise EditRejected(
             f"el volumen cambió {real:.3f} mm3 y debía cambiar {delta_volumen:.3f} mm3: la geometría no es la esperada"
@@ -244,9 +246,12 @@ def _scale_brep(forma: Any, cota: dict[str, Any], valor: float, presupuesto: Pre
     factor = valor / _tamano(forma, idx)
     presupuesto.gastar(2)
     nueva = b123d_kernel.scale_axis(forma, eje, factor, lo[idx])
+    # Cuerpo escalado: el volumen de OCC sale ~0,9 % alto (BSPLINE), así que la
+    # comprobación usa la malla fina (F24b).
+    volumen_original = km.volumen_malla(forma)
     _check_result(
         forma, nueva, permitidos={idx}, solidos=len(forma.solids()),
-        delta_volumen=forma.volume * (factor - 1.0),
+        delta_volumen=volumen_original * (factor - 1.0), volumen=km.volumen_malla,
     )
     medido = _tamano(nueva, idx)
     if abs(medido - valor) > TOLERANCE_MM:

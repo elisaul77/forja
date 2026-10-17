@@ -508,10 +508,11 @@ def apply(doc_id, key):
             incorporar._escribir_atomico(
                 solids.ruta_solidos(doc_id), (p / "solidos.json").read_bytes()
             )
-            documents._registry[doc_id] = {
-                **old_record,
-                **documents._analyze(path, path.suffix.lower()),
-            }
+            analisis = documents._analyze(path, path.suffix.lower())
+            if incorporar._es_step(path):
+                # Cuerpo escalado: el volumen B-rep sale ~0,9 % alto; se reporta el de malla (F24b).
+                analisis["volumen"] = km.volumen_malla(b123d_kernel.import_from_step(path))
+            documents._registry[doc_id] = {**old_record, **analisis}
             meta_path = documents._ruta_meta(doc_id)
             meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
             if meta.get("script"):

@@ -230,6 +230,21 @@ def test_medida_total_escala_solo_su_eje():
     assert abs(_volumen(doc) - 60 * 30 * 10) < 1.0 and abs(v0 - 40 * 30 * 10) < 1.0
 
 
+def test_escalar_eje_acepta_cilindro_y_verifica_volumen_con_malla():
+    # F24b (revision): en un cilindro escalado el .volume de OCC queda ~0,86 %
+    # alto; la comprobacion de volumen de la cota debe usar la malla o se
+    # rechazan ediciones correctas.
+    from checks.barrido import Presupuesto
+    from kernel import mesh as km
+
+    cilindro = Cylinder(5, 10)
+    cota = {"id": "tamano_total:x:15.000", "tipo": "tamano_total", "eje": "x",
+            "valor_mm": 15.0, "operacion": "escalar_eje"}
+    edicion = cotas_geometria._scale_brep(cilindro, cota, 15.0, Presupuesto(2000, 25.0))
+    analitico = math.pi * 5 * 5 * 10 * 1.5
+    assert km.volumen_malla(edicion.forma) == pytest.approx(analitico, rel=1e-3)
+
+
 def test_malla_stl_escala_el_eje_pedido():
     datos = trimesh.creation.box(extents=(40, 30, 20)).export(file_type="stl")
     doc = client.post("/documentos", files={"file": ("malla.stl", io.BytesIO(datos), "application/sla")}, headers=_h()).json()["id"]

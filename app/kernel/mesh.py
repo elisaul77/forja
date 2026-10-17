@@ -180,6 +180,22 @@ def _tesela_solido_exportar(shape: Shape, tolerance: float, angular: float) -> t
     return malla
 
 
+# Volumen de referencia para cuerpos escalados (F24b): GTransform pasa las caras
+# analiticas a BSPLINE y el ``.volume`` de OCC queda ~0,9 % alto en un cilindro
+# escalado. Una malla mas fina que la de exportacion (0,001 mm, 0,05 rad) queda
+# a ~0,01 % del valor analitico.
+TOLERANCIA_VOLUMEN_MM = 0.001
+TOLERANCIA_ANGULAR_VOLUMEN = 0.05
+
+
+def volumen_malla(shape: Shape) -> float:
+    """Volumen en mm3 medido sobre la malla fina de ``shape`` (valor absoluto)."""
+    malla = tessellate_para_exportar(
+        shape, tolerance=TOLERANCIA_VOLUMEN_MM, angular=TOLERANCIA_ANGULAR_VOLUMEN
+    )
+    return float(abs(malla.volume))
+
+
 def malla_abierta(malla: trimesh.Trimesh) -> bool:
     """True when ``malla`` has faces and is not watertight. Empty meshes are not open."""
     return len(malla.faces) > 0 and not malla.is_watertight
