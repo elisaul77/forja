@@ -235,6 +235,10 @@ geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
 
 `exportar(id, "svg" | "pdf" | "dxf")` escribe una hoja con cuatro vistas (frontal, superior, derecha e isométrica), líneas visibles y ocultas (solo en STEP), cotas automáticas de tamaño y de agujeros, y cajetín. Opciones: `vistas`, `escala` (1:1 por defecto la mayor que cabe), `papel` (A4 o A3), `proyeccion` (tercer ángulo por defecto) y `detalle` (lista las cotas con su id). Las mallas STL se dibujan solo con contornos y cotas de bbox. Solo lectura; el visor tiene las anclas «Plano», «Plano SVG» y «Plano DXF». Decisión en `docs/decisions/0021-planos-tecnicos.md`.
 
+### Cotas vivas (F23a)
+
+En un documento creado por script, cada cota del plano que sale de un `PARAMETROS` se edita con su número: en el panel «Parámetros» del visor («Cotas del plano»; la acción «Cotas» de la barra lo abre) o por MCP con `parametros(id, cotas={id: valor})`. Los ids salen de `exportar(id, "svg", detalle=true)`. Cada edición es una revisión nueva (`restaurar` la deshace). Las cotas sin parámetro salen como «Solo lectura» con su motivo. Cada edición se verifica antes de escribir: si la cota no vuelve a su valor, 422 y nada se guarda. Clic en el plano o en el overlay 3D, importados STEP/STL, cilindros o caras: pendiente (F23b y sub-fase posterior). Decisión en `docs/decisions/0023-cotas-vivas.md`.
+
 ### Ramas, pasos y comparar (Plan G · G2/G3)
 
 Cada documento tiene un repo git (`.repos/{id}.git`). `refs/heads/main` es el

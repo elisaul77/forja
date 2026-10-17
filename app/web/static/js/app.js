@@ -1,11 +1,11 @@
 // Forja — orquestación de la página: barra superior, lista de documentos
 // del servidor, subida de archivos y apertura de pestañas.
-import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=12";
-import { createLibrary, latestStep } from "./library.js?v=11";
-import { TabManager } from "./tabs.js?v=48";
-import { montarBarraHerramientas } from "./toolbar-ui.js?v=5";
+import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=13";
+import { createLibrary, latestStep } from "./library.js?v=12";
+import { TabManager } from "./tabs.js?v=50";
+import { montarBarraHerramientas } from "./toolbar-ui.js?v=7";
 import { startLive } from "./live.js?v=12";
-import { iniciarPanelPerfil } from "./perfil.js?v=1";
+import { iniciarPanelPerfil } from "./perfil.js?v=2";
 
 const tabs = new TabManager({
   tabsEl: document.getElementById("fj-tabs"),
@@ -236,7 +236,7 @@ async function abrirDesdeQueryParam() {
   // Fase 5C: `&panel=parametros|notas|historial` abre ese panel lateral
   // (mismo uso que `?abrir=`: pruebas/capturas sin clics).
   const panel = params.get("panel");
-  if (panel && ["notas", "historial", "ramas", "parametros", "ensamble", "piezas", "design"].includes(panel)) tabs.abrirPanel(panel);
+  if (panel && ["notas", "historial", "ramas", "parametros", "ensamble", "piezas", "design", "medidas"].includes(panel)) tabs.abrirPanel(panel);
 }
 
 abrirDesdeQueryParam();

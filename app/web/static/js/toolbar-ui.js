@@ -2,13 +2,13 @@
 // fijo a la derecha, tooltips propios, paleta de comandos (Ctrl+K) y hoja de
 // atajos (?). Todo sale de ACCIONES (toolbar-actions.js) y la lógica de
 // toolbar.js. Los textos se escriben solo con textContent.
-import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=5";
+import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=7";
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo, buscarPorAtajo,
   repartirGrupos,
 } from "./toolbar.js?v=5";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js?v=4";
-import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=12";
+import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=13";
 
 const NS = "http://www.w3.org/2000/svg";
 const SPRITE = "/static/icons/forja-icons.svg?v=2";
@@ -188,6 +188,20 @@ export function montarBarraHerramientas({ tabs, documento = document, api = API_
     panel(seccion) {
       requerirEntrada();
       tabs.abrirPanel(seccion);
+    },
+    // F23a (ADR-0023): abre Parámetros y lleva el foco a «Cotas del plano». Sin
+    // PARAMETROS la sección no se dibuja: se dice por qué en la franja de estado.
+    cotas() {
+      requerirEntrada();
+      tabs.abrirPanel("parametros");
+      const seccion = documento.querySelector("#fj-panel-parametros .fj-cotas");
+      if (!seccion) {
+        mostrar("Este documento no declara PARAMETROS: sus cotas no se pueden editar desde aquí.", false);
+        return;
+      }
+      seccion.tabIndex = -1;
+      seccion.scrollIntoView?.({ block: "nearest" });
+      seccion.focus();
     },
     mostrar,
     exportar(ext) {

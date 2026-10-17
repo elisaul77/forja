@@ -217,8 +217,11 @@ export const ACCIONES = [
     ejecutar: (c) => c.entrada()?.acciones.pizarra.click() }),
   listo({ id: 'inspec-parametros', etiqueta: 'Parámetros', pestana: 'inspeccionar', grupo: 'Diseño', icono: 'sliders',
     requiere: DOC, tooltip: 'Valores con nombre que controlan la pieza.', ejecutar: (c) => c.panel('parametros') }),
-  pronto('F23', { id: 'inspec-cotas-vivas', etiqueta: 'Cotas vivas', pestana: 'inspeccionar', grupo: 'Diseño', icono: 'sliders',
-    tooltip: 'Edita una cota directamente en el visor.' }),
+  // Cotas (F23a, ADR-0023): abre «Cotas del plano» dentro de Parámetros. El clic sobre
+  // una cota del plano o del visor queda para F23b.
+  listo({ id: 'inspec-cotas-vivas', etiqueta: 'Cotas', pestana: 'inspeccionar', grupo: 'Diseño', icono: 'sliders',
+    requiere: DOC, tooltip: 'Abre las cotas del plano y edita las que siguen a un parámetro.',
+    ejecutar: (c) => c.cotas() }),
   // Deshacer y rehacer (24a2, ADR-0022): el cursor llega de GET /documentos/{id}/deshacer
   // (toolbar-ui.js), así que el motivo de un botón deshabilitado sale de ahí.
   listo({ id: 'hist-deshacer', etiqueta: 'Deshacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'undo',
