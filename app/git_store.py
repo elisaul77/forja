@@ -250,6 +250,18 @@ def mover_rama(doc_id: str, nuevo: str, anterior: str | None) -> None:
     _git(ruta_repo(doc_id), "update-ref", "--end-of-options", RAMA, nuevo, anterior or "0" * 40)
 
 
+def deshacer_commit(doc_id: str, nuevo: str, anterior: str | None) -> None:
+    """Undo a commit that `commit` just appended: the branch goes back to `anterior`
+    only if it still points at `nuevo` (compare-and-swap). With no `anterior` the
+    branch did not exist before, so it is removed. Used when a snapshot must not stay (ADR-0025)."""
+    validar_sha(nuevo)
+    with bloqueo(doc_id):
+        if anterior:
+            mover_rama(doc_id, validar_sha(anterior), nuevo)
+        else:
+            _git(ruta_repo(doc_id), "update-ref", "-d", RAMA, nuevo)
+
+
 def commit(doc_id: str, archivos: dict[str, bytes], mensaje: str, snapshot_id: str, fecha: str,
            autor: str | None = None, fuente: dict[str, bytes] | None = None,
            extra: dict[str, str] | None = None) -> str:

@@ -203,7 +203,9 @@ def test_listado_marca_editables_y_solo_lectura():
     assert agujero["solo_lectura"] is True and agujero["razon"] == cotas.RAZON_SIN_PARAMETRO
 
 
-def test_documento_sin_script_es_todo_solo_lectura():
+def test_documento_importado_sin_script_no_liga_cotas_a_parametros():
+    # F23b (ADR-0025) changed the F23a rule "imported = all read-only": recognised
+    # features are editable now, but nothing is ever linked to a PARAMETROS key.
     from build123d import Box
 
     from kernel import b123d_kernel
@@ -215,18 +217,19 @@ def test_documento_sin_script_es_todo_solo_lectura():
     b123d_kernel.export_to_step(Box(20, 20, 10), ruta)
     creado = client.post("/documentos", files={"file": ("caja.step", ruta.read_bytes(), "application/step")}, headers=_h()).json()
     listado = _listado(creado["id"])
-    assert listado["cotas"] and all(c["solo_lectura"] for c in listado["cotas"])
-    resp = _aplicar(creado["id"], listado["revision"], {listado["cotas"][0]["id"]: 30})
-    assert resp.status_code == 422 and cotas.RAZON_SIN_PARAMETRO in resp.json()["detail"]
+    assert listado["cotas"]
+    assert all(c["operacion"] in ("escalar_eje", "mover_cara") for c in listado["cotas"])
+    assert all(c["parametro"] is None for c in listado["cotas"])
 
 
-def test_stl_es_malla_solo_lectura():
+def test_stl_es_malla_solo_escala_su_medida_total():
     caja = trimesh.creation.box(extents=(40, 30, 20))
     data = caja.export(file_type="stl")
     creado = client.post("/documentos", files={"file": ("malla.stl", io.BytesIO(data), "application/sla")}, headers=_h()).json()
     listado = _listado(creado["id"])
     assert len(listado["cotas"]) == 3
-    assert all(c["razon"] == cotas.RAZON_MALLA for c in listado["cotas"])
+    # F23b (ADR-0025): the overall size of a mesh is scaled; there is nothing else to edit.
+    assert all(c["operacion"] == "escalar_eje" for c in listado["cotas"])
 
 
 def test_exportar_detalle_trae_operacion_y_revision():

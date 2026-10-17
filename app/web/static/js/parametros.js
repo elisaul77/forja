@@ -5,7 +5,7 @@
 // otro cambio mientras el servidor re-calcula, se envía uno solo al terminar
 // con los últimos valores.
 import { aplicarParametros, obtenerParametros } from "./api.js?v=13";
-import { renderizarCotas } from "./cotas.js?v=2";
+import { renderizarCotas } from "./cotas.js?v=4";
 
 const panelParametros = document.getElementById("fj-panel-parametros");
 const ESPERA_MS = 300;
@@ -189,5 +189,5 @@ export function renderizarPanelParametros(controlador) {
     controlador.valores = { ...respuesta.valores };
     await controlador._alCambiar(respuesta);
     renderizarPanelParametros(controlador);
-  });
+  }, (etiquetas) => controlador.alListarCotas?.(etiquetas));
 }

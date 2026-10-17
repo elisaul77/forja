@@ -4,7 +4,7 @@ import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocum
 import { createLibrary, latestStep } from "./library.js?v=12";
 import { TabManager } from "./tabs.js?v=51";
 import { montarBarraHerramientas } from "./toolbar-ui.js?v=8";
-import { startLive } from "./live.js?v=12";
+import { startLive } from "./live.js?v=14";
 import { iniciarPanelPerfil } from "./perfil.js?v=2";
 
 const tabs = new TabManager({
