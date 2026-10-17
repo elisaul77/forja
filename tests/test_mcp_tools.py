@@ -314,6 +314,32 @@ def test_captura_devuelve_imagen_y_caption_via_mcp():
     assert "1 solido" in caption
 
 
+def test_captura_explosionada_via_mcp_devuelve_imagen_y_caption():
+    """F19: `captura(..., explosion=1.0)` pide la vista explosionada al backend."""
+    creado = tools.ejecutar_script(
+        "from build123d import Box, Pos\n"
+        "resultado = {'izq': Box(10, 10, 10), 'der': Pos(30, 0, 0) * Box(10, 10, 10)}\n",
+        nombre="cubo_explosion_mcp",
+    )
+    assert "error" not in creado, creado
+
+    resultado = tools.captura(creado["id"], ancho=200, alto=200, explosion=1.0)
+    assert isinstance(resultado, list) and len(resultado) == 2, resultado
+    imagen, caption = resultado
+    assert imagen._mime_type == "image/png"  # noqa: SLF001 - Image has no public accessor
+    assert "2 solido" in caption and "explosion 100 %" in caption
+
+
+def test_captura_explosion_fuera_de_rango_devuelve_error_via_mcp():
+    creado = tools.ejecutar_script(
+        "from build123d import Box\nresultado = {'caja': Box(10, 10, 10)}\n",
+        nombre="cubo_explosion_fuera",
+    )
+    resultado = tools.captura(creado["id"], explosion=2.0)
+    assert resultado["error"] is True
+    assert "entre 0 y 1" in resultado["mensaje"]
+
+
 def test_captura_documento_inexistente_devuelve_error_via_mcp():
     resultado = tools.captura("no-existe")
     assert resultado["error"] is True
