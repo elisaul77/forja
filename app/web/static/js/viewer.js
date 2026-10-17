@@ -748,7 +748,52 @@ export class ForjaViewer {
     this._applyPieceVisibility();
   }
 
+  /**
+   * F23b (ADR-0025): etiquetas de las cotas editables sobre el modelo, `[{id, texto, ancla}]`
+   * (ancla en mm del modelo). Pulsar una emite `forja:cota-pulsada` con `{id}`; el panel
+   * enfoca el campo numérico de esa cota. Se recolocan en cada render (cámara o malla nueva).
+   */
+  mostrarEtiquetasCotas(etiquetas) {
+    this.ocultarEtiquetasCotas();
+    if (!etiquetas.length) return;
+    if (getComputedStyle(this.container).position === "static") this.container.style.position = "relative";
+    this._etiquetasCotas = etiquetas.map((e) => {
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.textContent = e.texto;
+      boton.setAttribute("aria-label", `Editar cota: ${e.texto}`);
+      boton.style.cssText = "position:absolute;transform:translate(-50%,-50%);padding:1px 6px;"
+        + "font:12px sans-serif;background:#fffbe6;border:1px solid #b08800;border-radius:3px;"
+        + "cursor:pointer;white-space:nowrap;z-index:2;";
+      boton.addEventListener("click", (evento) => {
+        evento.stopPropagation();
+        document.dispatchEvent(new CustomEvent("forja:cota-pulsada", { detail: { id: e.id } }));
+      });
+      this.container.appendChild(boton);
+      return { boton, ancla: new THREE.Vector3(...e.ancla) };
+    });
+    this._situarEtiquetasCotas();
+  }
+
+  ocultarEtiquetasCotas() {
+    for (const e of this._etiquetasCotas ?? []) e.boton.remove();
+    this._etiquetasCotas = [];
+  }
+
+  _situarEtiquetasCotas() {
+    if (!this._etiquetasCotas?.length) return;
+    const tam = new THREE.Vector2();
+    this.renderer.getSize(tam);
+    for (const e of this._etiquetasCotas) {
+      const p = e.ancla.clone().project(this.camera);
+      e.boton.hidden = p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1;
+      e.boton.style.left = `${((p.x + 1) / 2) * tam.x}px`;
+      e.boton.style.top = `${((1 - p.y) / 2) * tam.y}px`;
+    }
+  }
+
   render() {
+    this._situarEtiquetasCotas();
     const d = this._division;
     if (!d) {
       this.renderer.render(this.scene, this.camera);
@@ -770,6 +815,7 @@ export class ForjaViewer {
 
   dispose() {
     this.salirComparacion();
+    this.ocultarEtiquetasCotas();
     this._resizeObserver.disconnect();
     this.controls.dispose();
     this.renderer.domElement.removeEventListener("pointerdown", this._piecePointerDown);
