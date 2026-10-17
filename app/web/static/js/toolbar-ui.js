@@ -2,12 +2,13 @@
 // fijo a la derecha, tooltips propios, paleta de comandos (Ctrl+K) y hoja de
 // atajos (?). Todo sale de ACCIONES (toolbar-actions.js) y la lógica de
 // toolbar.js. Los textos se escriben solo con textContent.
-import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=3";
+import { PESTANAS, ACCIONES } from "./toolbar-actions.js?v=4";
 import {
   estadoAccion, tooltipLineas, filtrarPaleta, claveDesdeEvento, debeIgnorarAtajo, buscarPorAtajo,
   repartirGrupos,
-} from "./toolbar.js?v=4";
-import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js";
+} from "./toolbar.js?v=5";
+import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js?v=4";
+import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=12";
 
 const NS = "http://www.w3.org/2000/svg";
 const SPRITE = "/static/icons/forja-icons.svg?v=2";
@@ -18,11 +19,14 @@ const ANCHO_MAS_PX = 64;
 // offsetWidth y clientWidth son siempre números finitos.
 const medirEn = (elemento, propiedad) => (Number.isFinite(elemento[propiedad]) ? elemento[propiedad] : 0);
 
+// Cliente del cursor de deshacer (24a2). Inyectable en las pruebas.
+const API_HISTORIA = { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento };
+
 /**
  * Monta la barra sobre #fj-cinta. `tabs` es el TabManager de app.js.
  * Devuelve { actualizar, ejecutar } para quien necesite refrescarla o lanzar una acción.
  */
-export function montarBarraHerramientas({ tabs, documento = document }) {
+export function montarBarraHerramientas({ tabs, documento = document, api = API_HISTORIA }) {
   const cinta = documento.getElementById("fj-cinta");
   if (!cinta) throw new Error("falta el contenedor #fj-cinta de la barra de herramientas");
   const feedback = documento.getElementById("fj-feedback");
@@ -44,11 +48,27 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
     if (!entrada) throw new Error("no hay un documento abierto");
     return entrada;
   };
+  // Cursor de deshacer por documento (24a2, ADR-0022): sale del GET y se vuelve a
+  // leer tras cada cambio de revisión. Un fallo de lectura queda como { error }.
+  const cursores = new Map();
+  let movimientoEnCurso = false;
+
+  async function refrescarCursor(docId) {
+    if (!docId) return;
+    try {
+      cursores.set(docId, await api.obtenerEstadoDeshacer(docId));
+    } catch (error) {
+      cursores.set(docId, { error: `No se pudo leer el historial: ${error.detalle ?? error.message}` });
+    }
+    renderizar();
+  }
+
   const estadoActual = () => {
     const entrada = entradaActiva();
     return {
       documento: entrada ? { formato: entrada.ficha.formato } : null,
       seleccion: entrada?.viewer.selectedPiece ?? null,
+      historia: entrada ? cursores.get(entrada.ficha.id) ?? null : null,
     };
   };
 
@@ -124,8 +144,38 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
     entrada.acciones?.pizarra?.classList.toggle("is-active", String(modo ?? "").startsWith("pizarra"));
   }
 
+  // Deshacer o rehacer un paso. La cabeza que se envía es la del último cursor leído:
+  // si el historial cambió por debajo, el servidor responde 409 y se vuelve a leer.
+  async function moverHistoria(accion) {
+    const entrada = requerirEntrada();
+    const docId = entrada.ficha.id;
+    const cursor = cursores.get(docId);
+    if (!cursor || cursor.error) throw new Error("el historial todavía no está disponible");
+    if (movimientoEnCurso) {
+      mostrar("Espera a que termine el deshacer o rehacer anterior.");
+      return;
+    }
+    movimientoEnCurso = true;
+    try {
+      const llamar = accion === "deshacer" ? api.deshacerDocumento : api.rehacerDocumento;
+      const registro = await llamar(docId, cursor.cabeza);
+      await tabs.recargarTrasRevision(docId, registro);
+      mostrar(accion === "deshacer"
+        ? "Revisión anterior restaurada. El historial no se borra: se añadió una revisión nueva."
+        : "Revisión rehecha.");
+    } catch (error) {
+      if (error.status === 409) mostrar(error.detalle, true);
+      else mostrar(`No se pudo ${accion}: ${error.detalle ?? error.message}`, true);
+    } finally {
+      movimientoEnCurso = false;
+      await refrescarCursor(docId);
+    }
+  }
+
   // ---------------- Contexto de las acciones ----------------
   const contexto = {
+    deshacer: () => moverHistoria("deshacer"),
+    rehacer: () => moverHistoria("rehacer"),
     visor: () => requerirEntrada().viewer,
     entrada: () => entradaActiva(),
     pieza: () => entradaActiva()?.viewer.selectedPiece ?? null,
@@ -613,6 +663,12 @@ export function montarBarraHerramientas({ tabs, documento = document }) {
   tabs.onEstadoCambio = () => {
     sincronizarPick();
     renderizar();
+    void refrescarCursor(tabs.activeId);
+  };
+  // Un cambio externo o de otra acción del historial (live, notas, restaurar) relee el cursor.
+  tabs.onHistorialCambio = (docId) => {
+    if (docId === tabs.activeId) void refrescarCursor(docId);
+    else cursores.delete(docId);
   };
   renderizar();
   return { actualizar: renderizar, ejecutar: ejecutarAccion };

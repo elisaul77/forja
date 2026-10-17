@@ -17,19 +17,35 @@ const DOC_STEP = { formato: 'step' };
 const DOC_STL = { formato: 'stl' };
 const porId = (id) => ACCIONES.find((a) => a.id === id);
 
-test('deshacer y rehacer están próximamente (24a2): sin atajos, sin ejecutar y con su motivo', () => {
-  for (const id of ['hist-deshacer', 'hist-rehacer']) {
-    const accion = porId(id);
-    assert.equal(accion.estado, 'proximamente', `${id} debe ser próximamente`);
-    assert.equal(accion.fase, '24a2', id);
-    assert.equal(accion.ejecutar, undefined, `${id} no debe ejecutar`);
-    assert.equal(accion.atajo, undefined, `${id} no debe tener atajo`);
-    assert.equal(accion.atajoAlterno, undefined, `${id} no debe tener atajo alterno`);
-    assert.equal(estadoAccion(accion, { documento: DOC_STEP, seleccion: null }).motivo, 'Próximamente · 24a2');
-  }
-  for (const clave of ['Ctrl+Z', 'Ctrl+Shift+Z', 'Ctrl+Y']) {
-    assert.equal(buscarPorAtajo(ACCIONES, clave), undefined, `${clave} no debe estar asignado`);
-  }
+test('deshacer y rehacer (24a2): atajos y habilitación según el cursor del servidor', () => {
+  const deshacer = porId('hist-deshacer');
+  const rehacer = porId('hist-rehacer');
+  assert.equal(deshacer.estado, 'listo');
+  assert.equal(rehacer.estado, 'listo');
+  assert.equal(deshacer.atajo, 'Ctrl+Z');
+  assert.equal(rehacer.atajo, 'Ctrl+Shift+Z');
+  assert.equal(rehacer.atajoAlterno, 'Ctrl+Y');
+  assert.equal(buscarPorAtajo(ACCIONES, 'Ctrl+Z'), deshacer);
+  assert.equal(buscarPorAtajo(ACCIONES, 'Ctrl+Y'), rehacer);
+  assert.equal(buscarPorAtajo(ACCIONES, 'Ctrl+Shift+Z'), rehacer);
+  assert.equal(typeof deshacer.ejecutar, 'function');
+  assert.equal(typeof rehacer.ejecutar, 'function');
+
+  const sinCursor = { documento: DOC_STEP, seleccion: null, historia: null };
+  assert.equal(estadoAccion(deshacer, sinCursor).motivo, 'Cargando el historial…');
+  const sinPasos = { documento: DOC_STEP, seleccion: null,
+    historia: { puede_deshacer: false, puede_rehacer: false } };
+  assert.equal(estadoAccion(deshacer, sinPasos).habilitada, false);
+  assert.equal(estadoAccion(deshacer, sinPasos).motivo, 'No hay ninguna revisión anterior a la que volver.');
+  assert.equal(estadoAccion(rehacer, sinPasos).habilitada, false);
+  assert.equal(estadoAccion(rehacer, sinPasos).motivo, 'No hay nada que rehacer: una edición nueva borra el rehacer.');
+  const conPasos = { documento: DOC_STEP, seleccion: null,
+    historia: { puede_deshacer: true, puede_rehacer: true } };
+  assert.equal(estadoAccion(deshacer, conPasos).habilitada, true);
+  assert.equal(estadoAccion(rehacer, conPasos).habilitada, true);
+  const conError = { documento: DOC_STEP, seleccion: null,
+    historia: { error: 'No se pudo leer el historial: 500' } };
+  assert.equal(estadoAccion(deshacer, conError).motivo, 'No se pudo leer el historial: 500');
   assert.deepEqual(validarRegistro(ACCIONES), []);
 });
 

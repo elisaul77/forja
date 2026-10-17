@@ -3,7 +3,7 @@
 // abrirlo en Orca. Funciones puras salvo `crearBotonCupon`, que recibe el
 // `document` y el `fetch` (inyectables en las pruebas).
 
-import { buildOrcaLink } from "./orca.js?v=3";
+import { buildOrcaLink } from "./orca.js?v=4";
 
 /** Cuerpo JSON de `POST /documentos/{id}/cupon`: solo la pieza si la hay. */
 export function cuerpoCupon(pieza) {

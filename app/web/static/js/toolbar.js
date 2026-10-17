@@ -15,7 +15,8 @@ const FORMATO_ATAJO = /^((Ctrl|Alt|Shift)\+)*([A-Z0-9]|\?|Esc|Enter)$/;
 
 /**
  * Habilitación de una acción según el contexto.
- * `estado`: { documento: { formato: "step" | "stl" } | null, seleccion: string | null }
+ * `estado`: { documento: { formato: "step" | "stl" } | null, seleccion: string | null, historia }
+ * `disponible(estado)` (opcional, 24a2): motivo como texto si no se puede ahora, null si sí.
  */
 export function estadoAccion(accion, estado = {}) {
   if (accion.estado === 'proximamente') {
@@ -31,6 +32,8 @@ export function estadoAccion(accion, estado = {}) {
   if (requiere.includes('malla') && documento.formato !== 'stl') {
     return { habilitada: false, motivo: 'Solo para documentos de malla (STL)' };
   }
+  const motivoDisponible = accion.disponible?.(estado) ?? null;
+  if (motivoDisponible) return { habilitada: false, motivo: motivoDisponible };
   return { habilitada: true, motivo: null };
 }
 

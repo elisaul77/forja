@@ -231,7 +231,22 @@ function crearEntrada(doc, id, historial) {
 const tick = () => new Promise((resolver) => setTimeout(resolver, 0));
 const porId = (id) => ACCIONES.find((a) => a.id === id);
 
-function montarEscena({ historial } = {}) {
+const ESTADO_VACIO = { cabeza: null, puede_deshacer: false, puede_rehacer: false,
+  destino_deshacer: null, destino_rehacer: null };
+
+// Cliente de /deshacer falso: registra cada llamada; `respuesta(accion)` decide el resultado.
+function apiFalsa({ estado = ESTADO_VACIO, respuesta = async () => ({ id: 'd1', nombre: 'Doc d1' }) } = {}) {
+  const llamadas = [];
+  const api = {
+    llamadas,
+    obtenerEstadoDeshacer: async (id) => { llamadas.push(['cursor', id]); return { ...estado }; },
+    deshacerDocumento: async (id, esperado) => { llamadas.push(['deshacer', id, esperado]); return respuesta('deshacer'); },
+    rehacerDocumento: async (id, esperado) => { llamadas.push(['rehacer', id, esperado]); return respuesta('rehacer'); },
+  };
+  return api;
+}
+
+function montarEscena({ historial, api = apiFalsa() } = {}) {
   const doc = crearDocumento();
   const cinta = doc.createElement('div');
   cinta.id = 'fj-cinta';
@@ -239,10 +254,11 @@ function montarEscena({ historial } = {}) {
   feedback.id = 'fj-feedback';
   doc.body.append(cinta, feedback);
   const primera = crearEntrada(doc, 'd1', historial);
-  const tabs = { tabs: new Map([['d1', primera.entrada]]), activeId: 'd1', onEstadoCambio: null, abrirPanel() {} };
+  const tabs = { tabs: new Map([['d1', primera.entrada]]), activeId: 'd1', onEstadoCambio: null, abrirPanel() {},
+    recargas: [], async recargarTrasRevision(id, registro) { this.recargas.push([id, registro]); } };
   doc.body.append(primera.entrada.contenedor);
-  const barra = montarBarraHerramientas({ tabs, documento: doc });
-  return { doc, tabs, barra, feedback, e: primera };
+  const barra = montarBarraHerramientas({ tabs, documento: doc, api });
+  return { doc, tabs, barra, feedback, e: primera, api };
 }
 
 const textoFeedback = (doc) => doc.getElementById('fj-feedback').textContent;
@@ -377,20 +393,69 @@ test('el picking de cara se desarma al cambiar de pestaña o cerrar el documento
   assert.equal(otra.lienzo.listeners.pointerup?.length ?? 0, 0, 'el listener sobrevivió al cierre');
 });
 
-// Deshacer y rehacer están próximamente (24a2): ningún atajo, paleta ni clic restaura nada.
-test('deshacer y rehacer están próximamente: ni los atajos ni la paleta restauran nada', async () => {
-  const restauraciones = [];
-  const historial = { restaurar: async (id) => { restauraciones.push(id); } };
-  const { doc, barra, feedback } = montarEscena({ historial });
-  for (const evento of [{ key: 'z', ctrlKey: true }, { key: 'Z', ctrlKey: true, shiftKey: true }, { key: 'y', ctrlKey: true }]) {
-    const despachado = doc.dispatch('keydown', { ...evento, target: doc.body });
-    assert.equal(despachado.defaultPrevented, false, `${evento.key}: el atajo no debe capturarse`);
-  }
-  barra.ejecutar(porId('hist-deshacer'));
-  assert.match(textoFeedback(doc), /Próximamente · 24a2/);
+const asentar = async () => { for (let i = 0; i < 6; i += 1) await tick(); };
+const ESTADO_CON_PASOS = { cabeza: 'sha1', puede_deshacer: true, puede_rehacer: false,
+  destino_deshacer: 'e1', destino_rehacer: null };
+const ESTADO_CON_REHACER = { cabeza: 'sha2', puede_deshacer: true, puede_rehacer: true,
+  destino_deshacer: 'r1', destino_rehacer: 'd1' };
+
+// Deshacer y rehacer (24a2): el cursor sale del servidor; atajos, paleta y clic comparten la cabeza leída.
+test('Ctrl+Z deshace con la cabeza leída, recarga la pestaña y relee el cursor', async () => {
+  const api = apiFalsa({ estado: ESTADO_CON_PASOS });
+  const { doc, tabs, feedback } = montarEscena({ api });
+  tabs.onEstadoCambio();
+  await asentar();
+  const despachado = doc.dispatch('keydown', { key: 'z', ctrlKey: true, target: doc.body });
+  assert.equal(despachado.defaultPrevented, true, 'Ctrl+Z debe capturarse con un paso disponible');
+  await asentar();
+  assert.deepEqual(api.llamadas.filter(([accion]) => accion === 'deshacer'), [['deshacer', 'd1', 'sha1']]);
+  assert.equal(tabs.recargas.length, 1);
+  assert.match(textoFeedback(doc), /Revisión anterior restaurada/);
+  assert.equal(feedback.classes.has('is-error'), false);
+  assert.equal(api.llamadas.filter(([accion]) => accion === 'cursor').length, 2, 'tras la acción se relee el cursor');
+});
+
+test('Ctrl+Y y Ctrl+Shift+Z rehacen cuando el cursor lo permite', async () => {
+  const api = apiFalsa({ estado: ESTADO_CON_REHACER });
+  const { doc, tabs } = montarEscena({ api });
+  tabs.onEstadoCambio();
+  await asentar();
+  doc.dispatch('keydown', { key: 'y', ctrlKey: true, target: doc.body });
+  await asentar();
+  doc.dispatch('keydown', { key: 'Z', ctrlKey: true, shiftKey: true, target: doc.body });
+  await asentar();
+  assert.deepEqual(api.llamadas.filter(([accion]) => accion === 'rehacer'),
+    [['rehacer', 'd1', 'sha2'], ['rehacer', 'd1', 'sha2']]);
+});
+
+test('sin paso que rehacer la barra no llama al servidor y explica por qué', async () => {
+  const api = apiFalsa({ estado: ESTADO_CON_PASOS });
+  const { doc, barra, tabs } = montarEscena({ api });
+  tabs.onEstadoCambio();
+  await asentar();
   barra.ejecutar(porId('hist-rehacer'));
-  assert.match(textoFeedback(doc), /Próximamente · 24a2/);
-  await tick();
-  assert.deepEqual(restauraciones, []);
-  assert.equal(feedback.classes.has('is-error'), false, 'próximamente no es un error');
+  assert.match(textoFeedback(doc), /No hay nada que rehacer/);
+  await asentar();
+  assert.equal(api.llamadas.some(([accion]) => accion === 'rehacer'), false);
+});
+
+test('un 409 muestra el mensaje del servidor en español y relee el cursor sin recargar', async () => {
+  const api = apiFalsa({
+    estado: ESTADO_CON_PASOS,
+    respuesta: async () => {
+      const error = new Error('409 El historial cambió desde que se leyó.');
+      error.status = 409;
+      error.detalle = 'El historial cambió desde que se leyó.';
+      throw error;
+    },
+  });
+  const { doc, barra, tabs, feedback } = montarEscena({ api });
+  tabs.onEstadoCambio();
+  await asentar();
+  barra.ejecutar(porId('hist-deshacer'));
+  await asentar();
+  assert.equal(textoFeedback(doc), 'El historial cambió desde que se leyó.');
+  assert.equal(feedback.classes.has('is-error'), true);
+  assert.equal(tabs.recargas.length, 0, 'un 409 no recarga la pestaña');
+  assert.equal(api.llamadas.filter(([accion]) => accion === 'cursor').length, 2, 'se relee el cursor');
 });

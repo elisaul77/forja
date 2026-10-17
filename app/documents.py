@@ -25,10 +25,11 @@ from typing import Any
 import trimesh
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 import assemblies
 import auth
+import deshacer
 import materiales
 import eventos
 import export as export_solidos
@@ -1900,6 +1901,75 @@ class _RestaurarBody(BaseModel):
     snapshot: str
 
 
+class _EsperadoBody(BaseModel):
+    """Cabeza del historial que el cliente vio (`GET .../deshacer`, ADR-0022)."""
+    model_config = ConfigDict(extra="forbid")
+    esperado: str
+
+
+MENSAJE_HISTORIAL_CAMBIADO = ("El historial cambió desde que se leyó (otra edición o un deshacer "
+                              "en paralelo). Se recarga antes de volver a intentarlo.")
+MENSAJE_SIN_PASO = {
+    "deshacer": "No hay ninguna revisión anterior a la que volver.",
+    "rehacer": "No hay nada que rehacer: una edición nueva borra el rehacer.",
+}
+
+
+def _estado_deshacer(doc_id: str) -> dict[str, Any]:
+    """Cursor calculado desde la cabeza leída una sola vez: el historial
+    que se devuelve es exactamente el que tiene esa cabeza."""
+    cabeza = git_store.cabeza(doc_id)
+    entradas = git_store.log(doc_id, cabeza) if cabeza else []
+    return deshacer.estado(entradas, cabeza)
+
+
+@router.get("/documentos/{doc_id}/deshacer")
+def estado_deshacer(doc_id: str) -> dict[str, Any]:
+    """Cursor de deshacer y rehacer: ``{puede_deshacer, puede_rehacer,
+    cabeza, destino_deshacer, destino_rehacer}``. Solo lee el historial;
+    ``destino_*`` es el id del paso que restaurará la acción."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    return _estado_deshacer(doc_id)
+
+
+@router.post("/documentos/{doc_id}/deshacer", dependencies=[Depends(auth.requiere_token)])
+def deshacer_documento(doc_id: str, body: _EsperadoBody) -> dict[str, Any]:
+    return _mover_historia(doc_id, body.esperado, "deshacer")
+
+
+@router.post("/documentos/{doc_id}/rehacer", dependencies=[Depends(auth.requiere_token)])
+def rehacer_documento(doc_id: str, body: _EsperadoBody) -> dict[str, Any]:
+    return _mover_historia(doc_id, body.esperado, "rehacer")
+
+
+def _mover_historia(doc_id: str, esperado: str, accion: str) -> dict[str, Any]:
+    """Deshacer o rehacer: una restauración nueva (nunca reescribe el
+    historial), con la misma cerradura y auth que `restaurar`. La cabeza
+    se compara bajo la cerradura: dos peticiones con la misma cabeza no
+    pueden aplicarse las dos."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    ruta = _files.get(doc_id)
+    if ruta is None:
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+
+    with parametros.bloqueo(doc_id):
+        if doc_id not in _registry:
+            raise HTTPException(status_code=404, detail="documento no encontrado")
+        estado = _estado_deshacer(doc_id)
+        if esperado != estado["cabeza"]:
+            raise HTTPException(status_code=409, detail=MENSAJE_HISTORIAL_CAMBIADO)
+        destino = estado["destino_deshacer"] if accion == "deshacer" else estado["destino_rehacer"]
+        if destino is None:
+            raise HTTPException(status_code=409, detail=MENSAJE_SIN_PASO[accion])
+        try:
+            registro = _restaurar_documento_bloqueado(doc_id, ruta, destino, accion=accion)
+        except assemblies.EstadoIncompatible as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {**registro, "accion": accion, "destino": destino, "cursor": _estado_deshacer(doc_id)}
+
+
 @router.post("/documentos/{doc_id}/restaurar", dependencies=[Depends(auth.requiere_token)])
 def restaurar_documento(doc_id: str, body: _RestaurarBody) -> dict[str, Any]:
     """Restore ``doc_id`` (file + notes) to a previous snapshot. The
@@ -1928,7 +1998,8 @@ def restaurar_documento(doc_id: str, body: _RestaurarBody) -> dict[str, Any]:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> dict[str, Any]:
+def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str,
+                                   accion: str = "restaurar") -> dict[str, Any]:
     try:
         archivos = versioning.leer_snapshot(doc_id, snapshot)
     except FileNotFoundError as exc:
@@ -1951,8 +2022,13 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
     if ruta_solidos_doc.exists():
         actuales["solidos.json"] = ruta_solidos_doc.read_bytes()
     actuales = _con_parametros_snapshot(actuales, doc_id)
+    # Trailers (ADR-0022): el cursor de deshacer distingue estos commits de
+    # una edición normal. Los restaurar sin trailer son anteriores y cuentan
+    # como edición.
+    mensaje = f"antes de restaurar {snapshot}" if accion == "restaurar" else f"antes de {accion} {snapshot}"
     versioning.crear_snapshot(
-        doc_id, f"antes de restaurar {snapshot}", _con_ensamble_snapshot(actuales, doc_id)
+        doc_id, mensaje, _con_ensamble_snapshot(actuales, doc_id),
+        extra={"Accion": accion, "Destino": snapshot},
     )
 
     for nombre, contenido in archivos.items():

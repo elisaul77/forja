@@ -12,7 +12,7 @@ import {
   crearTrazo,
   borrarTrazo,
   actualizarVisibilidadTrazo,
-} from "./api.js?v=11";
+} from "./api.js?v=12";
 import {
   createIntent,
   sendIntentAction,

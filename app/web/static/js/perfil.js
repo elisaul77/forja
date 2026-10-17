@@ -1,7 +1,7 @@
 // Forja — panel «Perfil de impresora» (fdm-A): ver el perfil de tolerancias
 // activo, generar la probeta de calibración y capturar las mediciones.
 // Las funciones puras (compensar, construirMediciones) no tocan el DOM.
-import { obtenerTokenSesion } from "./api.js?v=11";
+import { obtenerTokenSesion } from "./api.js?v=12";
 
 const CLAVE_TOKEN_SESION = "fj_token";
 

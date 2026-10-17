@@ -41,7 +41,11 @@ async function parseError(resp) {
   } catch {
     // cuerpo no era JSON; se conserva statusText
   }
-  return new Error(`${resp.status} ${detalle}`);
+  const error = new Error(`${resp.status} ${detalle}`);
+  // La barra de herramientas distingue el 409 (historial cambiado) del resto.
+  error.status = resp.status;
+  error.detalle = detalle;
+  return error;
 }
 
 /** Lista compacta de documentos ya existentes en el servidor. */
@@ -199,6 +203,38 @@ export async function restaurarDocumento(id, snapshot) {
     // token vacio/incorrecto: se olvida para volver a pedirlo la proxima vez.
     sessionStorage.removeItem(CLAVE_TOKEN_SESION);
   }
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+// ---------------- Fase 24a2: cursor de deshacer y rehacer (ADR-0022) ----------------
+
+/** `{puede_deshacer, puede_rehacer, cabeza, destino_deshacer, destino_rehacer}`. */
+export async function obtenerEstadoDeshacer(id) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/deshacer`);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+/** `esperado` es la `cabeza` que el cliente vio: si el historial cambió, el servidor responde 409. */
+export function deshacerDocumento(id, esperado) {
+  return moverHistoria(id, "deshacer", esperado);
+}
+
+export function rehacerDocumento(id, esperado) {
+  return moverHistoria(id, "rehacer", esperado);
+}
+
+async function moverHistoria(id, accion, esperado) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/${accion}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Forja-Token": obtenerTokenSesion(),
+    },
+    body: JSON.stringify({ esperado }),
+  });
+  if (resp.status === 401) sessionStorage.removeItem(CLAVE_TOKEN_SESION);
   if (!resp.ok) throw await parseError(resp);
   return resp.json();
 }
