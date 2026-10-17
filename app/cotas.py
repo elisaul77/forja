@@ -14,14 +14,23 @@ import re
 from typing import Any
 
 OPERACION_PARAMETRO = "parametro"
+# F23b (ADR-0025): operations on imported documents, one per recognised feature.
+OPERATION_SCALE_AXIS = "escalar_eje"  # medida total -> non-uniform scale of that axis
+OPERATION_REDRILL = "rellenar_y_taladrar"  # group of cylinders -> fill and re-drill
+OPERATION_STRETCH = "mover_cara"  # two parallel planar faces -> stretch by bisection
 RAZON_SIN_PARAMETRO = "no ligada a un parametro del script"
 RAZON_MALLA = "malla sin B-rep"
+REASON_POSITION = "posición no editable: se edita el diámetro del agujero"
+REASON_SEVERAL_SOLIDS = "varios sólidos: el estiramiento solo aplica a una pieza"
+REASON_ONE_AT_A_TIME = "las cotas de un documento importado se editan una a una"
+MESSAGE_NO_CHANGE = "la cota ya mide ese valor: no hay cambio que guardar"
 MENSAJE_NO_SIGUE = (
     "El script no mueve esa cota con ese valor: nada se guardó y no hay revisión nueva."
 )
 _RE_PARAMS = re.compile(r"""PARAMS\[\s*(['"])([^'"\n]+)\1\s*\]""")
 TOLERANCIA_MM = 0.01  # re-measured value vs requested value
 FACTOR_TOPE_SIN_MAX = 10.0  # no PARAMETROS max: at most 10x the current size
+FACTOR_MINIMO_GEOMETRICO = 0.1  # imported dimensions: at least a tenth of the current size
 MAX_COTAS_POR_EDICION = 40
 
 
@@ -161,3 +170,58 @@ def tras_aplicar(
             entrada["no_sigue_al_parametro"] = True
         informe.append(entrada)
     return informe
+
+
+def classify_imported(
+    descriptores: list[dict[str, Any]], *, malla: bool, multisolido: bool
+) -> list[dict[str, Any]]:
+    """Dimensions of an imported document (no script, F23b, ADR-0025). A medida
+    total scales its axis (B-rep and mesh alike); a group of cylinders is re-drilled;
+    two parallel faces are stretched, unless the document has several solids. Any
+    other dimension (a hole position, a mesh feature) is read-only with its reason."""
+    resultado = []
+    for descriptor in descriptores:
+        cota = dict(descriptor)
+        tipo = descriptor.get("tipo")
+        if tipo == "tamano_total":
+            cota.update(operacion=OPERATION_SCALE_AXIS)
+        elif malla:
+            cota.update(operacion=None, solo_lectura=True, razon=RAZON_MALLA)
+        elif tipo == "diametro":
+            cota.update(operacion=OPERATION_REDRILL)
+        elif tipo == "distancia" and not multisolido:
+            cota.update(operacion=OPERATION_STRETCH)
+        elif tipo == "distancia":
+            cota.update(operacion=None, solo_lectura=True, razon=REASON_SEVERAL_SOLIDS)
+        else:
+            cota.update(operacion=None, solo_lectura=True, razon=REASON_POSITION)
+        resultado.append(cota)
+    return resultado
+
+
+def resolve_geometric(listado: list[dict[str, Any]], cambios: Any) -> tuple[dict[str, Any], float]:
+    """`{id_cota: valor}` of an imported document -> the one dimension and its value.
+    One dimension per request (its ids change with the revision it creates). Unknown
+    id -> `CotaNoEncontrada`; read-only, non-finite, non-positive, outside
+    [0.1x, 10x] of the current size, or equal to it -> `CotaInvalida`."""
+    if not isinstance(cambios, dict) or not cambios:
+        raise CotaInvalida("indica al menos una cota y su valor")
+    if len(cambios) != 1:
+        raise CotaInvalida(REASON_ONE_AT_A_TIME)
+    (id_cota, valor), = cambios.items()
+    por_id = {c["id"]: c for c in listado}
+    cota = por_id.get(id_cota)
+    if cota is None:
+        raise CotaNoEncontrada(f"cota desconocida en esta revision: {id_cota}")
+    if cota.get("solo_lectura"):
+        raise CotaInvalida(f"cota solo lectura: {cota['razon']}")
+    if not _es_numero(valor) or valor <= 0:
+        raise CotaInvalida(f"'{id_cota}': el valor debe ser un numero finito mayor que 0")
+    actual = cota["valor_mm"]
+    if valor > FACTOR_TOPE_SIN_MAX * actual:
+        raise CotaInvalida(f"'{id_cota}': mas de {FACTOR_TOPE_SIN_MAX:g} veces la medida actual")
+    if valor < FACTOR_MINIMO_GEOMETRICO * actual:
+        raise CotaInvalida(f"'{id_cota}': menos de {FACTOR_MINIMO_GEOMETRICO:g} veces la medida actual")
+    if abs(valor - actual) <= 0.0005:
+        raise CotaInvalida(MESSAGE_NO_CHANGE)
+    return cota, float(valor)

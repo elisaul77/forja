@@ -1,6 +1,6 @@
 # ADR 0023 — Cotas vivas (F23a): editar una cota de un script editando su parámetro
 
-Date: 2026-10-17. Status: implemented in F23a, revisión 1 (branch `phase-23a-cotas-vivas`). F23b (documentos importados STEP/STL: clic en el plano y en el visor, cilindros, caras paralelas, escala por eje) queda para una fase aparte. Supersedes nothing; extends ADR 0021 (descriptor de cota) y ADR 0003 (versionado). No relacionado con ADR 0022 (cursor de deshacer).
+Date: 2026-10-17. Status: implemented in F23a, revisión 1 (branch `phase-23a-cotas-vivas`); pendientes resueltos en F23b (ADR 0025: documentos importados, clic en el visor 3D). Supersedes nothing; extends ADR 0021 (descriptor de cota) y ADR 0003 (versionado). No relacionado con ADR 0022 (cursor de deshacer).
 
 ## Decisión
 
@@ -39,7 +39,8 @@ Cada cota del plano (F22) que sale de una clave de `PARAMETROS` de un documento 
 
 ## Pendiente (F23b y sub-fases)
 
-- **Clic sobre la cota en el plano o en el overlay 3D.** Sigue pendiente. Esta fase ofrece el editor en el panel de parámetros (y la acción «Cotas» de la barra que lo abre). Clicar la cota en el dibujo del plano o sobre el overlay del visor queda para una sub-fase posterior, junto con los documentos importados (F23b).
+- **Clic sobre la cota en el overlay 3D (resuelto en F23b, ADR-0025).** El visor muestra una etiqueta por cota editable; pulsarla enfoca el campo numérico de la cota en el panel. El clic sobre el plano no existe: el plano de F22 es una descarga (SVG/PDF/DXF), no hay vista de plano en la app.
+- **Documentos importados (resuelto en F23b, ADR-0025).** Un STEP o una malla STL editan su medida reconocida: agujeros (rellenar y retaladrar), caras paralelas (estirar por biseccion) y medida total (escalar el eje).
 
 ## Desviaciones frente al plan (F23a)
 

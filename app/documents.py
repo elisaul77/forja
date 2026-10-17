@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict
 import assemblies
 import auth
 import cotas
+import cotas_geometria
 import deshacer
 import materiales
 import eventos
@@ -492,6 +493,40 @@ def _detalle_script_error(exc: scripts_runner.ScriptError) -> dict[str, Any] | s
     return detalle
 
 
+def _reresolver_notas(doc_id: str, nueva_shape: Any, notas_previas: bytes) -> None:
+    """Notes and strokes whose `referencia` points at a face or edge are re-resolved against the
+    rebuilt shape (never left pointing at a stale index). Shared by the script path and F23b."""
+    datos_notas = json.loads(notas_previas)
+    cambiaron = False
+    for coleccion in ("notas", "trazos"):
+        for item in datos_notas.get(coleccion, []):
+            referencia = item.get("referencia")
+            if referencia is None:
+                continue
+            resultado = naming.resolver_referencia(nueva_shape, referencia)
+            # `resolver_referencia` carries `referencia_perdida`/`ambigua`
+            # inside the returned dict itself (its own return contract,
+            # exercised directly in `tests/test_naming.py`); those flags
+            # belong on `item` (the note/stroke) as the single top-level
+            # source of truth, never duplicated inside the nested
+            # `referencia` sub-dict that gets persisted (Phase 4 review
+            # finding).
+            perdida = resultado.pop("referencia_perdida")
+            ambigua = resultado.pop("ambigua", False)
+            if resultado != referencia or item.get("referencia_perdida") != perdida:
+                item["referencia"] = resultado
+                item["referencia_perdida"] = perdida
+                cambiaron = True
+            if ambigua:
+                if item.get("ambigua") is not True:
+                    cambiaron = True
+                item["ambigua"] = True
+            elif item.pop("ambigua", None) is not None:
+                cambiaron = True
+    if cambiaron:
+        notes.guardar(doc_id, datos_notas)
+
+
 def _actualizar_documento_desde_script(
     doc_id: str,
     codigo: str,
@@ -598,35 +633,7 @@ def _actualizar_documento_desde_script(
     solids.guardar(doc_id, solids.construir_entradas(nueva_shape, nombres_ordenados))
 
     if notas_previas is not None:
-        datos_notas = json.loads(notas_previas)
-        cambiaron = False
-        for coleccion in ("notas", "trazos"):
-            for item in datos_notas.get(coleccion, []):
-                referencia = item.get("referencia")
-                if referencia is None:
-                    continue
-                resultado = naming.resolver_referencia(nueva_shape, referencia)
-                # `resolver_referencia` carries `referencia_perdida`/`ambigua`
-                # inside the returned dict itself (its own return contract,
-                # exercised directly in `tests/test_naming.py`); those flags
-                # belong on `item` (the note/stroke) as the single top-level
-                # source of truth, never duplicated inside the nested
-                # `referencia` sub-dict that gets persisted (Phase 4 review
-                # finding).
-                perdida = resultado.pop("referencia_perdida")
-                ambigua = resultado.pop("ambigua", False)
-                if resultado != referencia or item.get("referencia_perdida") != perdida:
-                    item["referencia"] = resultado
-                    item["referencia_perdida"] = perdida
-                    cambiaron = True
-                if ambigua:
-                    if item.get("ambigua") is not True:
-                        cambiaron = True
-                    item["ambigua"] = True
-                elif item.pop("ambigua", None) is not None:
-                    cambiaron = True
-        if cambiaron:
-            notes.guardar(doc_id, datos_notas)
+        _reresolver_notas(doc_id, nueva_shape, notas_previas)
 
     return registro
 
@@ -961,15 +968,31 @@ def _codigo_del_script(doc_id: str) -> str | None:
     return script["codigo"]
 
 
+def _clasificar_cotas(doc_id: str, fuente: Any, descriptores: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+    """Drawn dimensions classified for editing. A script document goes by its PARAMETROS
+    (F23a, ADR-0023). An imported document (no script) goes by the feature that produces
+    each dimension (F23b, ADR-0025): a hole group, two parallel faces or an overall size.
+    Returns ``(cotas, aviso)``; `aviso` says why some features could not be recognised."""
+    malla = _es_malla(doc_id)
+    codigo = _codigo_del_script(doc_id)
+    if codigo is not None:
+        leidas = cotas.claves_leidas(codigo)
+        return cotas.clasificar(descriptores, parametros.cargar(doc_id)["parametros"], malla=malla, leidas=leidas), None
+    extras, aviso = ([], None) if malla else cotas_geometria.parallel_face_descriptors(fuente)
+    multisolido = not malla and len(fuente.solids()) != 1
+    listado = cotas.classify_imported(descriptores + extras, malla=malla, multisolido=multisolido)
+    cotas_geometria.attach_anchors(fuente, listado, malla)
+    return listado, aviso
+
+
 def _listar_cotas_de_fuente(
     doc_id: str, fuente: Any, piezas: list[str], parametros_plano: dict[str, tuple[float, str]],
     revision: str | None, nombre: str,
 ) -> dict[str, Any]:
-    """Cotas vivas (F23a, ADR-0023): the drawn dimensions of the sheet (default
+    """Cotas vivas (ADR-0023, ADR-0025): the drawn dimensions of the sheet (default
     views, all of them drawn) classified for editing. Pure read: no lock here.
-    A dimension linked to a key the script never reads is read-only ("ligada por
-    valor"). Cached per (doc, revision) when a revision is given: the revision
-    covers the geometry, the rest of the inputs go into the key."""
+    Cached per (doc, revision) when a revision is given: the revision covers the
+    geometry, the rest of the inputs go into the key."""
     esquema = parametros.cargar(doc_id)["parametros"]
     codigo = _codigo_del_script(doc_id)
     leidas = cotas.claves_leidas(codigo) if codigo is not None else None
@@ -989,10 +1012,10 @@ def _listar_cotas_de_fuente(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    resultado = {
-        "revision": revision,
-        "cotas": cotas.clasificar(plano.cotas, esquema, malla=malla, leidas=leidas),
-    }
+    listado, aviso = _clasificar_cotas(doc_id, fuente, plano.cotas)
+    resultado: dict[str, Any] = {"revision": revision, "cotas": listado}
+    if aviso:
+        resultado["aviso"] = aviso
     if clave is not None:
         if len(_CACHE_COTAS) >= _CACHE_COTAS_MAX:
             _CACHE_COTAS.pop(next(iter(_CACHE_COTAS)))
@@ -1008,6 +1031,121 @@ def obtener_cotas(doc_id: str) -> dict[str, Any]:
     `revision` is the revision the listing belongs to; token-free read."""
     fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano(doc_id)
     return _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
+
+
+def _archivos_estado(doc_id: str, ruta: Path) -> dict[str, bytes]:
+    """Bytes of the document's state for a snapshot: the file, notes, named solids, parametros, ensamble."""
+    archivos = {ruta.name: ruta.read_bytes()}
+    for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)), ("solidos.json", solids.ruta_solidos(doc_id))):
+        if camino.exists():
+            archivos[nombre] = camino.read_bytes()
+    return _con_ensamble_snapshot(_con_parametros_snapshot(archivos, doc_id), doc_id)
+
+
+def _contenido_step(forma: Any) -> bytes:
+    with tempfile.TemporaryDirectory(prefix="cotas-step-") as carpeta:
+        destino = Path(carpeta) / "pieza.step"
+        b123d_kernel.export_to_step(forma, destino)
+        return destino.read_bytes()
+
+
+def _contenido_stl(doc_id: str, ruta: Path, escala: tuple[str, float, float]) -> tuple[bytes, bytes | None]:
+    """Scaled STL bytes, and the parts sidecar when the document has one (multi-part meshes,
+    as `incorporar` rebuilds them). The scale is applied to each part with the same origin."""
+    eje, factor, origen = escala
+    actual = mesh.load_stl(ruta)
+    entradas = mesh_parts.load(doc_id)
+    escaladas = [
+        (nombre, cotas_geometria.scale_mesh(parte, eje, factor, origen))
+        for nombre, parte in mesh_parts.objects(actual, entradas, Path(_registry[doc_id]["nombre"]).stem)
+    ]
+    combinada, nuevas = mesh_parts.combine(escaladas)
+    return mesh.to_stl_bytes(combinada), (json.dumps(nuevas).encode() if entradas is not None else None)
+
+
+def _aplicar_cotas_importadas(
+    doc_id: str, cambios: dict[str, Any], listado: list[dict[str, Any]], fuente: Any, malla: bool,
+) -> Any:
+    """F23b (ADR-0025): one live dimension of an imported document. Refusals answer 422
+    `{error, mensaje}` (and `razon` for a wall); nothing is written before the edit is verified."""
+    design_state.require_unprotected_legacy_edit(doc_id)
+    try:
+        cota, valor = cotas.resolve_geometric(listado, cambios)
+    except cotas.CotaNoEncontrada as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except cotas.CotaInvalida as exc:
+        return JSONResponse(status_code=422, content={"error": True, "mensaje": str(exc)})
+    try:
+        edicion = cotas_geometria.apply_edit(fuente, cota, valor, malla=malla)
+    except cotas_geometria.EditRejected as exc:
+        contenido = {"error": True, "mensaje": str(exc)}
+        if exc.razon:
+            contenido["razon"] = exc.razon
+        return JSONResponse(status_code=422, content=contenido)
+    respuesta = _escribir_geometria_importada(
+        doc_id, edicion, f"editar cota a {valor:g} mm ({cota['operacion']})"
+    )
+    return {**respuesta, "editadas": [edicion.editada]}
+
+
+def _escribir_geometria_importada(doc_id: str, edicion: Any, mensaje: str) -> dict[str, Any]:
+    """Commit a verified geometric edit (F23b): the new file and its sidecar are built
+    and re-analysed as temporary files first; only then the previous state is snapshotted
+    and the files are renamed into place. A failure before the snapshot leaves no trace."""
+    ruta = _files[doc_id]
+    if ruta is None or not ruta.exists():
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+    extension = ruta.suffix.lower()
+    es_step = extension in _STEP_EXTS
+    previos = _archivos_estado(doc_id, ruta)
+    notas_previas = notes.ruta_notas(doc_id).read_bytes() if notes.ruta_notas(doc_id).exists() else None
+    sidecar_previo = solids.cargar(doc_id)
+    tmp_geometria = ruta.with_name(f".{ruta.stem}.cotas{extension}")
+    tmp_sidecar = solids.ruta_solidos(doc_id).with_name(f".{doc_id}.cotas.solidos.json")
+    try:
+        if es_step:
+            contenido = _contenido_step(edicion.forma)
+            sidecar: bytes | None = json.dumps(solids.entradas_tras_edicion(sidecar_previo, edicion.forma)).encode()
+        else:
+            contenido, sidecar = _contenido_stl(doc_id, ruta, edicion.escala)
+        tmp_geometria.write_bytes(contenido)
+        analisis = _analyze(tmp_geometria, extension)
+        if sidecar is not None:
+            tmp_sidecar.write_bytes(sidecar)
+    except Exception as exc:  # noqa: BLE001 - nothing committed yet: report and clean up
+        tmp_geometria.unlink(missing_ok=True)
+        tmp_sidecar.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=f"la geometría editada no se pudo verificar: {exc}") from exc
+    cabeza_previa = git_store.cabeza(doc_id)
+    snapshot = versioning.crear_snapshot(doc_id, mensaje, previos)
+    cabeza_snapshot = git_store.cabeza(doc_id)
+    try:
+        os.replace(tmp_geometria, ruta)
+        if sidecar is not None:
+            os.replace(tmp_sidecar, solids.ruta_solidos(doc_id))
+    except OSError as exc:  # noqa: BLE001 - rollback: history first, then the files' bytes
+        tmp_geometria.unlink(missing_ok=True)
+        tmp_sidecar.unlink(missing_ok=True)
+        try:
+            git_store.deshacer_commit(doc_id, cabeza_snapshot, cabeza_previa)
+        except git_store.GitError as exc_git:
+            raise HTTPException(
+                status_code=500,
+                detail=f"la edición falló y el historial no se pudo revertir: {exc_git}",
+            ) from exc_git
+        ruta.write_bytes(previos[ruta.name])
+        if "solidos.json" in previos:
+            solids.ruta_solidos(doc_id).write_bytes(previos["solidos.json"])
+        raise HTTPException(status_code=422, detail=f"no se pudo guardar la edición; se restauró el documento: {exc}") from exc
+    if es_step and notas_previas is not None:
+        _reresolver_notas(doc_id, edicion.forma, notas_previas)
+    _registry[doc_id] = {"id": doc_id, "nombre": _registry[doc_id]["nombre"], **analisis}
+    _borrar_cache_malla(doc_id)
+    import ramas  # noqa: PLC0415 - ramas imports documents; its branch cache is per geometry revision
+
+    ramas.borrar_cache(doc_id)
+    confirmar_revision(doc_id)
+    return {**_registry[doc_id], "revision": _revisiones.get(doc_id), "snapshot_previo": snapshot, "mensaje": mensaje}
 
 
 class _CotasBody(BaseModel):
@@ -1040,6 +1178,8 @@ def aplicar_cotas(doc_id: str, body: _CotasBody) -> dict[str, Any]:
             )
         fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano_bloqueado(doc_id)
         antes = _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
+        if _codigo_del_script(doc_id) is None:  # F23b: an imported document, edited by feature
+            return _aplicar_cotas_importadas(doc_id, body.cotas, antes["cotas"], fuente, _es_malla(doc_id))
         try:
             nuevos = cotas.resolver_edicion(antes["cotas"], body.cotas)
         except cotas.CotaNoEncontrada as exc:
@@ -1672,10 +1812,8 @@ def _exportar_plano(
             revision=revision,
             parametros=parametros_plano,
         )
-        if "cotas_detalle" in resultado:  # F23a: each dimension says if it is editable
-            resultado["cotas_detalle"] = cotas.clasificar(
-                resultado["cotas_detalle"], parametros.cargar(doc_id)["parametros"], malla=_es_malla(doc_id)
-            )
+        if "cotas_detalle" in resultado:  # F23a/F23b: each dimension says how it is edited
+            resultado["cotas_detalle"], _aviso = _clasificar_cotas(doc_id, fuente, resultado["cotas_detalle"])
             resultado["revision"] = revision
         return resultado
     except ValueError as exc:

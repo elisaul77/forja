@@ -2,14 +2,14 @@ import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor 
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=design1-20";
+import { ForjaViewer } from "./viewer.js?v=design1-21";
 import { ForjaNotasControlador } from "./notes.js?v=24";
-import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
+import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=3";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=5";
-import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=14";
+import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=15";
 import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=13";
 import { crearBotonCupon } from "./cupon.js?v=4";
-import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=2";
+import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=3";
 import { AnimationView } from "./animation.js?v=7";
 import { renderPiecesPanel } from "./pieces.js?v=10";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=2";
@@ -190,6 +190,8 @@ export class TabManager {
     const parametros = new ForjaParametrosControlador(ficha.id, async (registroActualizado) => {
       await this._alCambiarParametros(ficha.id, registroActualizado);
     });
+    // F23b (ADR-0025): the editable dimensions of the document are labels on the 3D model.
+    parametros.alListarCotas = (etiquetas) => viewer.mostrarEtiquetasCotas(etiquetas);
     const ensamble = new ForjaEnsambleControlador(ficha.id, async (registroActualizado) => {
       await this._alCambiarParametros(ficha.id, registroActualizado);
     }, () => {
