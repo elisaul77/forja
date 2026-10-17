@@ -380,3 +380,77 @@ def test_desfase_aplicado_cambia_la_altura_de_la_pieza(caja_doc):
     assert aplicado.status_code == 200, aplicado.text
     despues = contexto(caja_doc)["pieces"][0]["bbox"]
     assert (despues[5] - despues[2]) == ABS((antes[5] - antes[2]) + 5, abs=1e-3)
+
+
+# ---------------- Revisión 1: fallos del núcleo y vaciado sin pared ----------------
+
+
+def test_vaciado_fino_con_todas_las_caras_abiertas_es_422_sin_candidato(caja_doc):
+    pieza = contexto(caja_doc)["pieces"][0]["name"]
+    caras = [e["huella"] for e in referencias(caja_doc, pieza, "cara")["elementos"]]
+    antes = len(candidatos(caja_doc))
+    r = preparar(
+        caja_doc,
+        [{"kind": "shell", "piece": pieza, "huellas": caras, "valor_mm": 0.0001}],
+        "vaciado-fino-todas",
+    )
+    assert r.status_code == 422, r.text
+    assert "vaciado falló en el núcleo" in r.text
+    assert len(candidatos(caja_doc)) == antes
+
+
+def test_vaciado_con_todas_las_caras_abiertas_no_deja_pared_y_es_422(caja_doc):
+    pieza = contexto(caja_doc)["pieces"][0]["name"]
+    caras = [e["huella"] for e in referencias(caja_doc, pieza, "cara")["elementos"]]
+    antes = len(candidatos(caja_doc))
+    r = preparar(
+        caja_doc,
+        [{"kind": "shell", "piece": pieza, "huellas": caras, "valor_mm": 2}],
+        "vaciado-sin-pared",
+    )
+    assert r.status_code == 422, r.text
+    assert "no deja pared" in r.text
+    assert len(candidatos(caja_doc)) == antes
+
+
+def test_vaciado_con_todas_las_caras_abiertas_no_deja_pared_en_el_nucleo():
+    caja = Box(20, 20, 10)
+    todas = huellas(caja, "cara", lambda e: True)
+    with pytest.raises(ValueError, match="no deja pared"):
+        feat.aplicar_brep(caja, dc.Operation(kind="shell", piece="p", huellas=todas, valor_mm=2))
+
+
+@pytest.mark.parametrize("tipo", b123d_kernel.FALLOS_NUCLEO, ids=lambda t: t.__name__)
+def test_fallo_del_nucleo_se_traduce_a_valueerror_con_causa(monkeypatch, tipo):
+    caja = Box(20, 20, 10)
+    tapa = huellas(caja, "cara", lambda e: abs(e.center().Z - 5) < 1e-6)
+
+    def roto(*_a, **_k):
+        raise tipo("boom")
+
+    monkeypatch.setattr(b123d_kernel, "vaciar_caras", roto)
+    with pytest.raises(ValueError, match="vaciado falló en el núcleo: boom") as exc:
+        feat.aplicar_brep(caja, dc.Operation(kind="shell", piece="p", huellas=tapa, valor_mm=2))
+    assert isinstance(exc.value.__cause__, tipo)
+
+
+def test_todos_los_rasgos_brep_traducen_el_fallo_del_nucleo(monkeypatch):
+    caja = Box(20, 20, 10)
+    aristas = huellas(caja, "arista", lambda e: e in vertical_edges(caja))
+    tapa = huellas(caja, "cara", lambda e: abs(e.center().Z - 5) < 1e-6)
+    casos = [
+        ("fillet", "filete_aristas", "filete", dict(huellas=aristas, valor_mm=1)),
+        ("chamfer", "chaflan_aristas", "chaflán", dict(huellas=aristas, valor_mm=1)),
+        ("push_pull", "desfasar_cara", "desfase de cara", dict(huellas=tapa, valor_mm=5)),
+        ("split", "dividir_por_plano", "división", dict(eje="z", plano_mm=0)),
+    ]
+    for kind, fn, rasgo, extra in casos:
+
+        def roto(*_a, **_k):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(b123d_kernel, fn, roto)
+        with pytest.raises(ValueError, match=f"{rasgo} falló en el núcleo: boom") as exc:
+            feat.aplicar_brep(caja, dc.Operation(kind=kind, piece="p", **extra))
+        assert isinstance(exc.value.__cause__, RuntimeError), kind
+        monkeypatch.undo()

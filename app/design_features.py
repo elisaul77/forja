@@ -10,6 +10,7 @@ ambigua es un ValueError (422) y no se crea ningún paso."""
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 
 import numpy as np
 import trimesh
@@ -71,10 +72,48 @@ def _valido(forma, nombre: str):
     return forma
 
 
+NOMBRE_RASGO = {
+    "fillet": "filete",
+    "chamfer": "chaflán",
+    "shell": "vaciado",
+    "push_pull": "desfase de cara",
+    "split": "división",
+    "mirror": "simetría",
+    "pattern": "matriz",
+}
+
+
+@contextmanager
+def _nucleo(rasgo: str):
+    """Fallos de OpenCascade/build123d -> ValueError (422) con la causa encadenada."""
+    try:
+        yield
+    except kernel.FALLOS_NUCLEO as exc:
+        raise ValueError(f"{rasgo} falló en el núcleo: {str(exc) or type(exc).__name__}") from exc
+
+
+def _vaciar(solido, caras, espesor: float):
+    """Vaciado con verificación: si OpenCascade devuelve el mismo volumen no hay
+    pared que vaciar (p. ej. todas las caras abiertas) y se rechaza."""
+    antes = kernel.volumen_preciso(solido)
+    despues = kernel.vaciar_caras(solido, caras, espesor)
+    if abs(kernel.volumen_preciso(despues) - antes) <= 1e-6 * antes:
+        raise ValueError(
+            "Vaciar no deja pared: con las caras elegidas el sólido queda igual; "
+            "deja al menos una cara cerrada"
+        )
+    return despues
+
+
 def aplicar_brep(forma, op):
     """Aplica un rasgo a una pieza B-rep (Compound o Solid). Devuelve un Compound."""
     if op.kind not in RASGOS_BREP:
         raise ValueError("Este rasgo solo se aplica a mallas (STL)")
+    with _nucleo(NOMBRE_RASGO[op.kind]):
+        return _aplicar_brep(forma, op)
+
+
+def _aplicar_brep(forma, op):
     if op.kind == "fillet":
         nuevos = _por_solido(
             forma, op.huellas, "arista",
@@ -90,7 +129,7 @@ def aplicar_brep(forma, op):
     if op.kind == "shell":
         nuevos = _por_solido(
             forma, op.huellas, "cara",
-            lambda s, c: kernel.vaciar_caras(s, c, op.valor_mm),
+            lambda s, c: _vaciar(s, c, op.valor_mm),
         )
         return _valido(kernel.compuesto(nuevos), "El vaciado")
     if op.kind == "push_pull":

@@ -25,6 +25,11 @@ from build123d import (
     export_step,
     import_step,
 )
+from OCP.Standard import Standard_Failure
+
+# Fallos que OpenCascade/build123d dejan escapar (StdFail_NotDone hereda de
+# Standard_Failure). Quien llama a una operación de rasgo los traduce a ValueError.
+FALLOS_NUCLEO: tuple[type[BaseException], ...] = (RuntimeError, Standard_Failure)
 
 
 @dataclass
