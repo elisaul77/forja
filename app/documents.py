@@ -1179,6 +1179,12 @@ _TIPOS_DESCARGA = {
     "pdf": "application/pdf",
     "dxf": "image/vnd.dxf",
 }
+# Drawing files (F22) can carry script-like text (SVG is XML): never sniffed,
+# never allowed to load or run anything when a browser opens them.
+_CABECERAS_PLANO = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+}
 # Same charset as named solids (letters/digits/_/- incl. accents and ñ).
 _RE_PIEZA_DESCARGA = re.compile(r"[\w-]{1,64}")
 # Upper bound on triangles a download builds in memory (checked after
@@ -1208,6 +1214,76 @@ def _slug_descarga(nombre: str) -> str:
     base = Path(str(nombre)).stem
     ascii_ = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[^A-Za-z0-9_-]+", "_", ascii_).strip("_")[:64].strip("_") or "modelo"
+
+
+def _descarga_plano(doc_id: str, formato: str) -> Response:
+    """Drawing sheet download (F22). The document is read under its lock; the
+    projection runs after the lock is released, so a slow sheet never holds up
+    edits of the same document. Only the loaded shape is used afterwards."""
+    with parametros.bloqueo(doc_id):
+        registro = _registry.get(doc_id)
+        if registro is None:
+            raise HTTPException(status_code=404, detail="documento no encontrado")
+        ruta = _files.get(doc_id)
+        if ruta is None or not ruta.exists():
+            raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+        nombre = registro["nombre"]
+        ext_origen = ruta.suffix.lower()
+        try:
+            if ext_origen in _STEP_EXTS:
+                shape = b123d_kernel.import_from_step(ruta)
+                entradas = solids.cargar(doc_id)
+            elif ext_origen in _STL_EXTS:
+                shape = mesh.load_stl(ruta)
+                entradas = mesh_parts.load(doc_id)
+            else:
+                raise HTTPException(status_code=400, detail="formato de documento no soportado")
+            if _geometria_vacia(shape):
+                raise HTTPException(
+                    status_code=400, detail="el documento no tiene geometria (archivo vacio o danado)"
+                )
+            piezas = _nombres_piezas_plano(entradas)
+            parametros_plano = _parametros_para_plano(doc_id)
+            revision = _revisiones.get(doc_id)
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (OSError, KeyError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"no se pudo generar la descarga: el documento no se puede leer ({type(exc).__name__})",
+            ) from exc
+        except Exception:  # noqa: BLE001 - a defect: leave a trace, answer 500
+            logger.exception("descarga %s: fallo inesperado al cargar el plano %s", doc_id, formato)
+            raise HTTPException(status_code=500, detail="error interno al generar la descarga") from None
+    # Lock released: from here on only the loaded shape and copies of the metadata are used.
+    try:
+        contenido = planos.escribir(
+            planos.construir(
+                shape,
+                nombre=nombre,
+                piezas=piezas,
+                revision=revision,
+                parametros=parametros_plano,
+                opciones=planos.validar(formato),
+            ),
+            formato,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:  # noqa: BLE001 - a defect: leave a trace, answer 500
+        logger.exception("descarga %s: fallo inesperado al generar %s", doc_id, formato)
+        raise HTTPException(status_code=500, detail="error interno al generar la descarga") from None
+    return Response(
+        content=contenido,
+        media_type=_TIPOS_DESCARGA[formato],
+        headers={
+            "Content-Disposition": f'attachment; filename="{_slug_descarga(nombre)}.{formato}"',
+            "Cache-Control": "no-store",
+            **_CABECERAS_PLANO,
+        },
+    )
 
 
 @router.api_route("/documentos/{doc_id}/descarga/{archivo:path}", methods=["GET", "HEAD"])
@@ -1245,6 +1321,8 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
     # Clamp the id (characters AND UTF-8 bytes) before any lookup.
     if not notes._doc_id_valido(doc_id) or doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
+    if formato in planos.FORMATOS_PLANO:
+        return _descarga_plano(doc_id, formato)
     with parametros.bloqueo(doc_id):
         # Re-check inside the lock: a delete may have won the race.
         registro = _registry.get(doc_id)
@@ -1274,7 +1352,7 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
         try:
             if ext_origen in _STEP_EXTS:
                 shape = b123d_kernel.import_from_step(ruta)
-                entradas = solids.cargar(doc_id) if (formato == "3mf" or pieza or formato in planos.FORMATOS_PLANO) else None
+                entradas = solids.cargar(doc_id) if (formato == "3mf" or pieza) else None
             elif ext_origen in _STL_EXTS:
                 shape = mesh.load_stl(ruta)
                 entradas = mesh_parts.load(doc_id)
@@ -1307,19 +1385,6 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                 if len(tri_mesh.faces) > MAX_TRIANGULOS_DESCARGA:
                     raise too_big
                 contenido = mesh.to_stl_bytes(tri_mesh)
-            elif formato in planos.FORMATOS_PLANO:
-                # F22: default sheet built in memory (nothing written to disk).
-                contenido = planos.escribir(
-                    planos.construir(
-                        shape,
-                        nombre=registro["nombre"],
-                        piezas=_nombres_piezas_plano(entradas),
-                        revision=_revisiones.get(doc_id),
-                        parametros=_parametros_para_plano(doc_id),
-                        opciones=planos.validar(formato),
-                    ),
-                    formato,
-                )
             else:
                 objetos, _inciertos = export_solidos.objetos_3mf(
                     shape, entradas, Path(registro["nombre"]).stem or "pieza"

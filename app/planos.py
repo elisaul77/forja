@@ -30,6 +30,7 @@ import trimesh
 from build123d import GeomType
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.BRepTools import BRepTools
 from OCP.GeomAbs import GeomAbs_Cylinder
 from OCP.gp import gp_Pnt
 from OCP.TopAbs import TopAbs_IN
@@ -51,6 +52,13 @@ GROSOR_OCULTA = 0.18
 GROSOR_COTA = 0.13
 ALTURA_TEXTO = 3.2
 CAP_ARISTAS = 200_000
+# Meshes above this many triangles are refused (projection is per edge in Python).
+MAX_TRIANGULOS_PLANO = 100_000
+# Angular tolerance (rad) for a closed cylinder: a hole is a full turn of faces.
+TOLERANCIA_GIRO = 1e-3
+# First position dimension line sits this far (mm of paper) outside the view.
+DISTANCIA_COTA_POSICION = 20.0
+DESPLAZAMIENTO_COTA_POSICION = 6.0
 PRESUPUESTO_S = 20.0
 TOLERANCIA_COINCIDENCIA = 0.02  # mm (modelo)
 ANGULO_RASGO_GRADOS = 30.0
@@ -204,23 +212,28 @@ def _quitar_coincidentes(
     return resultado
 
 
-def _polilinea_arista(arista: Any) -> list[tuple[float, float]]:
+def _polilinea_arista(arista: Any, dx: float = 0.0, dy: float = 0.0) -> list[tuple[float, float]]:
     if arista.geom_type == GeomType.LINE:
         pts = [arista.position_at(0.0), arista.position_at(1.0)]
     else:
         n = max(8, min(96, math.ceil(arista.length / 0.5)))
         pts = [arista.position_at(i / (n - 1)) for i in range(n)]
-    return [(float(p.X), float(p.Y)) for p in pts]
+    return [(float(p.X) + dx, float(p.Y) + dy) for p in pts]
 
 
-def _proyectar_brep(shape: Any, v: np.ndarray, u: np.ndarray, centro: np.ndarray, diag: float) -> tuple[list, list, int]:
-    """(visibles, ocultas, aristas) from the OCC projection, centred on the
-    bbox centre (`look_at`): without it build123d centres on the centre of
-    mass, which shifts the sheet by the hole's offset (measured 0.59 mm)."""
+def _proyectar_brep(
+    shape: Any, v: np.ndarray, u: np.ndarray, r: np.ndarray, centro: np.ndarray, diag: float
+) -> tuple[list, list, int]:
+    """(visibles, ocultas, aristas) from the OCC projection. build123d reports
+    the points relative to `look_at`, here the bbox centre (without it the
+    centre of mass is used, which shifts the sheet). They are moved back to the
+    absolute frame of the view (`centro @ r`, `centro @ u`), the frame in which
+    the layout and the dimensions measure."""
     origen = centro + v * (4.0 * diag)
     vis, hid = shape.project_to_viewport(tuple(origen), tuple(u), tuple(centro))
-    visibles = [_polilinea_arista(e) for e in vis]
-    ocultas = [_polilinea_arista(e) for e in hid]
+    dx, dy = float(centro @ r), float(centro @ u)
+    visibles = [_polilinea_arista(e, dx, dy) for e in vis]
+    ocultas = [_polilinea_arista(e, dx, dy) for e in hid]
     return visibles, ocultas, len(visibles) + len(ocultas)
 
 
@@ -250,13 +263,14 @@ def _eje_global(d: tuple[float, float, float]) -> str | None:
 
 
 def _agujeros(shape: Any, lo: np.ndarray) -> tuple[list[dict[str, Any]], int]:
-    """Concave cylinders (holes). Returns ([{eje, d, c}], omitidas): `c` is
-    the centre in the two in-plane axes measured from the bbox min corner, in
-    the order of `_ejes_plano(eje)`. Cylinders whose axis is not parallel to a
-    global axis are counted in `omitidas`, never guessed."""
+    """Holes: closed cylinders (a full turn, possibly split into several faces)
+    in material-free space. Returns ([{eje, d, c}], omitidas): `c` is the centre
+    in the two in-plane axes measured from the bbox min corner, in the order of
+    `_ejes_plano(eje)`. Cylinders whose axis is not parallel to a global axis
+    are counted in `omitidas`, never guessed. A partial cylinder (a concave
+    fillet or a round) covers less than a turn and is not a hole."""
     solidos = list(shape.solids())
-    agujeros: dict[tuple, dict[str, Any]] = {}
-    omitidas: set[tuple] = set()
+    grupos: dict[tuple, dict[str, Any]] = {}
     for cara in shape.faces():
         if cara.geom_type != GeomType.CYLINDER:
             continue
@@ -280,15 +294,32 @@ def _agujeros(shape: Any, lo: np.ndarray) -> tuple[list[dict[str, Any]], int]:
         radio = cilindro.Radius()
         eje = _eje_global(dvec)
         if eje is None:
-            omitidas.add((round(dvec[0], 3), round(dvec[1], 3), round(dvec[2], 3), round(loc.X(), 3), round(loc.Y(), 3), round(loc.Z(), 3), round(radio, 3)))
+            clave: tuple = (
+                "oblicuo", round(dvec[0], 3), round(dvec[1], 3), round(dvec[2], 3),
+                round(loc.X(), 3), round(loc.Y(), 3), round(loc.Z(), 3), round(radio, 3),
+            )
+            entrada = grupos.setdefault(clave, {"eje": None, "d": round(2 * radio, 3), "c": None, "giro": 0.0})
+        else:
+            coord = {"x": loc.X(), "y": loc.Y(), "z": loc.Z()}
+            ejes_plano = _ejes_plano(eje)
+            c1 = coord[ejes_plano[0]] - float(lo[_EJES.index(ejes_plano[0])])
+            c2 = coord[ejes_plano[1]] - float(lo[_EJES.index(ejes_plano[1])])
+            clave = (eje, round(c1, 3), round(c2, 3), round(2 * radio, 3))
+            entrada = grupos.setdefault(
+                clave, {"eje": eje, "d": round(2 * radio, 3), "c": (round(c1, 3), round(c2, 3)), "giro": 0.0}
+            )
+        umin, umax, _vmin, _vmax = BRepTools.UVBounds_s(cara.wrapped)
+        entrada["giro"] += float(umax - umin)
+    agujeros: list[dict[str, Any]] = []
+    omitidas = 0
+    for entrada in grupos.values():
+        if entrada["giro"] < 2.0 * math.pi - TOLERANCIA_GIRO:
+            continue  # a fillet or a round: part of a turn, not a hole
+        if entrada["eje"] is None:
+            omitidas += 1
             continue
-        coord = {"x": loc.X(), "y": loc.Y(), "z": loc.Z()}
-        ejes_plano = _ejes_plano(eje)
-        c1 = coord[ejes_plano[0]] - float(lo[_EJES.index(ejes_plano[0])])
-        c2 = coord[ejes_plano[1]] - float(lo[_EJES.index(ejes_plano[1])])
-        clave = (eje, round(c1, 3), round(c2, 3), round(2 * radio, 3))
-        agujeros.setdefault(clave, {"eje": eje, "d": round(2 * radio, 3), "c": (round(c1, 3), round(c2, 3))})
-    return list(agujeros.values()), len(omitidas)
+        agujeros.append({"eje": entrada["eje"], "d": entrada["d"], "c": entrada["c"]})
+    return agujeros, omitidas
 
 
 def _ejes_plano(eje: str) -> tuple[str, str]:
@@ -334,31 +365,40 @@ def _cota(tipo: str, eje: str, valor: float, vista: str, parametros: dict[str, f
     }
 
 
+def _id_tamano(eje: str, valor: float) -> str:
+    return f"tamano_total:{eje}:{valor:.3f}"
+
+
+def _id_diametro(eje: str, d: float, cantidad: int) -> str:
+    return f"diametro:{eje}:{d:.3f}:n{cantidad}"
+
+
+def _id_posicion(eje_p: str, valor: float, ag: dict[str, Any]) -> str:
+    return f"posicion:{eje_p}:{valor:.3f}:{ag['eje']}{ag['c'][0]:.3f}_{ag['c'][1]:.3f}:d{ag['d']:.3f}"
+
+
 def _cotas(
     dimensiones: tuple[float, float, float],
     agujeros: list[dict[str, Any]],
     parametros: dict[str, float],
 ) -> list[dict[str, Any]]:
+    """Every dimension the sheet can carry. `construir` keeps only the ones it
+    actually draws, so the title block count always equals the drawn count."""
     cotas: list[dict[str, Any]] = []
     for eje, valor in zip(_EJES, dimensiones):
-        cotas.append(_cota("tamano_total", eje, valor, _VISTA_DE_EJE_COTA[eje], parametros, f"tamano_total:{eje}:{valor:.3f}"))
+        cotas.append(_cota("tamano_total", eje, valor, _VISTA_DE_EJE_COTA[eje], parametros, _id_tamano(eje, valor)))
     grupos: dict[tuple[str, float], list[dict[str, Any]]] = {}
     for ag in agujeros:
         grupos.setdefault((ag["eje"], ag["d"]), []).append(ag)
     for (eje, d), miembros in sorted(grupos.items()):
         vista = _VISTA_DE_EJE_AGUJERO[eje]
         cotas.append(
-            _cota("diametro", eje, d, vista, parametros, f"diametro:{eje}:{d:.3f}:n{len(miembros)}", cantidad=len(miembros))
+            _cota("diametro", eje, d, vista, parametros, _id_diametro(eje, d, len(miembros)), cantidad=len(miembros))
         )
         for ag in sorted(miembros, key=lambda a: a["c"]):
             for indice, eje_p in enumerate(_ejes_plano(eje)):
                 valor = ag["c"][indice]
-                cotas.append(
-                    _cota(
-                        "posicion", eje_p, valor, vista, parametros,
-                        f"posicion:{eje_p}:{valor:.3f}:{eje}{ag['c'][0]:.3f}_{ag['c'][1]:.3f}",
-                    )
-                )
+                cotas.append(_cota("posicion", eje_p, valor, vista, parametros, _id_posicion(eje_p, valor, ag)))
     return sorted(cotas, key=lambda c: (_ORDEN_TIPO[c["tipo"]], c["eje"], c["valor_mm"], c["id"]))
 
 
@@ -554,6 +594,11 @@ def construir(
     opts = opciones or validar("svg")
     inicio = time.monotonic()
     es_malla = isinstance(fuente, trimesh.Trimesh)
+    if es_malla and len(fuente.faces) > MAX_TRIANGULOS_PLANO:
+        raise ValueError(
+            f"malla demasiado grande para un plano (máximo {MAX_TRIANGULOS_PLANO} triángulos); "
+            "usa un STEP o reduce la malla"
+        )
     if es_malla:
         lo, hi = (np.array(b, dtype=float) for b in fuente.bounds)
     else:
@@ -579,7 +624,7 @@ def construir(
             visibles = _proyectar_malla(fuente, marco["v"], marco["r"], marco["u"])
             ocultas: list = []
         else:
-            visibles, ocultas, n = _proyectar_brep(fuente, marco["v"], marco["u"], centro, diag)
+            visibles, ocultas, n = _proyectar_brep(fuente, marco["v"], marco["u"], marco["r"], centro, diag)
             total_aristas += n
             # Over the cap or the wall-clock budget: the isometric view keeps its
             # visible edges only (ADR-0021), stated by completo=false.
@@ -615,6 +660,7 @@ def construir(
     desplaza_y = MARGEN + (area_h - sum(altos)) / 2.0
 
     primitivas: list[dict[str, Any]] = []
+    dibujadas: set[str] = set()
     for vista in vistas_orden:
         marco = marcos[vista]
         cx, cy = origenes[vista]
@@ -632,12 +678,13 @@ def construir(
         ancho_v = (marco["umax"] - marco["umin"]) * factor
         alto_v = (marco["vmax"] - marco["vmin"]) * factor
         primitivas.append(_texto("TEXTO", x_ref, y_ref - 4.0, _ROTULO_VISTA[vista], altura=3.5))
-        _cotas_de_vista(primitivas, vista, cotas, a_papel, x_ref, y_ref, ancho_v, alto_v, marco, factor)
         if vista != "isometrica":
-            for ag in agujeros:
-                if _VISTA_DE_EJE_AGUJERO[ag["eje"]] == vista:
-                    cx_h, cy_h = _punto_agujero(ag, marco, lo, a_papel)
-                    _marca_agujero(primitivas, ag, cx_h, cy_h, factor)
+            dibujadas |= _cotas_de_vista(primitivas, vista, cotas, x_ref, y_ref, ancho_v, alto_v)
+            dibujadas |= _agujeros_de_vista(
+                primitivas, vista, agujeros, marco, lo, a_papel, factor, x_ref, y_ref, alto_v
+            )
+    # Only what is drawn is reported: the title block count equals the sheet.
+    cotas = [c for c in cotas if c["id"] in dibujadas]
 
     _tabla_parametros(primitivas, _tabla_datos(parametros), opts["papel"])
     _cajetin(
@@ -680,46 +727,106 @@ def _punto_agujero(ag: dict[str, Any], marco: dict[str, Any], lo: np.ndarray, a_
     return a_papel((float(punto @ marco["r"]), float(punto @ marco["u"])))
 
 
-def _marca_agujero(primitivas: list[dict[str, Any]], ag: dict[str, Any], x: float, y: float, factor: float) -> None:
-    radio = ag["d"] / 2.0 * factor
+def _marca_agujero(primitivas: list[dict[str, Any]], x: float, y: float, radio: float) -> None:
+    """Centre mark of a hole: a crosshair (no text)."""
     brazo = radio + 2.0
     primitivas.append(_trazo("COTAS", [(x - brazo, y), (x + brazo, y)], GROSOR_COTA))
     primitivas.append(_trazo("COTAS", [(x, y - brazo), (x, y + brazo)], GROSOR_COTA))
-    primitivas.append(_texto("TEXTO", x + radio + 1.0, y - 1.0, f"Ø{_fmt(ag['d'])}", altura=2.8))
 
 
 def _cotas_de_vista(
     primitivas: list[dict[str, Any]],
     vista: str,
     cotas: list[dict[str, Any]],
-    a_papel: Any,
     x_ref: float,
     y_ref: float,
     ancho_v: float,
     alto_v: float,
-    marco: dict[str, Any],
-    factor: float,
-) -> None:
-    """Overall sizes drawn in the view that owns the axis (dimension lines)."""
+) -> set[str]:
+    """Overall sizes drawn in the view that owns the axis (dimension lines).
+    Returns the ids of the descriptors drawn."""
     eje_de_horizontal = {"frontal": "x", "superior": "x", "derecha": "y"}.get(vista)
     eje_de_vertical = {"frontal": "z", "superior": "y", "derecha": "z"}.get(vista)
+    dibujadas: set[str] = set()
     for cota in cotas:
         if cota["tipo"] != "tamano_total" or cota["vista"] != vista:
             continue
-        if cota["eje"] == eje_de_horizontal and vista != "isometrica":
+        if cota["eje"] == eje_de_horizontal:
             x0, y0 = x_ref, y_ref + alto_v
             linea_y = y0 + 8.0
             primitivas.append(_trazo("COTAS", [(x0, y0 + 2.0), (x0, linea_y + 2.0)], GROSOR_COTA))
             primitivas.append(_trazo("COTAS", [(x0 + ancho_v, y0 + 2.0), (x0 + ancho_v, linea_y + 2.0)], GROSOR_COTA))
             primitivas.append(_trazo("COTAS", [(x0, linea_y), (x0 + ancho_v, linea_y)], GROSOR_COTA))
             primitivas.append(_texto("COTAS", x0 + ancho_v / 2.0, linea_y + 4.0, _fmt(cota["valor_mm"]), anclaje="centro"))
-        elif cota["eje"] == eje_de_vertical and vista != "isometrica":
+        elif cota["eje"] == eje_de_vertical:
             x0 = x_ref
             linea_x = x0 - 8.0
             primitivas.append(_trazo("COTAS", [(x0 - 2.0, y_ref), (linea_x - 2.0, y_ref)], GROSOR_COTA))
             primitivas.append(_trazo("COTAS", [(x0 - 2.0, y_ref + alto_v), (linea_x - 2.0, y_ref + alto_v)], GROSOR_COTA))
             primitivas.append(_trazo("COTAS", [(linea_x, y_ref), (linea_x, y_ref + alto_v)], GROSOR_COTA))
             primitivas.append(_texto("COTAS", linea_x - 1.5, y_ref + alto_v / 2.0 + 1.0, _fmt(cota["valor_mm"]), anclaje="der"))
+        else:
+            continue
+        dibujadas.add(cota["id"])
+    return dibujadas
+
+
+def _agujeros_de_vista(
+    primitivas: list[dict[str, Any]],
+    vista: str,
+    agujeros: list[dict[str, Any]],
+    marco: dict[str, Any],
+    lo: np.ndarray,
+    a_papel: Any,
+    factor: float,
+    x_ref: float,
+    y_ref: float,
+    alto_v: float,
+) -> set[str]:
+    """Holes seen along their own axis: a crosshair per hole, one Ø label per
+    group (`n x Ø d` when several), and the two position dimensions of every
+    hole measured from the datum corner (left edge and bottom edge of the view,
+    which are the bbox min corner). Returns the ids of the descriptors drawn."""
+    dibujadas: set[str] = set()
+    grupos: dict[tuple[str, float], list[dict[str, Any]]] = {}
+    for ag in agujeros:
+        if _VISTA_DE_EJE_AGUJERO[ag["eje"]] == vista:
+            grupos.setdefault((ag["eje"], ag["d"]), []).append(ag)
+    niveles = [0, 0]  # dimension lines already placed: [horizontal, vertical]
+    for (eje, d), miembros in sorted(grupos.items()):
+        miembros = sorted(miembros, key=lambda a: a["c"])
+        dibujadas.add(_id_diametro(eje, d, len(miembros)))
+        radio = d / 2.0 * factor
+        etiqueta = f"Ø{_fmt(d)}" if len(miembros) == 1 else f"{len(miembros)} x Ø{_fmt(d)}"
+        for indice_grupo, ag in enumerate(miembros):
+            hx, hy = _punto_agujero(ag, marco, lo, a_papel)
+            _marca_agujero(primitivas, hx, hy, radio)
+            if indice_grupo == 0:
+                primitivas.append(_texto("COTAS", hx + radio + 1.0, hy - 1.0, etiqueta, altura=2.8))
+            for indice, eje_p in enumerate(_ejes_plano(eje)):
+                valor = ag["c"][indice]
+                nivel = niveles[indice]
+                niveles[indice] += 1
+                desplazamiento = DISTANCIA_COTA_POSICION + DESPLAZAMIENTO_COTA_POSICION * nivel
+                if indice == 0:  # horizontal, measured from the left edge
+                    y_linea = y_ref + alto_v + desplazamiento
+                    primitivas.append(_trazo("COTAS", [(x_ref, y_ref + alto_v + 2.0), (x_ref, y_linea + 2.0)], GROSOR_COTA))
+                    primitivas.append(_trazo("COTAS", [(hx, hy + radio + 1.0), (hx, y_linea + 2.0)], GROSOR_COTA))
+                    primitivas.append(_trazo("COTAS", [(x_ref, y_linea), (hx, y_linea)], GROSOR_COTA))
+                    primitivas.append(
+                        _texto("COTAS", (x_ref + hx) / 2.0, y_linea + 4.0, _fmt(valor), anclaje="centro")
+                    )
+                else:  # vertical, measured from the bottom edge
+                    x_linea = x_ref - desplazamiento
+                    y_base = y_ref + alto_v
+                    primitivas.append(_trazo("COTAS", [(x_ref - 2.0, y_base), (x_linea - 2.0, y_base)], GROSOR_COTA))
+                    primitivas.append(_trazo("COTAS", [(hx - radio - 1.0, hy), (x_linea - 2.0, hy)], GROSOR_COTA))
+                    primitivas.append(_trazo("COTAS", [(x_linea, y_base), (x_linea, hy)], GROSOR_COTA))
+                    primitivas.append(
+                        _texto("COTAS", x_linea - 1.5, (y_base + hy) / 2.0 + 1.0, _fmt(valor), anclaje="der")
+                    )
+                dibujadas.add(_id_posicion(eje_p, valor, ag))
+    return dibujadas
 
 
 # ------------------------------------------------------------ writers

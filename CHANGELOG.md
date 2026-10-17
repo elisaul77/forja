@@ -21,6 +21,14 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - `ensamble(id, barrido="todas"|[ids], detalle=False)` y `POST /documentos/{id}/ensamble/barrido` recorren cada articulación sobre su `limites` con avance continuo conservador, no muestreado. Devuelven el primer contacto en grados o mm, el par de sólidos, el volumen máximo de penetración, la holgura mínima vista y `garantia: "continua"|"muestreada"`. Es solo lectura: no escribe STEP, historial ni revisión. Decisión y límites en `docs/decisions/0020-barrido-continuo.md`.
 - Un barrido que se agota (presupuesto compartido de 2000 evaluaciones o plazo de 25 s) o un error de OCC responde `ok: false`, `completo: false`, `garantia: "muestreada"` con `agotado` cuando aplica; nunca pasa en silencio.
 
+### Fixed (revisión de planos técnicos, F22)
+
+- Una pieza B-rep lejos del origen sale bien alineada: OCC devuelve la proyección relativa a `look_at`, y ahora se lleva al marco absoluto de cada vista. Las cotas y la marca de agujero caen sobre el contorno y sobre el agujero real (regresión con una pieza escalonada y un Ø6).
+- Un empalme cóncavo (R4) ya no es un agujero: solo cuentan cilindros cerrados de una vuelta completa, aunque OCC los parta en varias caras.
+- Las cotas de posición y de diámetro de los agujeros se dibujan (diámetro con `n x Ø` por grupo). El cajetín «Cotas: N» cuenta solo las cotas dibujadas, así coincide con la hoja y con el descriptor.
+- La descarga de planos libera el bloqueo del documento antes de proyectar. Las mallas de más de 100 000 triángulos se rechazan con un 400 claro. Las descargas de plano responden con `X-Content-Type-Options: nosniff` y `Content-Security-Policy` restrictiva.
+- Pruebas de regresión: pieza fuera del origen en las cuatro vistas, agujero real, empalme R4, cajetín frente a cotas dibujadas, tope de malla, bloqueo, cabeceras y nombre hostil en la descarga.
+
 ### Fixed (revisión 1 del barrido continuo)
 
 - Un par que empieza en contacto (pasador, pieza apoyada) ya no deja la garantía en `"continua"`: se muestrea por volumen en pasos de hasta 0,2 mm de desplazamiento, así que una aleta de 0,2 mm a 41,25° se detecta, y la garantía queda en `"muestreada"`.

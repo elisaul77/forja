@@ -8,6 +8,7 @@ import hashlib
 import io
 import math
 import re
+import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import ezdxf
 import numpy as np
 import pytest
 import trimesh
-from build123d import Box, Cylinder, Pos, Rot
+from build123d import Align, Axis, Box, Cylinder, Pos, Rot, fillet
 from fastapi.testclient import TestClient
 
 import auth
@@ -361,7 +362,7 @@ def _documento_parametrico(ancho: float = 40.0, nombre: str = "placa_param.step"
 
     from kernel import b123d_kernel
 
-    ruta = Path(tempfile.mkdtemp(prefix="planos-")) / nombre
+    ruta = Path(tempfile.mkdtemp(prefix="planos-")) / "modelo_plano.step"  # the upload name may be hostile
     b123d_kernel.export_to_step(Box(ancho, 30, 20) - Pos(5, 0, 0) * Cylinder(4, 40), ruta)
     resp = client.post("/documentos", files={"file": (nombre, ruta.read_bytes(), "application/step")}, headers=_h())
     assert resp.status_code == 200, resp.text
@@ -500,3 +501,158 @@ def test_descarga_plano_de_una_pieza_da_400():
     doc = _documento_parametrico()
     resp = client.get(f"/documentos/{doc['id']}/descarga/Pieza/Placa.pdf")
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------- review fixes (F22 review)
+
+
+def _escalonada_fuera_de_origen():
+    """Stepped part far from the origin: X 80..180, Y 60..100, Z 35..59, with
+    a Ø6 through hole at (X=100, Y=80) = 20 mm from the min corner in X and Y."""
+    base = Pos(130, 80, 40) * Box(100, 40, 10)
+    escalon = Pos(160, 80, 52) * Box(40, 20, 14)
+    return (base + escalon) - Pos(100, 80, 40) * Cylinder(3, 60)
+
+
+def _extremos_visibles(plano):
+    pts = [pt for p in plano.primitivas if p["tipo"] == "trazo" and p["capa"] == "VISIBLES" for pt in p["puntos"]]
+    xs = [x for x, _ in pts]
+    ys = [y for _, y in pts]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
+def _segmentos_cota(plano):
+    return [p["puntos"] for p in plano.primitivas if p["tipo"] == "trazo" and p["capa"] == "COTAS"]
+
+
+def _textos_capa(plano, capa):
+    return [p["texto"] for p in plano.primitivas if p["tipo"] == "texto" and p["capa"] == capa]
+
+
+def test_pieza_fuera_del_origen_cotas_alineadas_con_el_contorno():
+    plano = planos.construir(
+        _escalonada_fuera_de_origen(), nombre="Escalonada", opciones=_opts(vistas="frontal")
+    )
+    izq, der, _arriba, _abajo = _extremos_visibles(plano)
+    verticales = [pts[0][0] for pts in _segmentos_cota(plano) if abs(pts[0][0] - pts[1][0]) < 1e-9]
+    assert any(abs(x - izq) < 0.01 for x in verticales), "la cota de ancho debe empezar en el borde izquierdo del contorno"
+    assert any(abs(x - der) < 0.01 for x in verticales), "la cota de ancho debe acabar en el borde derecho del contorno"
+
+
+def test_agujero_fuera_del_origen_marca_el_agujero_real():
+    plano = planos.construir(
+        _escalonada_fuera_de_origen(), nombre="Escalonada", opciones=_opts(vistas="superior")
+    )
+    izq, _der, arriba, _abajo = _extremos_visibles(plano)
+    f = planos.ESCALAS[plano.escala]
+    ex, ey = izq + 20.0 * f, arriba + 20.0 * f  # hole centre at X=100, Y=80 in a view from +Z
+    segmentos = _segmentos_cota(plano)
+    horizontales = [pts for pts in segmentos if abs(pts[0][1] - pts[1][1]) < 1e-9 and abs(pts[0][1] - ey) < 0.01]
+    verticales = [pts for pts in segmentos if abs(pts[0][0] - pts[1][0]) < 1e-9 and abs(pts[0][0] - ex) < 0.01]
+    assert any(abs((pts[0][0] + pts[1][0]) / 2 - ex) < 0.01 for pts in horizontales), "marca horizontal fuera del agujero"
+    assert any(abs((pts[0][1] + pts[1][1]) / 2 - ey) < 0.01 for pts in verticales), "marca vertical fuera del agujero"
+    assert "Ø6" in _textos_capa(plano, "COTAS")
+
+
+@pytest.mark.parametrize("vista", list(planos.VISTAS))
+def test_proyeccion_brep_usa_el_marco_absoluto_de_cada_vista(vista):
+    """Off-origin solid: the projected outline must sit on the bbox extents in
+    the absolute frame of the view (build123d reports it relative to look_at)."""
+    pieza = Pos(100, 50, 20) * Box(10, 6, 4)
+    bb = pieza.bounding_box()
+    lo = np.array([bb.min.X, bb.min.Y, bb.min.Z], dtype=float)
+    hi = np.array([bb.max.X, bb.max.Y, bb.max.Z], dtype=float)
+    v, u, r = planos._base(vista)
+    visibles, _ocultas, _n = planos._proyectar_brep(pieza, v, u, r, (lo + hi) / 2.0, float(np.linalg.norm(hi - lo)))
+    pts = np.array([p for pl in visibles for p in pl])
+    umin, umax, vmin, vmax = planos._marco(lo, hi, u, r)
+    assert pts[:, 0].min() == pytest.approx(umin, abs=1e-3)
+    assert pts[:, 0].max() == pytest.approx(umax, abs=1e-3)
+    assert pts[:, 1].min() == pytest.approx(vmin, abs=1e-3)
+    assert pts[:, 1].max() == pytest.approx(vmax, abs=1e-3)
+
+
+def _pieza_con_radio_interior_r4():
+    cuerpo = Box(50, 50, 10, align=Align.MIN) + Box(50, 10, 40, align=Align.MIN)
+    arista = (
+        cuerpo.edges()
+        .filter_by(Axis.X)
+        .filter_by_position(Axis.Z, 9.99, 10.01)
+        .filter_by_position(Axis.Y, 9.99, 10.01)
+    )
+    return fillet(arista, 4)
+
+
+def test_radio_interior_r4_no_es_agujero():
+    plano = planos.construir(_pieza_con_radio_interior_r4(), nombre="Radio", opciones=_opts())
+    assert _cotas(plano, "diametro") == []
+    assert _cotas(plano, "posicion") == []
+    assert not any(t.startswith("Ø") for t in _textos_capa(plano, "COTAS"))
+
+
+def test_cotas_dibujadas_coinciden_con_el_cajetin():
+    plano = planos.construir(_placa_con_agujero(), nombre="Placa", opciones=_opts())
+    textos = _textos_capa(plano, "COTAS")
+    assert len(textos) == len(plano.cotas)
+    assert any(t.endswith(f"Cotas: {len(plano.cotas)}") for t in _textos_capa(plano, "TEXTO"))
+    assert "Ø8" in textos
+    # Hole at X=5 is 25 mm from the min corner (20 + 5); at Y=0 it is 15 mm.
+    assert "25" in textos and "15" in textos
+
+
+def test_cajetin_cuenta_solo_las_cotas_de_las_vistas_pedidas():
+    plano = planos.construir(_placa_con_agujero(), nombre="Placa", opciones=_opts(vistas="frontal"))
+    assert len(plano.cotas) == 2  # overall X and Z only; Ø and Y live in the superior view
+    assert len(_textos_capa(plano, "COTAS")) == 2
+    assert any(t.endswith(f"Cotas: {len(plano.cotas)}") for t in _textos_capa(plano, "TEXTO"))
+
+
+def test_malla_demasiado_grande_se_rechaza_con_mensaje_claro(monkeypatch):
+    monkeypatch.setattr(planos, "MAX_TRIANGULOS_PLANO", 10)
+    malla = trimesh.creation.box(extents=(40, 30, 20))  # 12 triangles
+    with pytest.raises(ValueError, match="malla demasiado grande para un plano"):
+        planos.construir(malla, nombre="Caja STL", opciones=_opts())
+
+
+@pytest.mark.parametrize("formato", ["svg", "pdf", "dxf"])
+def test_descarga_plano_cabeceras_de_seguridad(formato):
+    doc = _documento_parametrico()
+    resp = client.get(f"/documentos/{doc['id']}/descarga/Placa.{formato}")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert "default-src 'none'" in resp.headers["content-security-policy"]
+
+
+def test_descarga_plano_proyecta_sin_retener_el_bloqueo(monkeypatch):
+    doc = _documento_parametrico()
+    real = planos.construir
+    resultado: dict[str, bool] = {}
+
+    def sondeo(*args, **kwargs):
+        # Another thread must be able to take the document lock while the
+        # sheet is projected; if the download still holds it, the probe times out.
+        adquirido = threading.Event()
+
+        def probar():
+            with parametros.bloqueo(doc["id"]):
+                adquirido.set()
+
+        threading.Thread(target=probar, daemon=True).start()
+        resultado["ok"] = adquirido.wait(5)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(planos, "construir", sondeo)
+    resp = client.get(f"/documentos/{doc['id']}/descarga/Placa.pdf")
+    assert resp.status_code == 200, resp.text
+    assert resultado.get("ok") is True, "la proyeccion no debe ejecutarse con el bloqueo del documento retenido"
+
+
+def test_descarga_nombre_hostil_no_rompe_cabeceras_ni_rotulo():
+    doc = _documento_parametrico(nombre='../../etc/"<script>x</script>.step')
+    resp = client.get(f"/documentos/{doc['id']}/descarga/Placa.svg")
+    assert resp.status_code == 200, resp.text
+    assert re.fullmatch(r'attachment; filename="[A-Za-z0-9_-]{1,64}\.svg"', resp.headers["content-disposition"])
+    svg = resp.content.decode("utf-8")
+    ET.fromstring(svg)
+    assert "<script>" not in svg
+    assert "&lt;script&gt;" in svg
