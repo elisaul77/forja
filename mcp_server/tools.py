@@ -150,8 +150,32 @@ def ejecutar_script(
     )
 
 
-def exportar(id: str, formato: str, por_solido: bool = False) -> dict[str, Any]:
-    """Exporta un documento a `stl`, `step` o `3mf` dentro de
+def exportar(
+    id: str,
+    formato: str,
+    por_solido: bool = False,
+    vistas: str | None = None,
+    escala: str | None = None,
+    papel: str | None = None,
+    proyeccion: str | None = None,
+    detalle: bool = False,
+) -> dict[str, Any]:
+    """Exporta un documento a `stl`, `step`, `3mf` o un plano tecnico
+    `svg`, `pdf`, `dxf` (solo lectura: no toca el documento ni su historial).
+    El plano es UNA hoja con vistas frontal, superior, derecha e isometrica,
+    lineas visibles y ocultas (ocultas solo en STEP), cotas automaticas de
+    tamano, diametro y posicion de agujeros, y cajetin. Opciones solo para
+    planos: `vistas` (lista separada por comas de frontal,superior,derecha,
+    isometrica; por defecto todas), `escala` (1:1, 1:2, 1:5, 1:10, 2:1, 5:1;
+    por defecto la mayor que cabe), `papel` (A4 por defecto o A3),
+    `proyeccion` (tercer_angulo por defecto o primer_angulo) y `detalle`
+    (lista las cotas con su id, tipo, valor_mm, eje, vista, origen y
+    parametro). Responde `{ruta, tamano_bytes, vistas, escala, papel,
+    proyeccion, cotas, parametros_ligados, omitidas}`; `completo: false`
+    si el tope de aristas obligo a omitir ocultas; `aviso` en mallas STL o
+    agujeros con eje no paralelo a un eje global. Una malla STL se dibuja
+    solo con contornos y cotas de bbox.
+    Para `stl`, `step` y `3mf` exporta el documento dentro de
     `/data/documentos/exportados` y devuelve {"ruta", "tamano_bytes"} (nunca
     los bytes del archivo). `step` solo esta disponible para documentos que
     ya tienen un solido B-rep (importados o creados como STEP); un
@@ -185,7 +209,16 @@ def exportar(id: str, formato: str, por_solido: bool = False) -> dict[str, Any]:
     descarga el archivo desde esa direccion, asi que solo sirve si Orca
     corre donde esa direccion llega a Forja. Ausentes para `step` y `por_solido`.
     """
-    return client.exportar(id, formato, por_solido=por_solido)
+    return client.exportar(
+        id,
+        formato,
+        por_solido=por_solido,
+        vistas=vistas,
+        escala=escala,
+        papel=papel,
+        proyeccion=proyeccion,
+        detalle=detalle,
+    )
 
 
 def check_colisiones(id: str, tolerancia_mm3: float = 0.5) -> dict[str, Any]:

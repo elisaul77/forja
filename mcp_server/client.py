@@ -240,13 +240,29 @@ def _enlace_orca(descarga: Any) -> dict[str, str]:
     }
 
 
+_FORMATOS_PLANO_MCP = ("svg", "pdf", "dxf")
+
+
 @_heavy_operation
-def exportar(doc_id: str, formato: str, por_solido: bool = False) -> dict[str, Any]:
+def exportar(
+    doc_id: str,
+    formato: str,
+    por_solido: bool = False,
+    vistas: str | None = None,
+    escala: str | None = None,
+    papel: str | None = None,
+    proyeccion: str | None = None,
+    detalle: bool = False,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"formato": formato, "por_solido": str(por_solido).lower()}
+    if formato in _FORMATOS_PLANO_MCP:
+        # F22 (ADR-0021): drawing options only travel for plano formats.
+        params["detalle"] = str(detalle).lower()
+        for nombre, valor in (("vistas", vistas), ("escala", escala), ("papel", papel), ("proyeccion", proyeccion)):
+            if valor is not None:
+                params[nombre] = valor
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
-        resp = c.get(
-            f"/documentos/{doc_id}/exportar",
-            params={"formato": formato, "por_solido": str(por_solido).lower()},
-        )
+        resp = c.get(f"/documentos/{doc_id}/exportar", params=params)
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
     resultado = resp.json()

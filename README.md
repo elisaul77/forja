@@ -230,6 +230,10 @@ Orca); el 3MF no es idéntico byte a byte entre descargas (las marcas de tiempo
 del zip cambian, el contenido no); y `valido: true` **no detecta pérdida de
 geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
 
+### Planos técnicos (F22)
+
+`exportar(id, "svg" | "pdf" | "dxf")` escribe una hoja con cuatro vistas (frontal, superior, derecha e isométrica), líneas visibles y ocultas (solo en STEP), cotas automáticas de tamaño y de agujeros, y cajetín. Opciones: `vistas`, `escala` (1:1 por defecto la mayor que cabe), `papel` (A4 o A3), `proyeccion` (tercer ángulo por defecto) y `detalle` (lista las cotas con su id). Las mallas STL se dibujan solo con contornos y cotas de bbox. Solo lectura; el visor tiene las anclas «Plano», «Plano SVG» y «Plano DXF». Decisión en `docs/decisions/0021-planos-tecnicos.md`.
+
 ### Ramas, pasos y comparar (Plan G · G2/G3)
 
 Cada documento tiene un repo git (`.repos/{id}.git`). `refs/heads/main` es el
