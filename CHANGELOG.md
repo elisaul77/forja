@@ -7,6 +7,21 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (deshacer y rehacer, fase 24a2)
+
+- **Deshacer** (Ctrl+Z) y **Rehacer** (Ctrl+Shift+Z o Ctrl+Y) en Inspeccionar > Historia, con cursor en el servidor (ADR-0022). Cada paso crea una revisión nueva: el historial no se borra. Deshacer repetido retrocede más allá de lo ya revertido; una edición o una restauración invalida el rehacer.
+- `GET /documentos/{id}/deshacer` → `{puede_deshacer, puede_rehacer, cabeza, destino_deshacer, destino_rehacer}`, calculado solo desde el historial git (`app/deshacer.py`). `POST .../deshacer` y `POST .../rehacer` piden `{esperado: <cabeza>}`; un historial que cambió responde 409 con un mensaje en español. Mismas cerradura y auth que `restaurar`.
+- Los commits de deshacer, rehacer y restaurar llevan los trailers `Forja-Accion` y `Forja-Destino`. Los commits anteriores cuentan como edición.
+- Sin herramienta MCP nueva: el conjunto de herramientas queda igual.
+
+### Changed (deshacer y rehacer, fase 24a2)
+
+- Los botones Deshacer y Rehacer están habilitados según el cursor del servidor; su motivo deshabilitado sale de ahí. La hoja de atajos (?) los lista sola desde el registro.
+- `orca.js` se importa con una sola URL (`?v=4`) en toda la barra y en `tabs.js` y `cupon.js`: antes eran tres módulos distintos.
+- Cambios de caché: `api.js?v=12` (todos sus importadores), `toolbar-actions.js?v=4`, `toolbar.js?v=5`, `toolbar-ui.js?v=5` (en `app.js`), `tabs.js?v=47`, `cupon.js?v=3`, `app.js?v=49`.
+- Pruebas: `tests/test_deshacer.py` (17) y `tests/web/toolbar*.test.mjs` actualizados al comportamiento nuevo (deshacer y rehacer ya no son «Próximamente»).
+- Decisión numerada como ADR-0022. Si F23a la toma también al fusionar, renumerar.
+
 ### Added (barra de herramientas, fase 24a)
 
 - Cinta de herramientas bajo las pestañas de documento: Vista, Croquis, Sólido, Ensamble, Inspeccionar, Planos e Imprimir, más un bloque **Claude** fijo a la derecha. Todas las acciones salen de un único registro (`app/web/static/js/toolbar-actions.js`); añadir una acción es añadir una entrada.

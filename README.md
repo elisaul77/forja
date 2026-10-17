@@ -267,6 +267,8 @@ Visor: cajón «Ramas y fusiones» de la pestaña Historial y modo «Comparar» 
 | `GET /documentos/{id}/pasos/{sha}/miniatura.png?pieza=` | PNG 256×192 renderizado en el servidor, cacheado por revisión en `.cache/miniaturas_pasos/` (sin token; `sha` = 7–40 hex) |
 | `POST /documentos/{id}/piezas/{pieza}/restaurar` 🔑 | `{desde, forzar?, simular?}` — devuelve UNA pieza a ese paso con el motor de «traer pieza» (verificación, todo o nada); `resultado` también `sin_cambios` |
 | `POST /documentos/{id}/pasos/{sha}/restaurar` 🔑 | todo el documento a ese paso como paso NUEVO de la rama activa (`restaurado`/`sin_cambios`) |
+| `GET /documentos/{id}/deshacer` | cursor de deshacer y rehacer: `puede_deshacer`, `puede_rehacer`, `cabeza`, `destino_deshacer`, `destino_rehacer` (calculado del historial, ADR-0022) |
+| `POST /documentos/{id}/deshacer` 🔑 · `POST /documentos/{id}/rehacer` 🔑 | `{esperado}` = `cabeza` leída; 409 si el historial cambió. Crea una revisión nueva; nunca reescribe el historial |
 
 MCP: acción `restaurar_pieza` en `rama` (`desde` + `piezas=[nombre]`).
 Visor: pestaña **Historial** = grafo SVG con carriles de color por rama (curvas de

@@ -7,8 +7,8 @@ import { ForjaNotasControlador } from "./notes.js?v=23";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
-import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
-import { crearBotonCupon } from "./cupon.js?v=2";
+import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=12";
+import { crearBotonCupon } from "./cupon.js?v=3";
 import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=2";
 import { AnimationView } from "./animation.js?v=7";
 import { renderPiecesPanel } from "./pieces.js?v=9";
@@ -40,6 +40,8 @@ export class TabManager {
     this.abrirDocumento = null;
     // Barra de herramientas (24a): avisa cuando cambian pestaña activa o selección.
     this.onEstadoCambio = null;
+    // Cursor de deshacer (24a2): avisa cuando el historial de un documento cambió.
+    this.onHistorialCambio = null;
 
     // Panel lateral (Fase 4), compartido entre pestañas: muestra siempre
     // los datos de la pestaña activa.
@@ -478,7 +480,14 @@ export class TabManager {
     } finally {
       entrada.localRefresh = false;
       entrada.scheduler.flush(true);
+      this.onHistorialCambio?.(docId);
     }
+  }
+
+  /** Recarga la pestaña tras deshacer o rehacer desde la barra (24a2): `registro` es la
+   * respuesta del servidor, con el mismo significado que en `restaurar`. */
+  recargarTrasRevision(docId, registro) {
+    return this._alRestaurar(docId, registro);
   }
 
   /** Tras crear o cambiar una marca: refresca Indicaciones si está a la vista. */
@@ -631,6 +640,7 @@ export class TabManager {
       entry.scheduler.notify(revision);
     }
     for (const tag of cambios) if (tag !== "geometria") entry.pendingPanels.add(tag);
+    if (cambios.includes("historial") || cambios.includes("geometria")) this.onHistorialCambio?.(docId);
     void this._actualizarPaneles(docId);
   }
 

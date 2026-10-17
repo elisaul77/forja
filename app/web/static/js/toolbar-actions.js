@@ -38,6 +38,16 @@ const PIEZA = ['documento', 'seleccion'];
 const listo = (def) => ({ estado: 'listo', ...def });
 const pronto = (fase, def) => ({ estado: 'proximamente', fase, ...def });
 
+const MOTIVO_SIN_DESHACER = 'No hay ninguna revisión anterior a la que volver.';
+const MOTIVO_SIN_REHACER = 'No hay nada que rehacer: una edición nueva borra el rehacer.';
+// `historia` lo rellena toolbar-ui.js desde el cursor del servidor; `error` si no se pudo leer.
+const cursorHistoria = (campo, sinPaso) => (estado) => {
+  const historia = estado.historia;
+  if (!historia) return 'Cargando el historial…';
+  if (historia.error) return historia.error;
+  return historia[campo] ? null : sinPaso;
+};
+
 export const ACCIONES = [
   // ---------------- Vista ----------------
   listo({ id: 'vista-abrir', etiqueta: 'Abrir archivo', pestana: 'vista', grupo: 'Archivo', icono: 'folder',
@@ -208,11 +218,17 @@ export const ACCIONES = [
     requiere: DOC, tooltip: 'Valores con nombre que controlan la pieza.', ejecutar: (c) => c.panel('parametros') }),
   pronto('F23', { id: 'inspec-cotas-vivas', etiqueta: 'Cotas vivas', pestana: 'inspeccionar', grupo: 'Diseño', icono: 'sliders',
     tooltip: 'Edita una cota directamente en el visor.' }),
-  // Diferidos a 24a2 (cursor de deshacer en el servidor): sin atajo y sin ejecutar.
-  pronto('24a2', { id: 'hist-deshacer', etiqueta: 'Deshacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'undo',
-    requiere: DOC, tooltip: 'Vuelve a la revisión anterior. Crea una revisión nueva: el historial no se borra.' }),
-  pronto('24a2', { id: 'hist-rehacer', etiqueta: 'Rehacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'redo',
-    requiere: DOC, tooltip: 'Vuelve a la revisión que dejó Deshacer. Una edición nueva lo invalida.' }),
+  // Deshacer y rehacer (24a2, ADR-0022): el cursor llega de GET /documentos/{id}/deshacer
+  // (toolbar-ui.js), así que el motivo de un botón deshabilitado sale de ahí.
+  listo({ id: 'hist-deshacer', etiqueta: 'Deshacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'undo',
+    atajo: 'Ctrl+Z', requiere: DOC, disponible: cursorHistoria('puede_deshacer', MOTIVO_SIN_DESHACER),
+    tooltip: 'Vuelve a la revisión anterior. Crea una revisión nueva: el historial no se borra.',
+    ejecutar: (c) => c.deshacer() }),
+  listo({ id: 'hist-rehacer', etiqueta: 'Rehacer', pestana: 'inspeccionar', grupo: 'Historia', icono: 'redo',
+    atajo: 'Ctrl+Shift+Z', atajoAlterno: 'Ctrl+Y', requiere: DOC,
+    disponible: cursorHistoria('puede_rehacer', MOTIVO_SIN_REHACER),
+    tooltip: 'Vuelve a la revisión que dejó Deshacer. Una edición nueva lo invalida.',
+    ejecutar: (c) => c.rehacer() }),
   listo({ id: 'hist-historial', etiqueta: 'Historial', pestana: 'inspeccionar', grupo: 'Historia', icono: 'history',
     requiere: DOC, tooltip: 'Lista de pasos, hitos e instantáneas del documento.', ejecutar: (c) => c.panel('historial') }),
   listo({ id: 'hist-ramas', etiqueta: 'Ramas', pestana: 'inspeccionar', grupo: 'Historia', icono: 'branch',
