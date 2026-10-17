@@ -10,7 +10,16 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 ### Added (barrido continuo de articulaciones)
 
 - `ensamble(id, barrido="todas"|[ids], detalle=False)` y `POST /documentos/{id}/ensamble/barrido` recorren cada articulación sobre su `limites` con avance continuo conservador, no muestreado. Devuelven el primer contacto en grados o mm, el par de sólidos, el volumen máximo de penetración, la holgura mínima vista y `garantia: "continua"|"muestreada"`. Es solo lectura: no escribe STEP, historial ni revisión. Decisión y límites en `docs/decisions/0020-barrido-continuo.md`.
-- Un barrido que no termina (tope de 400 evaluaciones) o un error de OCC responde `ok: false`, `completo: false`, `garantia: "muestreada"`; nunca pasa en silencio.
+- Un barrido que se agota (presupuesto compartido de 2000 evaluaciones o plazo de 25 s) o un error de OCC responde `ok: false`, `completo: false`, `garantia: "muestreada"` con `agotado` cuando aplica; nunca pasa en silencio.
+
+### Fixed (revisión 1 del barrido continuo)
+
+- Un par que empieza en contacto (pasador, pieza apoyada) ya no deja la garantía en `"continua"`: se muestrea por volumen en pasos de hasta 0,2 mm de desplazamiento, así que una aleta de 0,2 mm a 41,25° se detecta, y la garantía queda en `"muestreada"`.
+- La banda de proximidad ya no cuenta como contacto. Una holgura constante de 0,055 mm paralela a una pared no da choque; un cierre lento se confirma con el hueco real (≤ 0,05 mm) y queda acotado a la tolerancia de la articulación.
+- Un presupuesto único por petición (evaluaciones y consultas OCC, con inicialización, bisección y comprobación de volumen) y un plazo de tiempo. El agotamiento da `muestreada`, `ok: false` y `agotado`/`agotado_en`. Las formas en reposo se cargan bajo el bloqueo del documento y el barrido corre fuera de él, porque esas formas no cambian una vez leídas.
+- `barrido="todas"` omite las articulaciones `fijo` (quedan en `omitidas`); un ensamble solo con fijas responde `ok` con explicación. Nombrar una fija sigue dando 422.
+- La frase de la respuesta mantiene los límites de cobertura cuando todo está limpio y distingue un choque confirmado de un resultado no concluyente.
+- `desde` y `hasta` admiten como máximo 60 claves. El error de OCC llega al cliente como mensaje genérico; el detalle queda en el registro del servidor.
 - Motor puro `app/checks/barrido.py`, reutilizando `pose_clearance` (cotas de caja y `moving_names`), `colisiones` (tolerancias) y `distancia.volumen_interseccion`. No hay herramienta MCP nueva.
 
 ### Changed (indicaciones unificadas)

@@ -537,11 +537,16 @@ def ensamble(
       garantia: "continua"|"muestreada", completo, barrido: {articulacion:
       {ok, primer_choque: {valor (grados o mm), par, volumen_mm3, tipo},
       ultimo_seguro, holgura_minima_mm, valor_holgura_minima,
-      volumen_maximo_mm3, pares_en_contacto_inicial, unidad, tolerancia}},
-      frase, ms}`. "continua" cubre los pares que empiezan separados; los que
-      empiezan en contacto (pasador en su agujero) se muestrean y se listan.
-      `detalle=True` agrega `muestras` (hasta 64). Ni escribe ni cambia la
-      geometria ni el historial.
+      volumen_maximo_mm3, pares_en_contacto_inicial, unidad, tolerancia,
+      agotado?, agotado_en?}}, omitidas, frase, ms}`. "continua" cubre los
+      pares que empiezan separados y solo si nada se agoto; un par que empieza
+      en contacto (pasador en su agujero, pieza apoyada) se muestrea por
+      volumen, se lista y deja la garantia en "muestreada". Las articulaciones
+      `fijo` se omiten en "todas" (quedan en `omitidas`); nombrar una fija da
+      error. Un presupuesto compartido (2000 evaluaciones o 25 s por peticion)
+      que se agota da `ok: false`, `agotado` y `muestreada`, nunca un choque.
+      Un choque confirmado se distingue en `frase`. `detalle=True` agrega
+      `muestras` (hasta 64). Ni escribe ni cambia la geometria ni el historial.
 
     - Sin argumentos (leer): `{id, piezas, articulaciones, valores,
       obsoleto}`. `piezas` son los solidos CON NOMBRE del documento;
