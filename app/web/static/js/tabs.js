@@ -13,7 +13,7 @@ import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js
 import { AnimationView } from "./animation.js?v=7";
 import { renderPiecesPanel } from "./pieces.js?v=9";
 import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
-import { construirAnclas } from "./orca.js?v=3";
+import { construirAnclas } from "./orca.js?v=4";
 import { createRefreshScheduler } from "./live-core.js?v=11";
 import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=3";
 

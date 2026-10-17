@@ -25,6 +25,7 @@ from xml.sax.saxutils import quoteattr
 
 import trimesh
 
+import planos
 import solids
 import mesh_parts
 from kernel import b123d_kernel
@@ -374,3 +375,34 @@ def exportar_por_solido(
             abiertas.append(nombre)
 
     return archivo_a_nombres, nombres_inciertos
+
+
+def exportar_plano_documento(
+    fuente: Any,
+    destino: Path,
+    opciones: dict[str, Any],
+    *,
+    formato: str,
+    nombre: str,
+    piezas: list[str],
+    revision: str | None,
+    parametros: dict[str, Any],
+) -> dict[str, Any]:
+    """Write one drawing sheet (F22, ADR-0021) to ``destino`` and return the
+    compact reply: ``{ruta, tamano_bytes, vistas, escala, papel, proyeccion,
+    cotas, parametros_ligados, omitidas[, completo][, aviso][, cotas_detalle]}``.
+    Never the file bytes; the descriptors are inlined only with ``detalle``."""
+    plano = planos.construir(
+        fuente,
+        nombre=nombre,
+        piezas=piezas,
+        revision=revision,
+        parametros=parametros,
+        opciones=opciones,
+    )
+    destino.write_bytes(planos.escribir(plano, formato))
+    return {
+        "ruta": str(destino),
+        "tamano_bytes": destino.stat().st_size,
+        **plano.resumen(opciones["detalle"]),
+    }

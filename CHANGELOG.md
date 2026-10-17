@@ -50,10 +50,27 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - Cambios de caché: `toolbar-actions.js?v=3`, `toolbar.js?v=4`, `toolbar-ui.js?v=4`, `app.js?v=47`.
 - Pruebas: `tests/web/toolbar.test.mjs` (15), `tests/web/toolbar-ui.test.mjs` (7); suite `tests/web/` completa: 115 aprobadas, 0 fallos.
 
+### Added (planos técnicos, F22)
+
+- `exportar` acepta `formato` `svg`, `pdf` o `dxf` y escribe **una hoja** bajo `exportados`: vistas frontal, superior, derecha e isométrica; líneas visibles y ocultas (capas `VISIBLES`, `OCULTAS` discontinuas, `COTAS`, `TEXTO`); cajetín con documento, piezas, revisión, fecha, escala, papel, unidad y proyección. Sin herramienta MCP nueva. Decisión en `docs/decisions/0021-planos-tecnicos.md`.
+- Cotas automáticas: tamaño total por eje, diámetro y posición de agujeros cuyo eje es paralelo a un eje global (los demás se cuentan en `omitidas`). Una cota se liga a `PARAMETROS` cuando su valor coincide con una única clave; `parametros_ligados` lo resume.
+- Parámetros nuevos de `exportar`, solo para planos: `vistas` (`frontal,superior,derecha,isometrica`), `escala` (`1:1`, `1:2`, `1:5`, `1:10`, `2:1`, `5:1`; por defecto la mayor que cabe), `papel` (`A4` o `A3`), `proyeccion` (`tercer_angulo` por defecto o `primer_angulo`) y `detalle` (lista las cotas con su `id` estable).
+- Las mallas STL también dan plano: contornos de silueta y de rasgo con cotas de bbox, avisado en la respuesta y en el cajetín. Sin líneas ocultas ni agujeros.
+- Visor: anclas «Plano» (PDF), «Plano SVG» y «Plano DXF» junto a las descargas; se construyen en memoria, sin escribir en disco.
+- Tope de 200 000 aristas y presupuesto de 20 s: sobre el tope la isométrica se entrega sin líneas ocultas y con `completo: false`.
+
 ### Added (barrido continuo de articulaciones)
 
 - `ensamble(id, barrido="todas"|[ids], detalle=False)` y `POST /documentos/{id}/ensamble/barrido` recorren cada articulación sobre su `limites` con avance continuo conservador, no muestreado. Devuelven el primer contacto en grados o mm, el par de sólidos, el volumen máximo de penetración, la holgura mínima vista y `garantia: "continua"|"muestreada"`. Es solo lectura: no escribe STEP, historial ni revisión. Decisión y límites en `docs/decisions/0020-barrido-continuo.md`.
 - Un barrido que se agota (presupuesto compartido de 2000 evaluaciones o plazo de 25 s) o un error de OCC responde `ok: false`, `completo: false`, `garantia: "muestreada"` con `agotado` cuando aplica; nunca pasa en silencio.
+
+### Fixed (revisión de planos técnicos, F22)
+
+- Una pieza B-rep lejos del origen sale bien alineada: OCC devuelve la proyección relativa a `look_at`, y ahora se lleva al marco absoluto de cada vista. Las cotas y la marca de agujero caen sobre el contorno y sobre el agujero real (regresión con una pieza escalonada y un Ø6).
+- Un empalme cóncavo (R4) ya no es un agujero: solo cuentan cilindros cerrados de una vuelta completa, aunque OCC los parta en varias caras.
+- Las cotas de posición y de diámetro de los agujeros se dibujan (diámetro con `n x Ø` por grupo). El cajetín «Cotas: N» cuenta solo las cotas dibujadas, así coincide con la hoja y con el descriptor.
+- La descarga de planos libera el bloqueo del documento antes de proyectar. Las mallas de más de 100 000 triángulos se rechazan con un 400 claro. Las descargas de plano responden con `X-Content-Type-Options: nosniff` y `Content-Security-Policy` restrictiva.
+- Pruebas de regresión: pieza fuera del origen en las cuatro vistas, agujero real, empalme R4, cajetín frente a cotas dibujadas, tope de malla, bloqueo, cabeceras y nombre hostil en la descarga.
 
 ### Fixed (revisión 1 del barrido continuo)
 
