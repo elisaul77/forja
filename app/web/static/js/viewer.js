@@ -6,6 +6,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { decodePieceBundle } from "./piece-data.js?v=8";
 import { calcularEncuadre, aplicarMarcosOrtograficos, alturaAlRedimensionar, liberarAristas, liberarMalla } from "./viewer-geometria.js?v=2";
+import { aplicarExplosion } from "./explosion.js?v=1";
 
 const loader = new STLLoader();
 
@@ -105,6 +106,8 @@ export class ForjaViewer {
     this.selectedPiece = null;
     this.isolatedPiece = null;
     this.pieceManifest = null;
+    // F19 (ADR-0027): vista explosionada de display; `articulaciones` es un getter.
+    this.explosion = { factor: 0, articulaciones: () => [] };
     this._piecePointerDown = event => {
       this._piecePointerStart = event.button === 0 ? [event.clientX, event.clientY] : null;
     };
@@ -427,6 +430,7 @@ export class ForjaViewer {
       this.mesh.visible = this.pieces.size === 0;
     }
     this.isolatedPiece = this.pieces.has(isolated) ? isolated : null;
+    this._aplicarExplosion();
     this._applyPieceColors();
     this.selectPiece(this.pieces.has(selected) ? selected : null);
     this._applyPieceVisibility();
@@ -619,6 +623,23 @@ export class ForjaViewer {
       piece.mesh.material.emissiveIntensity = key === this.selectedPiece ? 0.4 : 0;
     }
     this.render();
+  }
+
+  /** F19: fija el factor (0 a 1) de la vista explosionada. No persiste nada. */
+  setExplosion(factor, articulaciones) {
+    this.explosion = { factor, articulaciones };
+    this._aplicarExplosion();
+    this.render();
+  }
+
+  _aplicarExplosion() {
+    const { factor, articulaciones } = this.explosion;
+    // Factor 0: todas a su sitio, sin calcular nada (la carga normal no paga coste).
+    if (factor === 0) {
+      for (const pieza of this.pieces.values()) pieza.mesh.position.set(0, 0, 0);
+      return;
+    }
+    aplicarExplosion(this.pieces, factor, articulaciones());
   }
 
   setPieceVisible(name, visible) {

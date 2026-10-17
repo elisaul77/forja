@@ -2,7 +2,7 @@ import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor 
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=design1-21";
+import { ForjaViewer } from "./viewer.js?v=design1-22";
 import { ForjaNotasControlador } from "./notes.js?v=24";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=3";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=5";
@@ -324,6 +324,36 @@ export class TabManager {
       });
       viewControls.append(toggle);
     }
+    // F19 (ADR-0027): vista explosionada de display. Solo STEP (piezas con nombre).
+    // El deslizador (0-100 %) aparece al activar el botón. No llama a la API.
+    const explosion = document.createElement("button");
+    explosion.type = "button"; explosion.className = "fj-btn"; rotular(explosion, "Explosionar", "Expl");
+    explosion.setAttribute("aria-pressed", "false");
+    explosion.hidden = ficha.formato !== "step";
+    const separacion = document.createElement("input");
+    separacion.type = "range"; separacion.min = "0"; separacion.max = "100"; separacion.step = "1"; separacion.value = "50";
+    separacion.className = "fj-explosion__rango"; separacion.hidden = true;
+    separacion.setAttribute("aria-label", "Separación de la vista explosionada");
+    const porcentaje = document.createElement("output");
+    porcentaje.className = "fj-explosion__valor"; porcentaje.hidden = true; porcentaje.textContent = "50 %";
+    const articulacionesVigentes = () => this.tabs.get(ficha.id)?.ensamble?.data?.articulaciones ?? [];
+    explosion.addEventListener("click", () => {
+      if (animation.mode !== "cad") {
+        const feedback = document.getElementById("fj-feedback");
+        feedback.hidden = false;
+        feedback.textContent = "Sal del modo animación para explosionar las piezas.";
+        return;
+      }
+      const activa = explosion.getAttribute("aria-pressed") !== "true";
+      explosion.setAttribute("aria-pressed", String(activa));
+      separacion.hidden = porcentaje.hidden = !activa;
+      viewer.setExplosion(activa ? Number(separacion.value) / 100 : 0, articulacionesVigentes);
+    });
+    separacion.addEventListener("input", () => {
+      porcentaje.textContent = `${separacion.value} %`;
+      if (explosion.getAttribute("aria-pressed") === "true") viewer.setExplosion(Number(separacion.value) / 100, articulacionesVigentes);
+    });
+    viewControls.append(explosion, separacion, porcentaje);
     contenedor.append(viewControls);
     const help = document.createElement("div");
     help.className = "fj-view-help";
@@ -380,7 +410,7 @@ export class TabManager {
     const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, animation, btnParametros,
       medidas, revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
     // Controles que la barra de herramientas reutiliza (no se duplican).
-    entry.acciones = { nota: btnNota, pizarra: btnPizarra, cupon: btnCupon };
+    entry.acciones = { nota: btnNota, pizarra: btnPizarra, cupon: btnCupon, explosion };
     // Acciones del panel Indicaciones: mismos modos que los botones del visor.
     entry.designActions = {
       pointMode: () => { if (notas.modo !== "nota") btnNota.click(); },
