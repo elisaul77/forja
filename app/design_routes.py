@@ -432,6 +432,23 @@ def list_candidates(doc_id: str):
     }
 
 
+def _preview_bundle(p):
+    """FJP1 bundle for candidates prepared before preview.piezas existed."""
+    import json as _json
+    import piece_mesh
+    from kernel import b123d_kernel, mesh as km
+
+    entries = _json.loads((p / "solidos.json").read_text())
+    if (p / "geometry.step").is_file():
+        shape = b123d_kernel.import_from_step(p / "geometry.step")
+        info = b123d_kernel.analyze(shape)
+        return piece_mesh.from_step(shape, entries, metadata_available=True,
+                                    bbox=list(info.bbox), volume=info.volumen)
+    tri = km.load_stl(p / "geometry.stl")
+    return piece_mesh.from_stl(tri, bbox=tri.bounds.T.reshape(-1).tolist(),
+                               volume=float(abs(tri.volume)), entries=entries)
+
+
 @router.get("/documentos/{doc_id}/design/candidates/{key}/preview")
 def preview(doc_id: str, key: str, piezas: bool = False):
     try:
@@ -439,8 +456,15 @@ def preview(doc_id: str, key: str, piezas: bool = False):
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     # ?piezas=1: FJP1 bundle with per-piece ranges (older candidates fall back to STL).
-    if piezas and (p / "preview.piezas").is_file():
-        return FileResponse(p / "preview.piezas", media_type="application/octet-stream")
+    if piezas:
+        bundle = p / "preview.piezas"
+        if not bundle.is_file():
+            try:
+                bundle.write_bytes(_preview_bundle(p))
+            except Exception:  # sin desglose fiable: STL plano como antes
+                bundle = None
+        if bundle is not None:
+            return FileResponse(bundle, media_type="application/octet-stream")
     return FileResponse(
         p / "preview.stl", media_type="model/stl", filename="candidato.stl"
     )
