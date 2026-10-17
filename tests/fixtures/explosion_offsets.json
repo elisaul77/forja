@@ -1,0 +1,75 @@
+[
+  {
+    "nombre": "tres_piezas_en_linea",
+    "cajas": {
+      "A": [0, 10, 0, 10, 0, 10],
+      "B": [20, 30, 0, 10, 0, 10],
+      "C": [40, 50, 0, 10, 0, 10]
+    },
+    "articulaciones": [],
+    "factor": 1.0,
+    "esperado": {
+      "A": [-15.588457268119896, 0.0, 0.0],
+      "B": [0.0, 0.0, 5.196152422706632],
+      "C": [25.98076211353316, 0.0, 0.0]
+    }
+  },
+  {
+    "nombre": "tres_piezas_en_linea_medio",
+    "cajas": {
+      "A": [0, 10, 0, 10, 0, 10],
+      "B": [20, 30, 0, 10, 0, 10],
+      "C": [40, 50, 0, 10, 0, 10]
+    },
+    "articulaciones": [],
+    "factor": 0.5,
+    "esperado": {
+      "A": [-7.794228634059948, 0.0, 0.0],
+      "B": [0.0, 0.0, 2.598076211353316],
+      "C": [12.99038105676658, 0.0, 0.0]
+    }
+  },
+  {
+    "nombre": "deslizamiento_sentido_lejos_del_padre",
+    "cajas": {
+      "P": [0, 10, 0, 10, 0, 10],
+      "Q": [20, 30, 0, 10, 0, 10]
+    },
+    "articulaciones": [
+      {"id": "slide", "tipo": "deslizamiento", "padre": "P", "hijo": "Q", "eje": [-1, 0, 0]}
+    ],
+    "factor": 1.0,
+    "esperado": {
+      "P": [-5.527707983925667, 0.0, 0.0],
+      "Q": [16.583123951777, 0.0, 0.0]
+    }
+  },
+  {
+    "nombre": "giro_eje_perpendicular_signo_positivo",
+    "cajas": {
+      "P": [0, 10, 0, 10, 0, 10],
+      "Q": [20, 30, 0, 10, 0, 10]
+    },
+    "articulaciones": [
+      {"id": "hinge", "tipo": "giro", "padre": "P", "hijo": "Q", "eje": [0, 1, 0]}
+    ],
+    "factor": 1.0,
+    "esperado": {
+      "P": [-16.583123951777, 0.0, 0.0],
+      "Q": [0.0, 5.527707983925667, 0.0]
+    }
+  },
+  {
+    "nombre": "centro_coincidente_va_a_mas_z",
+    "cajas": {
+      "A": [-5, 5, -5, 5, -5, 5],
+      "B": [-20, 20, -20, 20, -20, 20]
+    },
+    "articulaciones": [],
+    "factor": 1.0,
+    "esperado": {
+      "A": [0.0, 0.0, 5.773502691896258],
+      "B": [0.0, 0.0, 34.64101615137755]
+    }
+  }
+]

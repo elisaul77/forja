@@ -34,6 +34,7 @@ import cotas_geometria
 import deshacer
 import materiales
 import eventos
+import explosion as vista_explosionada
 import medidas
 import export as export_solidos
 import git_store
@@ -2160,6 +2161,7 @@ def capturar_documento(
     alto: int = Query(default=512, ge=_CAPTURA_LADO_MIN, le=_CAPTURA_LADO_MAX),
     colores_por_solido: bool = Query(default=True),
     solidos: list[str] | None = Query(default=None),
+    explosion: float = Query(default=0.0),
 ) -> Response:
     """Headless PNG render of a document (Phase 5B, feedback item 1) — see
     `app/render.py` for the full rendering recipe. Backs the MCP `captura`
@@ -2170,7 +2172,15 @@ def capturar_documento(
     the house shell's name to look inside it). The one-line caption is
     echoed back in the `X-Forja-Captura` response header (ASCII-only) so an
     HTTP caller gets it without parsing PNG bytes.
+
+    `explosion` (F19, ADR-0027): 0 a 1, vista explosionada de display. Solo
+    documentos STEP con piezas con nombre; no toca la geometría guardada.
+    `explosion=0` no cambia nada del render.
     """
+    try:
+        factor_explosion = vista_explosionada.validar_factor(explosion)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     registro = _registry.get(doc_id)
     if registro is None:
         raise HTTPException(status_code=404, detail="documento no encontrado")
@@ -2179,6 +2189,11 @@ def capturar_documento(
         raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
 
     ext = ruta.suffix.lower()
+    if factor_explosion > 0 and ext not in _STEP_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail="la vista explosionada requiere un documento STEP con piezas con nombre",
+        )
     entradas = solids.cargar(doc_id) if ext in _STEP_EXTS else None
     if ext in _STEP_EXTS and not entradas:
         raise HTTPException(
@@ -2186,10 +2201,17 @@ def capturar_documento(
             detail="este documento no tiene desglose de solidos (solidos.json ausente)",
         )
 
+    desplazamientos = None
     try:
         if ext in _STEP_EXTS:
             shape = b123d_kernel.import_from_step(ruta)
             grupos, colores, nombres_inciertos = render.grupos_desde_shape(shape, entradas, solidos)
+            if factor_explosion > 0:
+                if nombres_inciertos:
+                    raise ValueError("no se pudo identificar cada pieza; la vista explosionada no se aplica")
+                articulaciones = (assemblies.load(doc_id) or {}).get("articulaciones")
+                desplazamientos = vista_explosionada.desplazamientos(
+                    vista_explosionada.cajas_desde_entradas(entradas), articulaciones, factor_explosion)
         else:
             malla = mesh.load_stl(ruta)
             grupos, colores, nombres_inciertos = render.grupo_desde_malla(malla, solidos)
@@ -2201,6 +2223,7 @@ def capturar_documento(
             ancho=ancho,
             alto=alto,
             colores_por_solido=colores_por_solido,
+            desplazamientos=desplazamientos,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2211,6 +2234,8 @@ def capturar_documento(
         # this reimport's geometry) — the legend above is that fallback,
         # never a silently mislabeled piece.
         caption += " (nombres inciertos)"
+    if factor_explosion > 0:
+        caption += f" - explosion {round(factor_explosion * 100)} %"
 
     return Response(content=png_bytes, media_type="image/png", headers={"X-Forja-Captura": caption})
 

@@ -428,10 +428,12 @@ def captura(
     alto: int = 512,
     colores_por_solido: bool = True,
     solidos: list[str] | None = None,
+    explosion: float = 0.0,
 ) -> dict[str, Any]:
     """Fetch the rendered PNG bytes + the `X-Forja-Captura` caption header;
     the caller (`mcp_server.tools.captura`) wraps the bytes as an MCP
-    `Image` content block."""
+    `Image` content block. `explosion` (F19) se envía solo si es distinto de
+    0, así la petición por defecto no cambia."""
     params: dict[str, Any] = {
         "azimut": azimut,
         "elevacion": elevacion,
@@ -441,6 +443,8 @@ def captura(
     }
     if solidos:
         params["solidos"] = solidos
+    if explosion:
+        params["explosion"] = explosion
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(f"/documentos/{doc_id}/captura", params=params)
     if resp.status_code >= 400:

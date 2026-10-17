@@ -100,6 +100,24 @@ test('Cotas (F23a, ADR-0023): listo, pide documento y llama a c.cotas() (abre Pa
   assert.deepEqual(llamadas, ['cotas']);
 });
 
+test('Vista explosionada (F19, ADR-0027): listo, pide B-rep y delega en el botón del visor', () => {
+  const expl = porId('ens-explosionada');
+  assert.equal(expl.estado, 'listo');
+  assert.equal(expl.fase, undefined);
+  assert.deepEqual(expl.requiere, ['documento', 'b-rep']);
+  assert.equal(estadoAccion(expl, { documento: null, seleccion: null }).habilitada, false);
+  const stl = estadoAccion(expl, { documento: DOC_STL, seleccion: null });
+  assert.equal(stl.habilitada, false);
+  assert.match(stl.motivo, /B-rep/);
+  assert.equal(estadoAccion(expl, { documento: DOC_STEP, seleccion: null }).habilitada, true);
+  const clics = [];
+  const boton = { click() { clics.push('explosion'); }, getAttribute: () => 'false' };
+  expl.ejecutar({ entrada: () => ({ acciones: { explosion: boton } }) });
+  assert.deepEqual(clics, ['explosion']);
+  const pulsado = { getAttribute: () => 'true' };
+  assert.equal(expl.activo({ entrada: () => ({ acciones: { explosion: pulsado } }) }), true);
+});
+
 test('habilitación: sin documento, STL, sin selección y próximas', () => {
   const ajustar = porId('vista-ajustar');
   const sinDoc = estadoAccion(ajustar, { documento: null, seleccion: null });

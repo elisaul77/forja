@@ -7,12 +7,15 @@ Same in-process `TestClient` + isolated `FORJA_DATA_DIR` pattern as
 """
 from __future__ import annotations
 
+import hashlib
 import io
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 import auth
+import documents
 import export as export_solidos
 import render
 from main import app
@@ -228,3 +231,74 @@ def test_formato_no_soportado_400():
     resp = client.get(f"/documentos/{creado['id']}/exportar?formato=obj")
     assert resp.status_code == 400
     assert export_solidos.FORMATOS_SOPORTADOS == ("stl", "step", "3mf")
+
+
+# ------------------------------------------- vista explosionada (F19, ADR-0027)
+
+_SCRIPT_TRES_PIEZAS_EN_LINEA = (
+    "from build123d import Box, Pos\n"
+    "resultado = {\n"
+    "    'izq': Box(10, 10, 10),\n"
+    "    'centro': Pos(20, 0, 0) * Box(10, 10, 10),\n"
+    "    'der': Pos(40, 0, 0) * Box(10, 10, 10),\n"
+    "}\n"
+)
+
+
+def _sha(datos: bytes) -> str:
+    return hashlib.sha256(datos).hexdigest()
+
+
+def test_captura_explosion_cero_es_byte_identica_a_la_omitida():
+    # Regresión F19: explosion=0 no toca nada del render de siempre.
+    creado = _crear(_SCRIPT_TRES_PIEZAS_EN_LINEA)
+    base = client.get(f"/documentos/{creado['id']}/captura?ancho=300&alto=300")
+    cero = client.get(f"/documentos/{creado['id']}/captura?ancho=300&alto=300&explosion=0")
+    assert base.status_code == 200, base.text
+    assert cero.status_code == 200, cero.text
+    assert _sha(base.content) == _sha(cero.content)
+    assert base.headers["X-Forja-Captura"] == cero.headers["X-Forja-Captura"]
+
+
+def test_captura_explosion_cambia_la_imagen_y_lo_dice_el_caption():
+    creado = _crear(_SCRIPT_TRES_PIEZAS_EN_LINEA)
+    base = client.get(f"/documentos/{creado['id']}/captura?ancho=300&alto=300")
+    resp = client.get(f"/documentos/{creado['id']}/captura?ancho=300&alto=300&explosion=1")
+    assert resp.status_code == 200, resp.text
+    assert _sha(base.content) != _sha(resp.content)
+    caption = resp.headers["X-Forja-Captura"]
+    assert "3 solido" in caption
+    assert "explosion 100 %" in caption
+
+
+def test_captura_explosion_con_articulacion_no_cambia_el_documento():
+    creado = _crear(_SCRIPT_TRES_PIEZAS_EN_LINEA)
+    doc_id = creado["id"]
+    antes = documents._files[doc_id].read_bytes()
+    articulacion = dict(id="desliza", tipo="deslizamiento", padre="izq", hijo="centro",
+                        origen=[0, 0, 0], eje=[1, 0, 0], limites=[-5, 20], valor=0)
+    definido = client.post(f"/documentos/{doc_id}/ensamble", json={"articulaciones": [articulacion]},
+                           headers=_headers())
+    assert definido.status_code == 200, definido.text
+    resp = client.get(f"/documentos/{doc_id}/captura?ancho=300&alto=300&explosion=0.5")
+    assert resp.status_code == 200, resp.text
+    assert documents._files[doc_id].read_bytes() == antes
+
+
+@pytest.mark.parametrize("valor", ["1.5", "-0.1", "nan", "inf"])
+def test_captura_explosion_fuera_de_rango_o_no_finita_400_en_espanol(valor):
+    creado = _crear(_SCRIPT_TRES_PIEZAS_EN_LINEA)
+    resp = client.get(f"/documentos/{creado['id']}/captura?explosion={valor}")
+    assert resp.status_code == 400, resp.text
+    assert "entre 0 y 1" in resp.json()["detail"]
+
+
+def test_captura_explosion_en_stl_400():
+    box_stl = client.post(
+        "/documentos",
+        files={"file": ("cubo.stl", io.BytesIO(_stl_de_caja()), "application/sla")},
+    )
+    doc_id = box_stl.json()["id"]
+    resp = client.get(f"/documentos/{doc_id}/captura?explosion=0.5")
+    assert resp.status_code == 400, resp.text
+    assert "STEP" in resp.json()["detail"]

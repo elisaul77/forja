@@ -532,6 +532,7 @@ def captura(
     alto: int = 512,
     colores_por_solido: bool = True,
     solidos: list[str] | None = None,
+    explosion: float = 0.0,
 ) -> list[Any] | dict[str, Any]:
     """Renderiza una imagen PNG (Fase 5B, reemplaza el stub de la Fase 3) del
     documento: un z-buffer por pixel en numpy (sin GPU/OpenGL, sin
@@ -544,6 +545,11 @@ def captura(
     `solidos` (lista opcional de nombres) renderiza solo esos solidos — la
     forma barata de "ver el interior" de un ensamblaje: omitir el nombre de
     la carcasa/casa para ver los muebles de adentro sin exportar nada.
+
+    `explosion` (0 a 1, Fase F19) muestra la vista explosionada: separa las
+    piezas con nombre para ver las ocultas. Es solo de visualización: no cambia
+    la geometría ni el documento. Solo documentos STEP; 0 (por defecto) es la
+    vista normal. Fuera de 0-1 o con un STL devuelve `{error: true, mensaje}`.
 
     Devuelve una imagen (bloque de contenido MCP), o
     `{error: true, mensaje}` si el documento no existe, no tiene desglose de
@@ -559,6 +565,7 @@ def captura(
         alto=alto,
         colores_por_solido=colores_por_solido,
         solidos=solidos,
+        explosion=explosion,
     )
     if "error" in resultado:
         return resultado
