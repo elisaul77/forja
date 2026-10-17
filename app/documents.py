@@ -32,6 +32,7 @@ import auth
 import deshacer
 import materiales
 import eventos
+import medidas
 import export as export_solidos
 import git_store
 import naming
@@ -1772,6 +1773,62 @@ def percibir_documento(
     return salida
 
 
+@router.get("/documentos/{doc_id}/medidas")
+def medidas_documento(
+    doc_id: str,
+    response: Response,
+    top: int = Query(default=medidas.TOP_PARES, ge=1, le=medidas.TOP_MAX),
+) -> dict[str, Any]:
+    """Live measures (Phase 21): the closest named-solid pairs of the
+    document as ``{revision, solidos, pares, total_pares, ocultos, completo,
+    calculos, tope_calculos, choques, errores, nombres_inciertos,
+    parametros}``. Each pair is ``{a, b, estado, distancia_mm}`` with `estado`
+    in ``choque`` / ``contacto`` / ``holgura`` (a choque adds ``volumen_mm3``).
+    Read-only and token-free like `/percibir`; backs the viewer's "Medidas"
+    panel. See `app/medidas.py` for the bounds and the revision contract.
+
+    Only STEP/script documents with a named-solid breakdown; a mesh (STL)
+    document gets a 400. The one input is `top` (1 to `medidas.TOP_MAX`).
+    The reply carries the same revision as the `X-Forja-Revision` header;
+    a document changed mid-computation answers 409.
+    """
+    if not notes._doc_id_valido(doc_id) or doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    ruta = _files.get(doc_id)
+    if ruta is None or not ruta.exists():
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+    if ruta.suffix.lower() not in _STEP_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail="medidas solo esta disponible para documentos STEP/script (no malla STL)",
+        )
+    # Same per-document lock as parametros/notes writers: a parameter rebuild
+    # cannot interleave with this read of the same STEP and sidecar files.
+    with parametros.bloqueo(doc_id):
+        revision = _revisiones.get(doc_id)
+        entradas = solids.cargar(doc_id)
+        if not entradas:
+            raise HTTPException(
+                status_code=400,
+                detail="este documento no tiene desglose de solidos (solidos.json ausente)",
+            )
+        try:
+            datos, desde_cache = medidas.obtener(
+                doc_id,
+                revision,
+                lambda: (b123d_kernel.import_from_step(ruta), entradas),
+                lambda: _revisiones.get(doc_id),
+            )
+        except medidas.RevisionCambiada as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        valores = parametros.cargar(doc_id)["valores"]
+
+    response.headers["X-Forja-Revision"] = revision or ""
+    response.headers["X-Forja-Cache"] = "hit" if desde_cache else "miss"
+    response.headers["Cache-Control"] = "no-store"
+    return {**medidas.presentar(datos, top), "revision": revision, "parametros": valores}
+
+
 _CAPTURA_LADO_MIN = 100
 _CAPTURA_LADO_MAX = 2000
 
@@ -2157,5 +2214,6 @@ def _eliminar_documento_bloqueado(doc_id: str) -> dict[str, Any]:
     versioning.borrar_historial(doc_id)
     _registry.pop(doc_id, None)
     _revisiones.pop(doc_id, None)
+    medidas.olvidar(doc_id)
     eventos.publicar("documento_eliminado", doc_id)
     return {"ok": True}
