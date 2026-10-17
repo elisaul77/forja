@@ -99,3 +99,11 @@ test("pluralize and shortText keep Spanish labels readable", () => {
   assert.equal(shortText("a".repeat(50), 10), "aaaaaaaaa…");
   assert.equal(shortText(null), "");
 });
+
+test("proposalStates colours changed pieces and the single preview mesh", async () => {
+  const { proposalStates, proposalLines } = await import("../../app/web/static/js/design.js");
+  const c = { summary: "Muevo 2 mm", difference: { changed: [{ piece: "soporte", before: { dimensions_mm: [30, 20, 20] }, after: { dimensions_mm: [30, 20, 22] } }], added: [], removed: [] } };
+  assert.deepEqual(proposalStates(c), { documento: "cambiada", soporte: "cambiada" });
+  assert.deepEqual(proposalLines(c), ["Muevo 2 mm", "soporte: 30×20×20 → 30×20×22 mm"]);
+  assert.deepEqual(proposalStates(null), { documento: "cambiada" });
+});

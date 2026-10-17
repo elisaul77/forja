@@ -48,6 +48,27 @@ const attentionTexts = {
 
 // ---------------- Funciones puras (probadas en tests/web) ----------------
 
+/** Estado por pieza para colorear la vista antes/después de una propuesta.
+ * La vista previa es una malla única («documento»): se pinta como cambiada. */
+export function proposalStates(candidate) {
+  const d = candidate?.difference ?? {};
+  const states = { documento: "cambiada" };
+  for (const c of d.changed ?? []) states[c.piece ?? c] = "cambiada";
+  for (const a of d.added ?? []) states[a.piece ?? a] = "añadida";
+  for (const r of d.removed ?? []) states[r.piece ?? r] = "quitada";
+  return states;
+}
+/** Líneas breves para la banda de comparación de una propuesta. */
+export function proposalLines(candidate) {
+  const lines = [];
+  if (candidate?.summary) lines.push(candidate.summary);
+  for (const c of candidate?.difference?.changed ?? []) {
+    const b = c.before?.dimensions_mm, a = c.after?.dimensions_mm;
+    if (b && a) lines.push(`${c.piece}: ${b.map((v) => +v.toFixed(2)).join("×")} → ${a.map((v) => +v.toFixed(2)).join("×")} mm`);
+  }
+  return lines;
+}
+
 // The viewer uses a synthetic label for legacy ungrouped STL documents.
 // Resolve it only when there is one unambiguous design part.
 export function resolveDesignPiece(pieces, name) {
@@ -855,34 +876,45 @@ class Workspace {
   async _fetchPreview(candidate) {
     const response = candidate.preview_url ? await fetch(candidate.preview_url) : null;
     if (!response?.ok) throw new Error("Vista previa no disponible");
-    this.entry.viewer.showDesignPreview?.(await response.arrayBuffer());
+    const buffer = await response.arrayBuffer();
     this.previewId = candidate.id;
-    this.notify("Propuesta mostrada en translúcido sobre el modelo.");
+    if (this.entry.compararPropuesta) {
+      await this.entry.compararPropuesta(buffer, proposalStates(candidate), {
+        lineas: proposalLines(candidate),
+        alSalir: () => {
+          this.previewId = null;
+          this.render();
+        },
+      });
+      this.notify("Propuesta a la derecha del divisor; el modelo actual a la izquierda.");
+    } else {
+      this.entry.viewer.showDesignPreview?.(buffer);
+      this.notify("Propuesta mostrada en translúcido sobre el modelo.");
+    }
   }
   _showPreview(candidate) {
     return this.act(() => this._fetchPreview(candidate));
   }
+  /** Quita la vista de la propuesta, sea la comparación o la capa translúcida. */
+  _clearPreview() {
+    this.previewId = null;
+    this.entry.viewer.showDesignPreview?.(null);
+    if (this.entry.alSalirComparacion) this.entry.salirComparacion?.();
+  }
   _hidePreview() {
-    return this.act(async () => {
-      this.entry.viewer.showDesignPreview?.(null);
-      this.previewId = null;
-    });
+    return this.act(async () => this._clearPreview());
   }
   _applyCandidate(id) {
     return this.act(async () => {
       await request(`${this.base}/candidates/${encodeURIComponent(id)}/apply`, "POST", undefined, { reason: "Aceptar una propuesta cambia la geometría" });
-      this.entry.viewer.showDesignPreview?.(null);
-      this.previewId = null;
+      this._clearPreview();
       this.notify("Propuesta aplicada. Revisa el modelo y confirma si queda bien.");
     });
   }
   _discardCandidate(id) {
     return this.act(async () => {
       await request(`${this.base}/candidates/${encodeURIComponent(id)}`, "DELETE", undefined, { reason: "Descartar una propuesta preparada" });
-      if (this.previewId === id) {
-        this.entry.viewer.showDesignPreview?.(null);
-        this.previewId = null;
-      }
+      if (this.previewId === id) this._clearPreview();
       this.notify("Propuesta descartada.");
     });
   }

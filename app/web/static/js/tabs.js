@@ -1,9 +1,9 @@
-import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor } from "./design.js?v=5";
+import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor } from "./design.js?v=6";
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
 import { ForjaViewer } from "./viewer.js?v=design1-16";
-import { ForjaNotasControlador } from "./notes.js?v=19";
+import { ForjaNotasControlador } from "./notes.js?v=20";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
@@ -371,6 +371,14 @@ export class TabManager {
     };
     // Tras deshacer una propuesta (restaurar), recarga la pestaña entera.
     entry.alRestaurar = registro => this._alRestaurar(ficha.id, registro);
+    // Indicaciones: «Ver propuesta» usa la misma vista antes/después que el historial.
+    entry.compararPropuesta = async (mallaPropuesta, estados, { lineas, alSalir } = {}) => {
+      const mallaActual = (await obtenerMallaConRevision(ficha.id)).buffer;
+      this._mostrarComparacion(ficha.id, { piezas: estados }, mallaActual, mallaPropuesta, {
+        modo: "dividida", etiquetas: ["Ahora", "Propuesta"], titulo: "Ahora → Propuesta", lineas, alSalir,
+      });
+    };
+    entry.salirComparacion = () => this._salirComparacion(ficha.id);
     entry.materiales = {
       materiales: {},
       guardar: async cambios => {
@@ -514,6 +522,7 @@ export class TabManager {
     entry.animation.setMode("cad");
     const dividida = opciones.modo === "dividida";
     const [etqA, etqB] = opciones.etiquetas ?? [resumen.a.sha_corto.slice(0, 7), resumen.b.sha_corto.slice(0, 7)];
+    entry.alSalirComparacion = opciones.alSalir ?? null;
     if (dividida) {
       entry.viewer.mostrarComparacionDividida(mallaA, mallaB, resumen.piezas);
       entry.divisor.querySelector(".fj-divisor__etq--a").textContent = `◀ ${etqA}`;
@@ -527,7 +536,7 @@ export class TabManager {
     entry.banda.textContent = "";
     entry.banda.classList.toggle("is-dividida", dividida);
     const titulo = document.createElement("strong");
-    titulo.textContent = `Comparar ${resumen.a.sha_corto.slice(0, 7)} → ${resumen.b.sha_corto.slice(0, 7)}`;
+    titulo.textContent = opciones.titulo ?? `Comparar ${resumen.a.sha_corto.slice(0, 7)} → ${resumen.b.sha_corto.slice(0, 7)}`;
     const modos = document.createElement("div");
     modos.className = "fj-comparar__modos";
     modos.setAttribute("role", "group");
@@ -543,7 +552,7 @@ export class TabManager {
     leyenda.className = "fj-comparar__leyenda";
     leyenda.textContent = dividida ? "Arrastra el divisor · verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual" : "verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual";
     const lista = document.createElement("ul");
-    for (const linea of textoResumen(resumen)) {
+    for (const linea of opciones.lineas ?? textoResumen(resumen)) {
       const li = document.createElement("li"); li.textContent = linea; lista.appendChild(li);
     }
     const volver = document.createElement("button");
@@ -560,6 +569,9 @@ export class TabManager {
     entry.banda.hidden = true;
     entry.divisor.hidden = true;
     entry.ramas.comparando = null;
+    const alSalir = entry.alSalirComparacion;
+    entry.alSalirComparacion = null;
+    alSalir?.();
   }
 
   /** fdm-D: materiales por pieza (colores en el visor + panel Piezas).
