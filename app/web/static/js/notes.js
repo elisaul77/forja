@@ -112,6 +112,8 @@ export class ForjaNotasControlador {
     this._trazoActual = null;
     // Indicación a la que se añade la próxima marca (botón "Añadir otra marca").
     this.targetIntent = null;
+    // Indicación creada en esta sesión del modo: las marcas siguientes sin texto se suman a ella.
+    this._intentSesion = null;
     // Lo llama tabs.js para refrescar el panel Indicaciones tras cada marca.
     this.alCambiarMarcas = null;
 
@@ -134,7 +136,10 @@ export class ForjaNotasControlador {
   }
   set modo(valor) {
     this._modo = valor;
-    if (!valor) this.targetIntent = null;
+    if (!valor) {
+      this.targetIntent = null;
+      this._intentSesion = null;
+    }
   }
 
   async cargarInicial() {
@@ -270,29 +275,52 @@ export class ForjaNotasControlador {
 
   /** Nombre canónico de la pieza del golpeo; `undefined` (se omite) si no es inequívoco. */
   _piezaDe(nombreVisor) {
-    return resolveDesignPiece(designPiecesOf(this.docId), nombreVisor || this.viewer.selectedPiece) ?? undefined;
+    const nombre = nombreVisor || this.viewer.selectedPiece;
+    const piezas = designPiecesOf(this.docId);
+    // Panel aún sin cargar: el nombre del visor es el candidato; el servidor lo valida.
+    if (!piezas.length) return nombre || undefined;
+    return resolveDesignPiece(piezas, nombre) ?? undefined;
   }
 
   /** Une una marca recién guardada a una indicación: una nueva, o la objetivo
    * si el usuario pulsó "Añadir otra marca". Nunca falla en silencio: la
    * marca ya está guardada aunque la indicación no se cree. */
   async _vincularMarca(n, texto, { pieza, puntos }, destino = null) {
+    texto = (texto ?? "").trim();
+    // Sin indicación objetivo ni texto (el diálogo ya se mostró): se suma a la
+    // indicación creada en esta sesión; si no hay, la marca queda suelta.
+    if (!destino && !texto) destino = this._intentSesion;
+    if (!destino && !texto) {
+      avisarFeedback("Marca guardada sin indicación; aparece en «Marcas sin indicación».");
+      this.alCambiarMarcas?.();
+      return;
+    }
     try {
       if (destino) {
         await sendIntentAction(this.docId, destino, { action: "attach", marks: [n] });
       } else {
-        await createIntent(this.docId, {
-          text: texto || "(sin texto)",
+        const cuerpo = {
+          text: texto,
           marks: [n],
           ...(pieza ? { piece: pieza } : {}),
           ...(puntos?.length ? { points: subsamplePoints(puntos) } : {}),
-        });
+        };
+        let leido;
+        try {
+          leido = await createIntent(this.docId, cuerpo);
+        } catch (error) {
+          if (!cuerpo.piece) throw error;
+          // Nombre del visor no canónico (STL antiguo): se guarda sin pieza, nunca con otra.
+          delete cuerpo.piece;
+          leido = await createIntent(this.docId, cuerpo);
+        }
+        const creada = (leido?.design?.intents ?? []).find((i) => (i.marks ?? []).includes(n));
+        if (creada && this.modo) this._intentSesion = creada.id;
       }
     } catch (error) {
       avisarFeedback(`La marca se guardó, pero la indicación no: ${error.message ?? error}`);
     }
-    // Una marca de «Añadir otra marca» se consume aunque falle: no queda pendiente en silencio.
-    if (destino) this.targetIntent = null;
+    // «Añadir otra marca» sigue apuntando a la misma indicación hasta salir del modo o cancelar.
     this.alCambiarMarcas?.();
   }
 
