@@ -6,7 +6,9 @@
 // archivo todo lo que hay tras la última "/" de la URL decodificada.
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
-const EXTENSIONES = new Set(["3mf", "stl"]);
+const EXTENSIONES = new Set(["3mf", "stl", "pdf", "svg", "dxf"]);
+/** Formatos de plano tecnico (F22, ADR-0021): descarga sin pieza, en memoria. */
+export const FORMATOS_PLANO = ["pdf", "svg", "dxf"];
 const ORIGEN_RE = /^https?:\/\/(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$/;
 const ESQUEMA_ORCA = "orcaslicer://open?file=";
 
@@ -37,6 +39,12 @@ export function buildDescargaUrl(origin, id, nombre, ext, pieza = null) {
   return `${origin}/documentos/${id}/descarga/${tramo}${slugDescarga(nombre)}.${ext}`;
 }
 
+/** URL de descarga de un plano (`pdf`, `svg` o `dxf`) o null. Sin pieza. */
+export function buildDescargaPlanoUrl(origin, id, nombre, formato) {
+  if (!FORMATOS_PLANO.includes(formato)) return null;
+  return buildDescargaUrl(origin, id, nombre, formato);
+}
+
 /** `orcaslicer://open?file=<URL codificada una sola vez>` o null. */
 export function buildOrcaLink(origin, id, nombre, ext, pieza = null) {
   const inner = buildDescargaUrl(origin, id, nombre, ext, pieza);
@@ -60,7 +68,8 @@ export function construirAnclas(doc, origin, ficha, mostrarAviso, obtenerPieza =
   const orca = buildOrcaLink(origin, id, nombre, "3mf");
   const u3mf = buildDescargaUrl(origin, id, nombre, "3mf");
   const ustl = buildDescargaUrl(origin, id, nombre, "stl");
-  if (orca === null || u3mf === null || ustl === null) return [];
+  const uPlanos = FORMATOS_PLANO.map((ext) => buildDescargaPlanoUrl(origin, id, nombre, ext));
+  if (orca === null || u3mf === null || ustl === null || uPlanos.includes(null)) return [];
   const crear = (texto, href, titulo) => {
     const a = doc.createElement("a");
     a.className = "fj-btn";
@@ -89,5 +98,13 @@ export function construirAnclas(doc, origin, ficha, mostrarAviso, obtenerPieza =
   for (const a of textos.keys()) {
     for (const ev of ["pointerenter", "focus", "pointerdown", "keydown"]) a.addEventListener(ev, refrescar);
   }
-  return Object.assign([abrir, d3mf, dstl], { refrescar });
+  // Plano tecnico (F22): one sheet per format, whole document (no piece).
+  const titulosPlano = {
+    pdf: "Descargar el plano técnico en PDF (A4, tercer ángulo, cotas automáticas)",
+    svg: "Descargar el plano técnico en SVG (vectorial, capas VISIBLES, OCULTAS, COTAS, TEXTO)",
+    dxf: "Descargar el plano técnico en DXF (milímetros, capas para CAD)",
+  };
+  const anclasPlano = FORMATOS_PLANO.map((ext, i) =>
+    crear(ext === "pdf" ? "Plano" : `Plano ${ext.toUpperCase()}`, uPlanos[i], titulosPlano[ext]));
+  return Object.assign([abrir, d3mf, dstl, ...anclasPlano], { refrescar });
 }

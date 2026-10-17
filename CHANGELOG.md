@@ -7,6 +7,15 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (planos técnicos, F22)
+
+- `exportar` acepta `formato` `svg`, `pdf` o `dxf` y escribe **una hoja** bajo `exportados`: vistas frontal, superior, derecha e isométrica; líneas visibles y ocultas (capas `VISIBLES`, `OCULTAS` discontinuas, `COTAS`, `TEXTO`); cajetín con documento, piezas, revisión, fecha, escala, papel, unidad y proyección. Sin herramienta MCP nueva. Decisión en `docs/decisions/0021-planos-tecnicos.md`.
+- Cotas automáticas: tamaño total por eje, diámetro y posición de agujeros cuyo eje es paralelo a un eje global (los demás se cuentan en `omitidas`). Una cota se liga a `PARAMETROS` cuando su valor coincide con una única clave; `parametros_ligados` lo resume.
+- Parámetros nuevos de `exportar`, solo para planos: `vistas` (`frontal,superior,derecha,isometrica`), `escala` (`1:1`, `1:2`, `1:5`, `1:10`, `2:1`, `5:1`; por defecto la mayor que cabe), `papel` (`A4` o `A3`), `proyeccion` (`tercer_angulo` por defecto o `primer_angulo`) y `detalle` (lista las cotas con su `id` estable).
+- Las mallas STL también dan plano: contornos de silueta y de rasgo con cotas de bbox, avisado en la respuesta y en el cajetín. Sin líneas ocultas ni agujeros.
+- Visor: anclas «Plano» (PDF), «Plano SVG» y «Plano DXF» junto a las descargas; se construyen en memoria, sin escribir en disco.
+- Tope de 200 000 aristas y presupuesto de 20 s: sobre el tope la isométrica se entrega sin líneas ocultas y con `completo: false`.
+
 ### Changed (indicaciones unificadas)
 
 - La pestaña Diseño pasa a ser **Indicaciones**: la única lista donde se explica lo que se quiere cambiar. Las notas y trazos del visor son las marcas de una indicación; se enlazan por id y no se copian ni migran. Las notas antiguas sin indicación aparecen como marcas sueltas con «Convertir en indicación». `notas.json` y `design.json` antiguos cargan sin cambios. Decisión en `docs/decisions/0019-unified-intents.md`.

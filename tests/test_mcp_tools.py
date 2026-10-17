@@ -183,6 +183,22 @@ def test_exportar_stl_y_step_desde_documento_script():
     assert exportado_step["ruta"].endswith(".step")
 
 
+def test_exportar_plano_svg_via_mcp():
+    """F22 (ADR-0021): `exportar` takes plano formats and drawing options; no new tool."""
+    creado = tools.ejecutar_script(_CAJA_SCRIPT, nombre="cubo_plano")
+    assert "error" not in creado, creado
+
+    plano = tools.exportar(creado["id"], "svg", vistas="frontal,superior", detalle=True)
+    assert "error" not in plano, plano
+    assert plano["ruta"].endswith(".svg")
+    assert plano["vistas"] == ["frontal", "superior"]
+    assert plano["cotas"] >= 3
+    assert len(plano["cotas_detalle"]) == plano["cotas"]
+
+    rechazado = tools.exportar(creado["id"], "svg", escala="3:1")
+    assert rechazado.get("error") is True
+
+
 def test_exportar_step_rechazado_para_documento_stl():
     box = b123d_kernel.make_box(6, 6, 6)
     tri_mesh = mesh.tessellate_to_trimesh(box, tolerance=0.05)

@@ -37,6 +37,7 @@ import naming
 import notes
 import parametros
 import percepcion
+import planos
 import piece_mesh
 import render
 import revision
@@ -1170,8 +1171,14 @@ def _calcular_malla(doc_id: str, components: bool) -> bytes:
 # `orcaslicer://open?file=<url>` downloader: it names the saved file after the
 # text following the LAST "/" of the decoded URL (query string included), so
 # the path must end in `name.stl|name.3mf`. The client-supplied stem is ignored.
-_RE_ARCHIVO_DESCARGA = re.compile(r"[A-Za-z0-9_-]{1,64}\.(stl|3mf)")
-_TIPOS_DESCARGA = {"stl": "model/stl", "3mf": "model/3mf"}
+_RE_ARCHIVO_DESCARGA = re.compile(r"[A-Za-z0-9_-]{1,64}\.(stl|3mf|svg|pdf|dxf)")
+_TIPOS_DESCARGA = {
+    "stl": "model/stl",
+    "3mf": "model/3mf",
+    "svg": "image/svg+xml",
+    "pdf": "application/pdf",
+    "dxf": "image/vnd.dxf",
+}
 # Same charset as named solids (letters/digits/_/- incl. accents and ñ).
 _RE_PIEZA_DESCARGA = re.compile(r"[\w-]{1,64}")
 # Upper bound on triangles a download builds in memory (checked after
@@ -1233,6 +1240,8 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
     if coincidencia is None or not request.scope["path"].endswith(sufijo):
         raise HTTPException(status_code=404, detail="archivo no encontrado")
     formato = coincidencia.group(1)
+    if formato in planos.FORMATOS_PLANO and pieza:
+        raise HTTPException(status_code=400, detail="los planos son del documento completo, no de una pieza")
     # Clamp the id (characters AND UTF-8 bytes) before any lookup.
     if not notes._doc_id_valido(doc_id) or doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
@@ -1265,7 +1274,7 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
         try:
             if ext_origen in _STEP_EXTS:
                 shape = b123d_kernel.import_from_step(ruta)
-                entradas = solids.cargar(doc_id) if (formato == "3mf" or pieza) else None
+                entradas = solids.cargar(doc_id) if (formato == "3mf" or pieza or formato in planos.FORMATOS_PLANO) else None
             elif ext_origen in _STL_EXTS:
                 shape = mesh.load_stl(ruta)
                 entradas = mesh_parts.load(doc_id)
@@ -1298,6 +1307,19 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                 if len(tri_mesh.faces) > MAX_TRIANGULOS_DESCARGA:
                     raise too_big
                 contenido = mesh.to_stl_bytes(tri_mesh)
+            elif formato in planos.FORMATOS_PLANO:
+                # F22: default sheet built in memory (nothing written to disk).
+                contenido = planos.escribir(
+                    planos.construir(
+                        shape,
+                        nombre=registro["nombre"],
+                        piezas=_nombres_piezas_plano(entradas),
+                        revision=_revisiones.get(doc_id),
+                        parametros=_parametros_para_plano(doc_id),
+                        opciones=planos.validar(formato),
+                    ),
+                    formato,
+                )
             else:
                 objetos, _inciertos = export_solidos.objetos_3mf(
                     shape, entradas, Path(registro["nombre"]).stem or "pieza"
@@ -1335,9 +1357,94 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
     )
 
 
+def _parametros_para_plano(doc_id: str) -> dict[str, tuple[float, str]]:
+    """PARAMETROS of a script document as ``{clave: (valor, unidad)}`` (the
+    values in force). Pure read of the sidecar: callers may hold the lock."""
+    meta = parametros.cargar(doc_id)
+    valores = meta["valores"]
+    resultado: dict[str, tuple[float, str]] = {}
+    for clave, entrada in meta["parametros"].items():
+        valor = valores.get(clave, entrada["valor"])
+        resultado[clave] = (float(valor), str(entrada.get("unidad") or ""))
+    return resultado
+
+
+def _nombres_piezas_plano(entradas: list[dict[str, Any]] | None) -> list[str]:
+    """Solid names of a document's breakdown (mesh part sidecars without a
+    name contribute nothing)."""
+    return list(dict.fromkeys(str(e["nombre"]) for e in (entradas or []) if isinstance(e, dict) and "nombre" in e))
+
+
+def _cargar_fuente_plano(doc_id: str) -> tuple[Any, list[str], dict[str, tuple[float, str]], str | None, str]:
+    """Shape or mesh of a document for a drawing, read under the document lock
+    (the lock is released before the projection runs, ADR-0021)."""
+    with parametros.bloqueo(doc_id):
+        registro = _registry.get(doc_id)
+        if registro is None:
+            raise HTTPException(status_code=404, detail="documento no encontrado")
+        ruta = _files.get(doc_id)
+        if ruta is None or not ruta.exists():
+            raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+        ext_origen = ruta.suffix.lower()
+        if ext_origen in _STEP_EXTS:
+            fuente = b123d_kernel.import_from_step(ruta)
+            entradas = solids.cargar(doc_id)
+        elif ext_origen in _STL_EXTS:
+            fuente = mesh.load_stl(ruta)
+            entradas = None
+        else:
+            raise HTTPException(status_code=400, detail="formato de documento no soportado")
+        if _geometria_vacia(fuente):
+            raise HTTPException(status_code=400, detail="el documento no tiene geometria (archivo vacio o danado)")
+        parametros_plano = _parametros_para_plano(doc_id)
+        revision = _revisiones.get(doc_id)
+    return fuente, _nombres_piezas_plano(entradas), parametros_plano, revision, registro["nombre"]
+
+
+def _exportar_plano(
+    doc_id: str,
+    formato: str,
+    vistas: str | None,
+    escala: str | None,
+    papel: str,
+    proyeccion: str,
+    detalle: bool,
+) -> dict[str, Any]:
+    """Drawing sheet (ADR-0021): read-only, no history entry, no snapshot; the
+    file is a derived artifact under `exportados` named after the document id."""
+    try:
+        opciones = planos.validar(
+            formato, vistas=vistas, escala=escala, papel=papel, proyeccion=proyeccion, detalle=detalle
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano(doc_id)
+    EXPORTADOS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        return export_solidos.exportar_plano_documento(
+            fuente,
+            EXPORTADOS_DIR / f"{doc_id}.{formato}",
+            opciones,
+            formato=formato,
+            nombre=nombre,
+            piezas=piezas,
+            revision=revision,
+            parametros=parametros_plano,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/documentos/{doc_id}/exportar")
 def exportar_documento(
-    doc_id: str, formato: str = Query(...), por_solido: bool = Query(default=False)
+    doc_id: str,
+    formato: str = Query(...),
+    por_solido: bool = Query(default=False),
+    vistas: str | None = Query(default=None),
+    escala: str | None = Query(default=None),
+    papel: str = Query(default="A4"),
+    proyeccion: str = Query(default="tercer_angulo"),
+    detalle: bool = Query(default=False),
 ) -> dict[str, Any]:
     """Materialize a document under `DOCUMENTOS_DIR/exportados` and return its
     path + size (never the file bytes) — or, with `por_solido=true`, one file
@@ -1361,13 +1468,15 @@ def exportar_documento(
     """
     if doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
+    if formato in planos.FORMATOS_PLANO:
+        return _exportar_plano(doc_id, formato, vistas, escala, papel, proyeccion, detalle)
     with parametros.bloqueo(doc_id):
         return _export_document_locked(doc_id, formato, por_solido)
 
 
 def _export_document_locked(doc_id: str, formato: str, por_solido: bool) -> dict[str, Any]:
     if formato not in export_solidos.FORMATOS_SOPORTADOS:
-        raise HTTPException(status_code=400, detail="formato no soportado (usar stl, step o 3mf)")
+        raise HTTPException(status_code=400, detail="formato no soportado (usar stl, step, 3mf, svg, pdf o dxf)")
 
     registro = _registry.get(doc_id)
     if registro is None:
