@@ -7,6 +7,21 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (barra de herramientas, fase 24b)
+
+- Sólido > Transformar: **Mover / Rotar**, **Escalar** (por eje, en torno al centro de la pieza), **Alinear** (centros, caras mínimas o máximas por eje, o apilar sobre otra pieza) y **Apoyar sobre cama** (la cara elegida mira a la cama y la base queda en Z = 0). Cada una abre «Preparar una alternativa manual» en Indicaciones ya ajustada; el resultado es un candidato que se compara antes de aplicar.
+- Sólido > Crear: **Caja**, **Cilindro**, **Esfera**, **Cono**, **Toro**, **Cuña** y **Tubo**, como apoyo (unión) a la pieza seleccionada.
+- Sólido > Booleanas: **Unir**, **Restar** e **Intersectar** con una primitiva o con **otra pieza del documento**. La otra pieza no cambia; el candidato lo indica.
+- Claude > **Pedir cambio con lo seleccionado**: abre Indicaciones con la pieza seleccionada como referencia.
+- Backend (ADR-0026): `scale`, `align` y `drop_to_bed` en el pipeline de candidatos; `other`, `factor`, `mode`, `axes` y `normal`; primitivas `sphere`, `cone`, `torus`, `wedge` y `tube`. Validación estricta: `extra=forbid`, números finitos, factor 0.01–100, dimensiones ≤ 2000 mm, pieza auxiliar existente y distinta. `GET /design/capabilities` lista `primitives`. Sin herramienta MCP nueva.
+- Kernel: `escalar` (BRepBuilderAPI_GTransform) y `forma_primitiva` en `app/kernel/b123d_kernel.py`. `Shape.scale` de build123d se descartó: su escala se pierde al exportar a STEP.
+- Iconos propios para las acciones nuevas en `forja-icons.svg` (8 símbolos).
+
+### Changed (barra de herramientas, fase 24b)
+
+- Registro: 105 acciones (71 listas, 34 «Próximamente»; antes 97 con 56 y 41). Hoja de atajos (`?`): 23 filas, sin cambios (24b no añade atajos).
+- Pruebas: `tests/test_design_ops_transform.py` (47); suite Python completa: 901 pasan, 53 omitidas y 1 fallo ambiental conocido (`test_ruta_dentro_de_fuentes_permitida`); `node --test tests/web/*.test.mjs`: 152 de 152 (incluye `tests/web/transformar.test.mjs`, 13).
+
 ### Added (medidas vivas, fase 21)
 
 - Panel **Medidas** en el visor (Inspeccionar > Medir, atajo M): los pares de sólidos con nombre más cercanos, con estado `choque` / `contacto` / `holgura`, distancia en mm (3 decimales) y volumen de choque. Se actualiza al cambiar la revisión (agente, parámetros), muestra «Construyendo…» en gris mientras se reconstruye y el valor de cada parámetro en solo lectura.
