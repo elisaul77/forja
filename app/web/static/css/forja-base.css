@@ -677,6 +677,8 @@ a.fj-btn { text-decoration: none; }
 .fj-view-controls .fj-btn { height: var(--fj-space-6); padding: 0 var(--fj-space-2); font-size: var(--fj-text-xs); border-color: transparent; background: transparent; }
 .fj-view-controls .fj-btn:hover { background: var(--fj-sunk); }
 .fj-view-controls__corto { display: none; }
+.fj-explosion__rango { width: 7rem; align-self: center; accent-color: var(--fj-accent); }
+.fj-explosion__valor { align-self: center; min-width: 3.2rem; font-size: var(--fj-text-xs); color: var(--fj-ink-3); font-variant-numeric: tabular-nums; }
 .fj-view-controls__label { align-self: center; padding: 0 var(--fj-space-1); font-size: var(--fj-text-xs); color: var(--fj-ink-3); letter-spacing: .06em; }
 @container fjvp (max-width: 900px) {
   .fj-view-controls { flex-wrap: nowrap; gap: 0; }

@@ -22,6 +22,21 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - Registro: 105 acciones (71 listas, 34 «Próximamente»; antes 97 con 56 y 41). Hoja de atajos (`?`): 23 filas, sin cambios (24b no añade atajos).
 - Pruebas: `tests/test_design_ops_transform.py` (47); suite Python completa: 901 pasan, 53 omitidas y 1 fallo ambiental conocido (`test_ruta_dentro_de_fuentes_permitida`); `node --test tests/web/*.test.mjs`: 152 de 152 (incluye `tests/web/transformar.test.mjs`, 13).
 
+### Added (vista explosionada, F19)
+
+- Vista explosionada de solo visualización (ADR-0027): `captura(id, ..., explosion=0..1)` en MCP y `GET /documentos/{id}/captura?explosion=` separan las piezas con nombre para ver las ocultas. Documentos STEP; `explosion=0` (por defecto) es byte a byte igual que antes (mismo PNG y mismo `X-Forja-Captura`).
+- Visor: botón «Explosionar» con deslizador «Separación» (0 a 100 %) en la barra de vista 3D. La acción «Vista explosionada» de la cinta (grupo Vista) delega en él y pasa a `listo`, con habilitación «documento B-rep».
+- Dirección: una pieza hija de `giro` o `deslizamiento` se aleja de su padre a lo largo del eje; las demás, del centro del conjunto (una pieza en el centro va a +Z). Distancia: separación de meta por suma de semiextensiones, con tope de medio diagonal × factor. La separación es de display, no una garantía de no interpenetración.
+- Funciones puras `app/explosion.py` y `app/web/static/js/explosion.js` con la misma tabla de paridad (`tests/fixtures/explosion_offsets.json`).
+- La explosión no persiste ni llama a la API. Con la animación en marcha la pose de la animación manda; el botón solo se activa en modo «cad».
+- Validación: factor finito entre 0 y 1 (400 en español), STL con `explosion > 0` → 400, máximo 500 piezas, cajas finitas y no invertidas.
+
+### Changed (vista explosionada, F19)
+
+- `render.renderizar_png` acepta `desplazamientos` (copias trasladadas; las mallas cacheadas no cambian).
+- Cambios de caché: `explosion.js?v=1` (en `viewer.js`), `viewer.js?v=design1-22` (en `tabs.js`), `tabs.js?v=52` (en `app.js`), `toolbar-actions.js?v=8` (en `toolbar-ui.js`), `toolbar-ui.js?v=9` (en `app.js`), `app.js?v=55` (en `index.html`).
+- No se añade herramienta MCP: el conjunto de herramientas sigue igual.
+
 ### Added (cotas vivas importadas, F23b)
 
 - Un STEP o una malla STL importados editan sus cotas reconocidas (ADR 0025). Cada cota del listado trae `operacion`: `rellenar_y_taladrar` (un grupo de agujeros: rellena el diámetro viejo y retaladra el nuevo, mismo eje y profundidad; `afectadas: n`), `mover_cara` (dos caras planas paralelas: estira o comprime por biseccion hasta ±0,01 mm) o `escalar_eje` (medida total: escala ese eje solo; también en mallas). Lo que no es una característica reconocida sale `solo_lectura` con `razon`.

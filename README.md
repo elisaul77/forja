@@ -341,6 +341,10 @@ headless real), `check_colisiones`, `percibir`, `parametros`, `check_fdm`,
 
 `ensamble(id, barrido="todas")` recorre cada articulación sobre su rango sin saltar entre muestras: avance conservador hasta el primer contacto real (hueco ≤ 0,05 mm o penetración), luego bisección a la tolerancia. Reporta el valor en grados o mm, el par, el volumen de penetración y `garantia: "continua"`. Un par que empieza en contacto (pasador, pieza apoyada) se muestrea por volumen en pasos de hasta 0,2 mm, se lista y deja la garantía en `"muestreada"`. Las articulaciones fijas se omiten en «todas» (`omitidas`). Un presupuesto compartido de 2000 evaluaciones o 25 s agotado da `ok: false`, nunca un choque. Solo lectura. Ver `docs/decisions/0020-barrido-continuo.md`.
 
+### Vista explosionada (F19)
+
+`captura(id, explosion=0.5)` (MCP) o `GET /documentos/{id}/captura?explosion=0.5` separa las piezas con nombre a lo largo de sus articulaciones o alejándolas del centro del conjunto, para ver las piezas ocultas. Es solo de visualización: no cambia la geometría ni el documento, y `explosion=0` (por defecto) es el render de siempre. Solo documentos STEP. En el visor, el botón «Explosionar» (también en la cinta, grupo Vista) abre un deslizador de separación de 0 a 100 %. La animación de un ensamblaje manda sobre la explosión mientras corre. Ver `docs/decisions/0027-vista-explosionada.md`.
+
 ### Ensambles y puentes (Fase 6)
 
 `ensamble(id, ...)` es UNA herramienta de MCP con modos excluyentes: sin

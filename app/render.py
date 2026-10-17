@@ -455,6 +455,25 @@ def _dibujar_leyenda(imagen: Any, leyenda: dict[str, tuple[float, float, float]]
     imagen.paste(compuesta)
 
 
+def _trasladar_copias(
+    grupos: dict[str, trimesh.Trimesh], desplazamientos: dict[str, list[float]]
+) -> dict[str, trimesh.Trimesh]:
+    """Copias trasladadas de ``grupos`` (F19). Las mallas nuevas reciben
+    vértices nuevos (suma), así que nunca se muta una malla de origen."""
+    resultado: dict[str, trimesh.Trimesh] = {}
+    for nombre, malla in grupos.items():
+        vector = desplazamientos.get(nombre)
+        if vector is None or len(malla.faces) == 0:
+            resultado[nombre] = malla
+            continue
+        resultado[nombre] = trimesh.Trimesh(
+            vertices=np.asarray(malla.vertices, dtype=np.float64) + np.asarray(vector, dtype=np.float64),
+            faces=malla.faces,
+            process=False,
+        )
+    return resultado
+
+
 def renderizar_png(
     grupos: dict[str, trimesh.Trimesh],
     colores: dict[str, tuple[float, float, float]],
@@ -466,14 +485,21 @@ def renderizar_png(
     colores_por_solido: bool = True,
     leyenda_visible: bool = True,
     fondo: tuple[float, float, float] | None = None,
+    desplazamientos: dict[str, list[float]] | None = None,
 ) -> tuple[bytes, str]:
     """Render ``grupos`` (``{nombre: Trimesh}``, already tessellated — see
     `grupos_desde_shape`/`grupo_desde_malla`) to a small PNG via a software
     z-buffer rasterizer (see the module docstring). Returns ``(png_bytes,
     texto_caption)``. Raises ``ValueError`` if every group is empty (no
-    faces at all)."""
+    faces at all).
+
+    ``desplazamientos`` (F19, vista explosionada): traslación ``[dx, dy, dz]``
+    por nombre, aplicada a COPIAS de las mallas; las cacheadas no se tocan.
+    Sin nombre en el mapa, la pieza se dibuja donde está."""
     if not grupos:
         raise ValueError("no hay solidos para renderizar")
+    if desplazamientos:
+        grupos = _trasladar_copias(grupos, desplazamientos)
 
     adelante, derecha, arriba = _base_camara(azimut, elevacion)
 
