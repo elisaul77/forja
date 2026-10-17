@@ -59,11 +59,28 @@ export function validarValorCota(cota, texto) {
   return { ok: true, valor };
 }
 
-/** Etiquetas del visor (F23b): `{id, texto, ancla}` de las cotas editables que traen ancla (mm del modelo). */
+/** Separación (mm del modelo) entre etiquetas de distancia que caen sobre el mismo punto. */
+const DESFASE_ETIQUETA_MM = 8;
+const EJE_INDICE = { x: 0, y: 1, z: 2 };
+
+/**
+ * Etiquetas del visor (F23b): `{id, texto, ancla}` de las cotas editables que traen ancla (mm del modelo).
+ * Una distancia cuyo ancla ya está ocupada se desplaza a lo largo de su propio eje (de a
+ * DESFASE_ETIQUETA_MM) para que las etiquetas X, Y y Z de una placa centrada no se apilen.
+ */
 export function etiquetasFlotantes(cotas) {
+  const ocupadas = new Set();
   return cotas
     .filter((c) => c.operacion && !c.solo_lectura && Array.isArray(c.ancla) && c.ancla.length === 3)
-    .map((c) => ({ id: c.id, texto: `${etiquetaCota(c)} ${c.valor_mm} mm`, ancla: c.ancla }));
+    .map((c) => {
+      const ancla = [...c.ancla];
+      if (c.tipo === "distancia" && EJE_INDICE[c.eje] !== undefined) {
+        const i = EJE_INDICE[c.eje];
+        for (let k = 0; ocupadas.has(ancla.join(",")) && k < 10; k += 1) ancla[i] = c.ancla[i] + DESFASE_ETIQUETA_MM * (k + 1);
+      }
+      ocupadas.add(ancla.join(","));
+      return { id: c.id, texto: `${etiquetaCota(c)} ${c.valor_mm} mm`, ancla };
+    });
 }
 
 // Pulsar una etiqueta del visor enfoca el campo numérico de su fila (el editor de la cota).

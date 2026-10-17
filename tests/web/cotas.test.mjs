@@ -87,3 +87,10 @@ test('etiquetasFlotantes solo pone etiqueta en las cotas editables con ancla (F2
     { id: 'diametro:z:8.000:n1', texto: 'Diámetro Z 8 mm', ancla: [10, 0, 0] },
   ]);
 });
+
+test('etiquetasFlotantes separa las distancias que caen sobre el mismo punto (F23b)', () => {
+  // Una placa centrada: las distancias X, Y y Z tienen su ancla en el origen y se apilarían.
+  const distancia = (eje) => ({ id: `distancia:${eje}:10.000:n`, tipo: 'distancia', eje, valor_mm: 10, operacion: 'mover_cara', ancla: [0, 0, 0] });
+  const anclas = etiquetasFlotantes([distancia('x'), distancia('y'), distancia('z')]).map((e) => e.ancla);
+  assert.deepEqual(anclas, [[0, 0, 0], [0, 8, 0], [0, 0, 8]]);
+});
