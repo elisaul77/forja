@@ -5,6 +5,7 @@
 // otro cambio mientras el servidor re-calcula, se envía uno solo al terminar
 // con los últimos valores.
 import { aplicarParametros, obtenerParametros } from "./api.js?v=11";
+import { renderizarCotas } from "./cotas.js?v=1";
 
 const panelParametros = document.getElementById("fj-panel-parametros");
 const ESPERA_MS = 300;
@@ -180,4 +181,13 @@ export function renderizarPanelParametros(controlador) {
   panelParametros.appendChild(estado);
   controlador._estadoEl = estado;
   controlador._mostrarEstado(controlador.estado || "Mové un valor para recalcular la pieza.", controlador.error);
+  // F23a: cotas del plano; las ligadas a un parámetro se editan aquí mismo.
+  const cotasEl = document.createElement("div");
+  cotasEl.className = "fj-cotas";
+  panelParametros.appendChild(cotasEl);
+  renderizarCotas(cotasEl, controlador.docId, async (respuesta) => {
+    controlador.valores = { ...respuesta.valores };
+    await controlador._alCambiar(respuesta);
+    renderizarPanelParametros(controlador);
+  });
 }

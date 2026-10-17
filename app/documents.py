@@ -25,10 +25,11 @@ from typing import Any
 import trimesh
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 import assemblies
 import auth
+import cotas
 import materiales
 import eventos
 import export as export_solidos
@@ -845,54 +846,132 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
     # happens under the per-document lock (fix-review): a concurrent apply
     # or restore can't hand us a stale script/values pair.
     with parametros.bloqueo(doc_id):
+        return _aplicar_parametros_bloqueado(doc_id, body.valores, body.confirmar_script)
+
+
+def _aplicar_parametros_bloqueado(doc_id: str, nuevos: dict[str, Any], confirmar_script: bool) -> dict[str, Any]:
+    """Body of `aplicar_parametros` (F23a). The caller holds `parametros.bloqueo(doc_id)`;
+    the cotas route holds it across its revision check, its listing and this write."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    datos = parametros.cargar(doc_id)
+    script = datos["script"]
+    if not script:
+        raise HTTPException(
+            status_code=400, detail="documento sin script parametrico (crearlo con ejecutar_script)"
+        )
+    if "ruta" in script:
+        aviso = aviso_script_divergente(doc_id, script)
+        if aviso and not confirmar_script:
+            raise HTTPException(
+                status_code=409,
+                detail="no se regenera: " + aviso.split(": ", 1)[1],
+            )
+        origen = _validar_ruta_permitida(script["ruta"])
+        try:
+            codigo = origen.read_text()
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
+    else:
+        codigo = script["codigo"]
+    editada = aviso_geometria_editada(doc_id)
+    if editada and not confirmar_script:
+        raise HTTPException(status_code=409, detail="no se regenera: " + editada.split(": ", 1)[1])
+    try:
+        esquema = parametros.esquema_desde_codigo(codigo)
+        valores = parametros.aplicar_valores(esquema, datos["valores"], nuevos)
+        declarados = materiales.desde_codigo(codigo)
+    except (parametros.ParametrosInvalidos, materiales.MaterialesInvalidos) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    inicio = time.perf_counter()
+    with _construyendo(doc_id):
+        registro = _actualizar_documento_desde_script(
+            doc_id,
+            codigo,
+            datos["timeout"] or scripts_runner.DEFAULT_TIMEOUT,
+            parametros.variables_efectivas(datos["variables"], valores),
+            mensaje_snapshot=parametros.resumen_valores(valores),
+        )
+        ms = round((time.perf_counter() - inicio) * 1000)
+        parametros.guardar_valores(doc_id, esquema, valores)
+        materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
+        if "ruta" in script:  # confirmed (or matching) file: mark resolved
+            git_store.fijar_script_divergente(doc_id, None, None)
+        parametros.quitar_geometria_editada(doc_id)  # G4: script rebuilt everything
+        confirmar_revision(doc_id)
+    return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
+
+def _es_malla(doc_id: str) -> bool:
+    ruta = _files.get(doc_id)
+    return ruta is not None and ruta.suffix.lower() in _STL_EXTS
+
+
+def _listar_cotas_de_fuente(
+    doc_id: str, fuente: Any, piezas: list[str], parametros_plano: dict[str, tuple[float, str]],
+    revision: str | None, nombre: str,
+) -> dict[str, Any]:
+    """Cotas vivas (F23a, ADR-0022): the drawn dimensions of the sheet (default
+    views, all of them drawn) classified for editing. Pure read: no lock here."""
+    try:
+        plano = planos.construir(
+            fuente, nombre=nombre, piezas=piezas, revision=revision,
+            parametros=parametros_plano, opciones=planos.validar("svg"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    esquema = parametros.cargar(doc_id)["parametros"]
+    return {"revision": revision, "cotas": cotas.clasificar(plano.cotas, esquema, malla=_es_malla(doc_id))}
+
+
+@router.get("/documentos/{doc_id}/cotas")
+def obtener_cotas(doc_id: str) -> dict[str, Any]:
+    """Cotas vivas (F23a, ADR-0022): the plan's drawn dimensions, each with
+    `operacion: "parametro"` (editable: `POST .../cotas/aplicar` or the MCP
+    `parametros` tool with `cotas`) or `solo_lectura: true` and `razon`.
+    `revision` is the revision the listing belongs to; token-free read."""
+    fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano(doc_id)
+    return _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
+
+
+class _CotasBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: str
+    cotas: dict[str, Any]
+    confirmar_script: bool = False
+
+
+@router.post("/documentos/{doc_id}/cotas/aplicar", dependencies=[Depends(auth.requiere_token)])
+def aplicar_cotas(doc_id: str, body: _CotasBody) -> dict[str, Any]:
+    """Edit live dimensions (F23a, ADR-0022): `{revision, cotas: {id_cota: valor}}`.
+    The revision must be the one the ids were read at (409 otherwise). Each
+    dimension is translated to its PARAMETROS key and applied through the same
+    path as `POST .../parametros` (validation, snapshot, one new revision).
+    Under the document lock from the revision check to the write, so two
+    edits from the same reading never both apply. Replies with the usual
+    summary plus `editadas`: value before/after and the re-measured error."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    with parametros.bloqueo(doc_id):
         if doc_id not in _registry:
             raise HTTPException(status_code=404, detail="documento no encontrado")
-        datos = parametros.cargar(doc_id)
-        script = datos["script"]
-        if not script:
+        if body.revision != _revisiones.get(doc_id):
             raise HTTPException(
-                status_code=400, detail="documento sin script parametrico (crearlo con ejecutar_script)"
+                status_code=409, detail="revision obsoleta: el documento cambio; vuelve a leer las cotas"
             )
-        if "ruta" in script:
-            aviso = aviso_script_divergente(doc_id, script)
-            if aviso and not body.confirmar_script:
-                raise HTTPException(
-                    status_code=409,
-                    detail="no se regenera: " + aviso.split(": ", 1)[1],
-                )
-            origen = _validar_ruta_permitida(script["ruta"])
-            try:
-                codigo = origen.read_text()
-            except OSError as exc:
-                raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
-        else:
-            codigo = script["codigo"]
-        editada = aviso_geometria_editada(doc_id)
-        if editada and not body.confirmar_script:
-            raise HTTPException(status_code=409, detail="no se regenera: " + editada.split(": ", 1)[1])
+        fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano_bloqueado(doc_id)
+        antes = _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
         try:
-            esquema = parametros.esquema_desde_codigo(codigo)
-            valores = parametros.aplicar_valores(esquema, datos["valores"], body.valores)
-            declarados = materiales.desde_codigo(codigo)
-        except (parametros.ParametrosInvalidos, materiales.MaterialesInvalidos) as exc:
+            nuevos = cotas.resolver_edicion(antes["cotas"], body.cotas)
+        except cotas.CotaNoEncontrada as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except cotas.CotaInvalida as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        inicio = time.perf_counter()
-        with _construyendo(doc_id):
-            registro = _actualizar_documento_desde_script(
-                doc_id,
-                codigo,
-                datos["timeout"] or scripts_runner.DEFAULT_TIMEOUT,
-                parametros.variables_efectivas(datos["variables"], valores),
-                mensaje_snapshot=parametros.resumen_valores(valores),
-            )
-            ms = round((time.perf_counter() - inicio) * 1000)
-            parametros.guardar_valores(doc_id, esquema, valores)
-            materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
-            if "ruta" in script:  # confirmed (or matching) file: mark resolved
-                git_store.fijar_script_divergente(doc_id, None, None)
-            parametros.quitar_geometria_editada(doc_id)  # G4: script rebuilt everything
-            confirmar_revision(doc_id)
-    return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
+        respuesta = _aplicar_parametros_bloqueado(doc_id, nuevos, body.confirmar_script)
+        fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano_bloqueado(doc_id)
+        despues = _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
+    return {**respuesta, "editadas": cotas.tras_aplicar(antes["cotas"], despues["cotas"], body.cotas)}
+
 
 
 @router.get("/documentos/{doc_id}/materiales")
@@ -1444,25 +1523,30 @@ def _cargar_fuente_plano(doc_id: str) -> tuple[Any, list[str], dict[str, tuple[f
     """Shape or mesh of a document for a drawing, read under the document lock
     (the lock is released before the projection runs, ADR-0021)."""
     with parametros.bloqueo(doc_id):
-        registro = _registry.get(doc_id)
-        if registro is None:
-            raise HTTPException(status_code=404, detail="documento no encontrado")
-        ruta = _files.get(doc_id)
-        if ruta is None or not ruta.exists():
-            raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
-        ext_origen = ruta.suffix.lower()
-        if ext_origen in _STEP_EXTS:
-            fuente = b123d_kernel.import_from_step(ruta)
-            entradas = solids.cargar(doc_id)
-        elif ext_origen in _STL_EXTS:
-            fuente = mesh.load_stl(ruta)
-            entradas = None
-        else:
-            raise HTTPException(status_code=400, detail="formato de documento no soportado")
-        if _geometria_vacia(fuente):
-            raise HTTPException(status_code=400, detail="el documento no tiene geometria (archivo vacio o danado)")
-        parametros_plano = _parametros_para_plano(doc_id)
-        revision = _revisiones.get(doc_id)
+        return _cargar_fuente_plano_bloqueado(doc_id)
+
+
+def _cargar_fuente_plano_bloqueado(doc_id: str) -> tuple[Any, list[str], dict[str, tuple[float, str]], str | None, str]:
+    """Body of `_cargar_fuente_plano`: the caller holds `parametros.bloqueo(doc_id)` (F23a)."""
+    registro = _registry.get(doc_id)
+    if registro is None:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    ruta = _files.get(doc_id)
+    if ruta is None or not ruta.exists():
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+    ext_origen = ruta.suffix.lower()
+    if ext_origen in _STEP_EXTS:
+        fuente = b123d_kernel.import_from_step(ruta)
+        entradas = solids.cargar(doc_id)
+    elif ext_origen in _STL_EXTS:
+        fuente = mesh.load_stl(ruta)
+        entradas = None
+    else:
+        raise HTTPException(status_code=400, detail="formato de documento no soportado")
+    if _geometria_vacia(fuente):
+        raise HTTPException(status_code=400, detail="el documento no tiene geometria (archivo vacio o danado)")
+    parametros_plano = _parametros_para_plano(doc_id)
+    revision = _revisiones.get(doc_id)
     return fuente, _nombres_piezas_plano(entradas), parametros_plano, revision, registro["nombre"]
 
 
@@ -1486,7 +1570,7 @@ def _exportar_plano(
     fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano(doc_id)
     EXPORTADOS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        return export_solidos.exportar_plano_documento(
+        resultado = export_solidos.exportar_plano_documento(
             fuente,
             EXPORTADOS_DIR / f"{doc_id}.{formato}",
             opciones,
@@ -1496,6 +1580,12 @@ def _exportar_plano(
             revision=revision,
             parametros=parametros_plano,
         )
+        if "cotas_detalle" in resultado:  # F23a: each dimension says if it is editable
+            resultado["cotas_detalle"] = cotas.clasificar(
+                resultado["cotas_detalle"], parametros.cargar(doc_id)["parametros"], malla=_es_malla(doc_id)
+            )
+            resultado["revision"] = revision
+        return resultado
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

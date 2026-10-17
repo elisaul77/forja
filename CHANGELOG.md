@@ -7,6 +7,17 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (cotas vivas, F23a)
+
+- Cada cota del plano que sale de un `PARAMETROS` de un script es editable: `GET /documentos/{id}/cotas` lista `{revision, cotas}` con `operacion: "parametro"` (y `min`/`max`) o `solo_lectura` con `razon`; `POST /documentos/{id}/cotas/aplicar` con `{revision, cotas: {id: valor}}` la aplica por el camino de `parametros` (una revisión nueva, restaurable con `restaurar`). Decisión en `docs/decisions/0022-cotas-vivas.md`.
+- MCP: `parametros(id, cotas={id: valor}, revision=None)` (sin herramienta nueva; excluyente con `valores`). `exportar(id, "svg", detalle=true)` añade `revision` y `operacion`/`solo_lectura`/`razon` a cada cota.
+- Visor: «Cotas del plano» dentro del panel «Parámetros»; un 409 recarga el listado.
+- Sin revertir si la cota no sigue al parámetro: la respuesta lo marca con `no_sigue_al_parametro` (ver la decisión, desviaciones 1 y 4). Los documentos importados y las mallas no son editables todavía (F23b).
+
+### Refactored
+
+- `aplicar_parametros` y `_cargar_fuente_plano` se parten en un envoltorio con lock y un cuerpo `_..._bloqueado` que el ramal de cotas reutiliza bajo el mismo lock. Comportamiento de `parametros` sin cambios.
+
 ### Added (planos técnicos, F22)
 
 - `exportar` acepta `formato` `svg`, `pdf` o `dxf` y escribe **una hoja** bajo `exportados`: vistas frontal, superior, derecha e isométrica; líneas visibles y ocultas (capas `VISIBLES`, `OCULTAS` discontinuas, `COTAS`, `TEXTO`); cajetín con documento, piezas, revisión, fecha, escala, papel, unidad y proyección. Sin herramienta MCP nueva. Decisión en `docs/decisions/0021-planos-tecnicos.md`.

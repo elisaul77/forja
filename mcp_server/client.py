@@ -332,12 +332,17 @@ def percibir(
 
 def parametros(
     doc_id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None,
-    confirmar_script: bool = False,
+    confirmar_script: bool = False, cotas: dict[str, Any] | None = None, revision: str | None = None,
 ) -> dict[str, Any]:
     """`None` -> read the schema + current values (token-free GET); a dict
     -> apply them (token-protected POST, re-runs the stored script).
     `materiales` (fdm-D) -> POST /materiales first (no re-run); the answer
-    then carries `materiales` (and, alone, also the read of the schema)."""
+    then carries `materiales` (and, alone, also the read of the schema).
+    `cotas` (F23a, ADR-0022) -> live dimensions `{id_cota: valor}` applied
+    through POST /cotas/aplicar; `revision` is the one the ids were read at
+    (default: the current one). Exclusive with `valores`."""
+    if cotas is not None and valores is not None:
+        return {"error": True, "mensaje": "usa `valores` o `cotas`, no ambos"}
     resultado_materiales: dict[str, Any] | None = None
     if materiales is not None:
         with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
@@ -349,7 +354,10 @@ def parametros(
         if resp.status_code >= 400:
             return {"error": True, **_detalle_estructurado(resp)}
         resultado_materiales = resp.json()["materiales"]
-    respuesta = _parametros(doc_id, valores, confirmar_script)
+    if cotas is not None:
+        respuesta = _aplicar_cotas(doc_id, cotas, revision, confirmar_script)
+    else:
+        respuesta = _parametros(doc_id, valores, confirmar_script)
     if resultado_materiales is not None and not respuesta.get("error"):
         respuesta["materiales"] = resultado_materiales
     return respuesta
@@ -368,6 +376,26 @@ def _parametros(doc_id: str, valores: dict[str, Any] | None = None,
                 json={"valores": valores, **({"confirmar_script": True} if confirmar_script else {})},
                 headers=_headers_con_token(),
             )
+    if resp.status_code >= 400:
+        return {"error": True, **_detalle_estructurado(resp)}
+    return resp.json()
+
+
+def _aplicar_cotas(doc_id: str, cotas: dict[str, Any], revision: str | None,
+                   confirmar_script: bool) -> dict[str, Any]:
+    """F23a: POST /cotas/aplicar. Without `revision` the current one is read
+    first (GET /cotas), so the call applies to what the server holds now."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT + _SCRIPT_TIMEOUT_MARGIN) as c:
+        if revision is None:
+            leido = c.get(f"/documentos/{doc_id}/cotas")
+            if leido.status_code >= 400:
+                return {"error": True, **_detalle_estructurado(leido)}
+            revision = leido.json()["revision"]
+        resp = c.post(
+            f"/documentos/{doc_id}/cotas/aplicar",
+            json={"revision": revision, "cotas": cotas, **({"confirmar_script": True} if confirmar_script else {})},
+            headers=_headers_con_token(),
+        )
     if resp.status_code >= 400:
         return {"error": True, **_detalle_estructurado(resp)}
     return resp.json()
