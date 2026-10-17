@@ -48,6 +48,7 @@ def capabilities():
         "coordinate_frame": "document",
         "queries": list(Query.model_fields["kind"].annotation.__args__),
         "operations": list(Operation.model_fields["kind"].annotation.__args__),
+        "primitives": list(Operation.model_fields["primitive"].annotation.__args__),
         "limits": {"queries": 16, "points": 256, "jobs": 32, "candidates": 64},
         "supports": {
             "STEP": [

@@ -751,8 +751,12 @@ def preparar_candidato(id: str, revision: str, state_revision: str, request_id: 
                        indicacion: str | None = None, resumen: str = "") -> dict:
     """Prepara hasta 16 operaciones sin alterar el documento. request_id es
     idempotente: reintentar con idéntico contenido. transform usa rotaciones
-    XYZ grados alrededor de origin y luego translation mm. Booleanas usan
-    box/cylinder centrado; size del cilindro es (diámetro, reservado, altura).
+    XYZ grados alrededor de origin y luego translation mm. scale: factor por
+    eje (0.01-100) en torno al centro de la pieza. align: other + mode
+    center|min|max|stack (+ axes x/y/z; stack solo z). drop_to_bed: normal de
+    la cara que apoya (por defecto -Z). Booleanas (union/subtract/intersect):
+    útil primitive centrado (box, cylinder, sphere, cone, torus, wedge, tube;
+    size en mm según la forma) o other = otra pieza, que no cambia.
     deform_region STL desplaza vértices con caída radial, requiere revisión
     de autointersecciones. indicacion vincula el candidato a una indicación
     de intents_view; resumen (<=500) es tu explicación humana del cambio.
