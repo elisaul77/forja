@@ -43,27 +43,197 @@ def expect(doc_id, rev, srev):
         )
 
 
+MAX_UTIL_MM = 2000
+TESELA = 64
+COMUNES = ("scale", "align", "drop_to_bed")  # no dependen de la forma de la pieza
+BOOLEANAS = ("union", "subtract", "intersect")
+
+
 def _validar_util(op):
-    """A cylinder's size[1] is unused (only diameter and height count), so it
-    may be 0; a box needs all three sides positive."""
-    dimensiones = op.size if op.primitive == "box" else (op.size[0], op.size[2])
-    if min(dimensiones) <= 0:
+    """Dimensiones del útil en mm (positivas, con tope). Según la forma:
+    box X, Y, Z · cylinder diámetro, reservado, altura · sphere diámetro ·
+    cone diámetro de la base, reservado, altura · torus diámetro exterior y
+    diámetro del tubo · wedge X, Y, Z (cuña rectángulo) · tube diámetro
+    exterior, diámetro interior, altura. Lo no usado puede ser 0."""
+    s = op.size
+    usadas = {
+        "box": (s[0], s[1], s[2]),
+        "wedge": (s[0], s[1], s[2]),
+        "cylinder": (s[0], s[2]),
+        "cone": (s[0], s[2]),
+        "sphere": (s[0],),
+        "torus": (s[0], s[1]),
+        "tube": (s[0], s[1], s[2]),
+    }[op.primitive]
+    if min(usadas) <= 0:
         raise ValueError("Dimensiones del útil deben ser positivas")
+    if max(abs(x) for x in usadas) > MAX_UTIL_MM:
+        raise ValueError(f"Dimensiones del útil fuera de límite ({MAX_UTIL_MM} mm)")
+    if op.primitive in ("torus", "tube") and s[1] >= s[0]:
+        raise ValueError(
+            "El diámetro del tubo debe ser menor que el exterior"
+            if op.primitive == "torus"
+            else "El diámetro interior debe ser menor que el exterior"
+        )
+
+
+def primitiva_malla(op):
+    """Útil como malla cerrada, centrada en el origen (la caja envolvente queda
+    centrada, como en `primitiva_forma`)."""
+    _validar_util(op)
+    s = op.size
+    if op.primitive == "box":
+        return trimesh.creation.box(extents=s)
+    if op.primitive == "cylinder":
+        return trimesh.creation.cylinder(radius=s[0] / 2, height=s[2], sections=TESELA)
+    if op.primitive == "sphere":
+        return trimesh.creation.uv_sphere(radius=s[0] / 2, count=[TESELA, TESELA])
+    if op.primitive == "cone":
+        m = trimesh.creation.cone(radius=s[0] / 2, height=s[2], sections=TESELA)
+        m.apply_translation([0, 0, -s[2] / 2])
+        return m
+    if op.primitive == "torus":
+        return trimesh.creation.torus(
+            major_radius=(s[0] - s[1]) / 2,
+            minor_radius=s[1] / 2,
+            major_sections=TESELA,
+            minor_sections=32,
+        )
+    if op.primitive == "tube":
+        return trimesh.creation.annulus(
+            r_min=s[1] / 2, r_max=s[0] / 2, height=s[2], sections=TESELA
+        )
+    return _cuna_malla(s)
+
+
+def _cuna_malla(s):
+    """Prisma triangular: perfil rectángulo en XZ con catetos X y Z, extruido en Y.
+    Igual que `Wedge(X, Y, Z, 0, 0, 0, Z)` del núcleo B-rep."""
+    x, y, z = s[0] / 2, s[1] / 2, s[2] / 2
+    v = [
+        (-x, -y, -z), (x, -y, -z), (-x, -y, z),
+        (-x, y, -z), (x, y, -z), (-x, y, z),
+    ]
+    faces = [
+        (0, 1, 2), (3, 5, 4),  # caras triangulares
+        (0, 3, 4), (0, 4, 1),  # base
+        (1, 4, 5), (1, 5, 2),  # cara inclinada
+        (0, 2, 5), (0, 5, 3),  # cara vertical
+    ]
+    m = trimesh.Trimesh(vertices=v, faces=faces, process=True)
+    m.fix_normals()
+    return m
+
+
+def primitiva_forma(op):
+    """Útil B-rep centrado en el origen, mismas dimensiones que `primitiva_malla`."""
+    _validar_util(op)
+    s = op.size
+    dims = {
+        "box": s,
+        "wedge": s,
+        "cylinder": (s[0] / 2, s[2]),
+        "sphere": (s[0] / 2,),
+        "cone": (s[0] / 2, s[2]),
+        "torus": ((s[0] - s[1]) / 2, s[1] / 2),
+        "tube": (s[0] / 2, s[1] / 2, s[2]),
+    }[op.primitive]
+    return b123d_kernel.forma_primitiva(op.primitive, tuple(float(d) for d in dims))
+
+
+def _limites(obj):
+    """Caja envolvente (min, max) de una malla o de un sólido B-rep."""
+    if isinstance(obj, trimesh.Trimesh):
+        return np.asarray(obj.bounds[0], float), np.asarray(obj.bounds[1], float)
+    bb = obj.bounding_box(optimal=True)
+    return _punto(bb.min), _punto(bb.max)
+
+
+def _punto(v):
+    return np.array([v.X, v.Y, v.Z], float)
+
+
+def _mover_rigido(obj, transform):
+    if isinstance(obj, trimesh.Trimesh):
+        moved = obj.copy()
+        moved.apply_transform(transform)
+        return moved
+    return transform_shape_matrix(obj, transform)
+
+
+def _matriz_en(rotacion, centro):
+    """Giro `rotacion` (3x3) alrededor de `centro`."""
+    m = np.eye(4)
+    m[:3, :3] = rotacion
+    m[:3, 3] = centro - rotacion @ centro
+    return m
+
+
+def _editar_comun(obj, op, auxiliar):
+    """Escala, alinear y apoyar sobre cama: iguales para malla y B-rep."""
+    if op.kind == "scale":
+        lo, hi = _limites(obj)
+        factor = np.asarray(op.factor, float)
+        if isinstance(obj, trimesh.Trimesh):
+            moved = obj.copy()
+            moved.apply_transform(_matriz_en(np.diag(factor), (lo + hi) / 2))
+            return moved
+        return b123d_kernel.escalar(
+            obj, tuple(float(f) for f in factor), tuple(float(c) for c in (lo + hi) / 2)
+        )
+    if op.kind == "align":
+        if auxiliar is None:
+            raise ValueError("Falta la pieza de referencia")
+        lo, hi = _limites(obj)
+        olo, ohi = _limites(auxiliar)
+        d = np.zeros(3)
+        if op.mode == "stack":
+            d[2] = ohi[2] - lo[2]
+        else:
+            for i in (("x", "y", "z").index(a) for a in (op.axes or ["x", "y", "z"])):
+                d[i] = {
+                    "min": olo[i] - lo[i],
+                    "max": ohi[i] - hi[i],
+                    "center": (olo[i] + ohi[i]) / 2 - (lo[i] + hi[i]) / 2,
+                }[op.mode]
+        return _mover_rigido(obj, _traslacion(d))
+    # drop_to_bed: gira la cara elegida hacia -Z y deja la base en z = 0.
+    down = np.array([0.0, 0.0, -1.0])
+    normal = np.asarray(op.normal, float)
+    normal = normal / np.linalg.norm(normal)
+    if np.allclose(normal, down):
+        rotation = np.eye(3)
+    else:
+        rotation = Rotation.align_vectors([down], [normal])[0].as_matrix()
+    lo, hi = _limites(obj)
+    turned = _matriz_en(rotation, (lo + hi) / 2)
+    zmin = _limites(_mover_rigido(obj, turned))[0][2]
+    turned[2, 3] -= zmin
+    return _mover_rigido(obj, turned)
+
+
+def _traslacion(d):
+    m = np.eye(4)
+    m[:3, 3] = d
+    return m
 
 
 def _ahora() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
-def transform_shape(s, op):
+def transform_shape_matrix(s, transform):
     from build123d import Axis
 
-    transform = matrix(op)
     vector = Rotation.from_matrix(transform[:3, :3]).as_rotvec()
     angle = np.linalg.norm(vector)
     if angle > 1e-12:
         s = s.rotate(Axis((0, 0, 0), tuple(vector / angle)), float(np.degrees(angle)))
     return s.translate(tuple(transform[:3, 3]))
+
+
+def transform_shape(s, op):
+    return transform_shape_matrix(s, matrix(op))
 
 
 def matrix(op):
@@ -75,8 +245,11 @@ def matrix(op):
     return m
 
 
-def edit_mesh(m, op):
+def edit_mesh(m, op, auxiliar=None):
+    """`auxiliar`: malla de la otra pieza cuando la booleana usa `op.other`."""
     m = m.copy()
+    if op.kind in COMUNES:
+        return _editar_comun(m, op, auxiliar)
     if op.kind == "transform":
         m.apply_transform(matrix(op))
         return m
@@ -89,16 +262,16 @@ def edit_mesh(m, op):
         return m
     if op.kind in features.RASGOS:
         return features.aplicar_malla(m, op)
-    _validar_util(op)
-    tool = (
-        trimesh.creation.box(extents=op.size)
-        if op.primitive == "box"
-        else trimesh.creation.cylinder(
-            radius=op.size[0] / 2, height=op.size[2], sections=64
-        )
-    )
-    tool.apply_transform(geo.rotation_matrix(op.rotation_deg))
-    tool.apply_translation(op.center)
+    if op.other is not None:
+        if auxiliar is None:
+            raise ValueError("Falta la pieza auxiliar de la booleana")
+        tool = auxiliar.copy()
+        if not tool.is_volume:
+            raise ValueError("La pieza auxiliar debe ser un volumen cerrado y orientado")
+    else:
+        tool = primitiva_malla(op)
+        tool.apply_transform(geo.rotation_matrix(op.rotation_deg))
+        tool.apply_translation(op.center)
     fn = {
         "union": trimesh.boolean.union,
         "subtract": trimesh.boolean.difference,
@@ -109,22 +282,26 @@ def edit_mesh(m, op):
     return fn([m, tool], engine="manifold")
 
 
-def edit_shape(s, op):
-    from build123d import Box, Cylinder, Compound
+def edit_shape(s, op, auxiliar=None):
+    from build123d import Compound
 
+    if op.kind in COMUNES:
+        return _editar_comun(s, op, auxiliar)
     if op.kind == "transform":
         return transform_shape(s, op)
     if op.kind == "deform_region":
         raise ValueError("Deformación regional solo disponible para STL")
     if op.kind in features.RASGOS:
         return features.aplicar_brep(s, op)
-    _validar_util(op)
-    tool = (
-        Box(*op.size) if op.primitive == "box" else Cylinder(op.size[0] / 2, op.size[2])
-    )
-    tool = transform_shape(
-        tool, op.model_copy(update={"origin": (0, 0, 0), "translation": op.center})
-    )
+    if op.other is not None:
+        if auxiliar is None:
+            raise ValueError("Falta la pieza auxiliar de la booleana")
+        tool = auxiliar
+    else:
+        tool = transform_shape(
+            primitiva_forma(op),
+            op.model_copy(update={"origin": (0, 0, 0), "translation": op.center}),
+        )
     result = {
         "union": lambda: s + tool,
         "subtract": lambda: s - tool,
@@ -135,6 +312,19 @@ def edit_shape(s, op):
     if not result.solids() or not result.is_valid:
         raise ValueError("La operación produjo CAD vacío o inválido")
     return result
+
+
+def _limitaciones(operaciones):
+    texto = []
+    if any(op.kind == "deform_region" for op in operaciones):
+        texto.append(
+            "Deformación regional conserva conectividad pero requiere revisar autointersecciones"
+        )
+    if any(op.other is not None and op.kind in BOOLEANAS for op in operaciones):
+        texto.append(
+            "La pieza auxiliar de la booleana no cambia; para un solo cuerpo, bórrala tras aplicar"
+        )
+    return texto
 
 
 def prepare(doc_id, body):
@@ -168,6 +358,8 @@ def prepare(doc_id, body):
         for op in body.operations:
             if op.piece not in before:
                 raise ValueError("Pieza desconocida")
+            if op.other is not None and op.other not in before:
+                raise ValueError("Pieza auxiliar desconocida")
             role = design.parts.get(op.piece, state.PartRole())
             if role.locked or role.role != "design":
                 raise ValueError(f"Pieza protegida: {op.piece}")
@@ -179,12 +371,16 @@ def prepare(doc_id, body):
                 for n, ss in incorporar._grupos_origen(doc_id, path, None).items()
             }
             for op in body.operations:
-                shapes[op.piece] = edit_shape(shapes[op.piece], op)
+                shapes[op.piece] = edit_shape(
+                    shapes[op.piece], op, shapes.get(op.other) if op.other else None
+                )
             after = {n: km.tessellate_para_exportar(s) for n, s in shapes.items()}
         else:
             after = {n: m.copy() for n, m in before.items()}
             for op in body.operations:
-                after[op.piece] = edit_mesh(after[op.piece], op)
+                after[op.piece] = edit_mesh(
+                    after[op.piece], op, after.get(op.other) if op.other else None
+                )
         if any(
             not len(m.faces) or not np.isfinite(m.vertices).all()
             for m in after.values()
@@ -261,11 +457,7 @@ def prepare(doc_id, body):
                 "difference": analysis.compare(before, after),
                 "operations": [op.model_dump() for op in body.operations],
                 "preview_url": f"/documentos/{doc_id}/design/candidates/{key}/preview",
-                "limitations": [
-                    "Deformación regional conserva conectividad pero requiere revisar autointersecciones"
-                ]
-                if any(op.kind == "deform_region" for op in body.operations)
-                else [],
+                "limitations": _limitaciones(body.operations),
             }
             (p / "manifest.json").write_text(json.dumps(result))
             return result

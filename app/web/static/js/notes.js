@@ -19,7 +19,7 @@ import {
   designPiecesOf,
   resolveDesignPiece,
   subsamplePoints,
-} from "./design.js?v=10";
+} from "./design.js?v=11";
 
 // ---------------- Diálogos compartidos (uno solo puede estar abierto a la vez) ----------------
 

@@ -1,6 +1,6 @@
 """Pure schemas shared by MCP and HTTP; no backend registry imports."""
 
-from typing import Literal
+from typing import Annotated, Literal
 import numpy as np
 from pydantic import Field, FiniteFloat, model_validator
 import design_state as ds
@@ -25,6 +25,13 @@ REFERENCIA_RASGO = {
     "shell": "cara",
     "push_pull": "cara",
 }
+Scale = Annotated[float, Field(ge=0.01, le=100, allow_inf_nan=False)]
+PRIMITIVES = Literal["box", "cylinder", "sphere", "cone", "torus", "wedge", "tube"]
+BOOLEAN_KINDS = ("union", "subtract", "intersect")
+# Campos que solo tienen sentido en algunos tipos. Se comprueban por valor (no por
+# campos enviados): el MCP vuelca el modelo completo con model_dump().
+UNIT_FACTOR = (1, 1, 1)
+DEFAULT_NORMAL = (0, 0, -1)
 
 
 class Operation(ds.Model):
@@ -42,6 +49,9 @@ class Operation(ds.Model):
         "mirror",
         "split",
         "mesh_repair",
+        "scale",
+        "align",
+        "drop_to_bed",
     ]
     piece: str = Field(min_length=1, max_length=128)
     translation: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (0, 0, 0)
@@ -50,7 +60,8 @@ class Operation(ds.Model):
     matrix: list[tuple[FiniteFloat, FiniteFloat, FiniteFloat, FiniteFloat]] | None = (
         Field(default=None, min_length=4, max_length=4)
     )
-    primitive: Literal["box", "cylinder"] = "box"
+    # Forma del útil de booleana (tamaños en mm: ver design_operations.primitiva_*).
+    primitive: PRIMITIVES = "box"
     size: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (10, 10, 10)
     center: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = (0, 0, 0)
     radius_mm: FiniteFloat = Field(default=5, gt=0, le=1000)
@@ -62,6 +73,18 @@ class Operation(ds.Model):
     patron: Literal["lineal", "circular"] = "lineal"
     cantidad: int = Field(default=2, ge=2, le=32)
     angulo_deg: FiniteFloat = Field(default=360, gt=0, le=360)
+    # Pieza auxiliar: cuerpo de la booleana (en lugar de una primitiva) o
+    # referencia de alineación. Solo lee la otra pieza; nunca la modifica.
+    other: str | None = Field(default=None, min_length=1, max_length=128)
+    # Escala por eje, en torno al centro de la caja de la pieza.
+    factor: tuple[Scale, Scale, Scale] = UNIT_FACTOR
+    # Alinear: center | min | max (caras) | stack (apoyar sobre la cara superior de other).
+    mode: Literal["center", "min", "max", "stack"] | None = None
+    axes: list[Literal["x", "y", "z"]] | None = Field(
+        default=None, min_length=1, max_length=3
+    )
+    # Apoyar sobre cama: normal de la cara que queda abajo.
+    normal: tuple[FiniteFloat, FiniteFloat, FiniteFloat] = DEFAULT_NORMAL
 
     @model_validator(mode="after")
     def validate_rasgo(self):
@@ -94,6 +117,38 @@ class Operation(ds.Model):
                 raise ValueError(
                     "La matriz debe ser una transformación rígida sin reflexión"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_fields_for_kind(self):
+        def usado(nombre, por_defecto):
+            return getattr(self, nombre) != por_defecto
+
+        if self.other is not None:
+            if self.kind not in (*BOOLEAN_KINDS, "align"):
+                raise ValueError("La pieza auxiliar solo aplica a booleanas o alinear")
+            if self.other == self.piece:
+                raise ValueError("La pieza auxiliar debe ser distinta de la pieza")
+        if self.kind == "align":
+            if self.other is None:
+                raise ValueError("Alinear necesita una pieza de referencia (other)")
+            if self.mode is None:
+                raise ValueError("Alinear necesita un modo: center, min, max o stack")
+            if self.mode == "stack" and self.axes not in (None, ["z"]):
+                raise ValueError("Apilar solo actúa sobre el eje z")
+            if self.axes is not None and len(set(self.axes)) != len(self.axes):
+                raise ValueError("Los ejes de alineación no pueden repetirse")
+        elif self.mode is not None or self.axes is not None:
+            raise ValueError("mode y axes solo aplican a alinear")
+        if usado("factor", UNIT_FACTOR) and self.kind != "scale":
+            raise ValueError("factor solo aplica a escalar")
+        if self.kind == "drop_to_bed":
+            if self.other is not None:
+                raise ValueError("Apoyar sobre cama no usa pieza auxiliar")
+            if float(np.linalg.norm(self.normal)) <= 1e-9:
+                raise ValueError("La normal de la cara debe ser distinta de cero")
+        elif usado("normal", DEFAULT_NORMAL):
+            raise ValueError("normal solo aplica a apoyar sobre cama")
         return self
 
 

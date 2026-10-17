@@ -230,6 +230,84 @@ def test_medida_total_escala_solo_su_eje():
     assert abs(_volumen(doc) - 60 * 30 * 10) < 1.0 and abs(v0 - 40 * 30 * 10) < 1.0
 
 
+def test_escalar_eje_acepta_cilindro_y_verifica_volumen_preciso():
+    # F24b (revision 2, ADR-0026): en un cilindro escalado el .volume de OCC queda
+    # ~0,86 % alto; la comprobacion de volumen de la cota usa la integral preciso
+    # del B-rep, que debe quedar dentro del 0,01 % del valor analitico.
+    from checks.barrido import Presupuesto
+
+    cilindro = Cylinder(5, 10)
+    cota = {"id": "tamano_total:x:15.000", "tipo": "tamano_total", "eje": "x",
+            "valor_mm": 15.0, "operacion": "escalar_eje"}
+    edicion = cotas_geometria._scale_brep(cilindro, cota, 15.0, Presupuesto(2000, 25.0))
+    analitico = math.pi * 5 * 5 * 10 * 1.5
+    assert b123d_kernel.volumen_preciso(edicion.forma) == pytest.approx(analitico, rel=1e-4)
+
+
+def _loft_con_240_secciones():
+    # Loft de splines periodicas: sin escalar, 3 caras; con 240 secciones era la
+    # forma que tardaba 35 s teselada (ADR-0026).
+    from build123d import Solid, Spline, Wire
+
+    secciones = []
+    for i in range(240):
+        z = i * 0.5
+        r0 = 10 + 2 * math.sin(i / 7.0)
+        pts = []
+        for k in range(10):
+            a = 2 * math.pi * k / 10
+            rr = r0 * (1 + 0.15 * math.cos(3 * a + i / 11.0))
+            pts.append((rr * math.cos(a), rr * math.sin(a), z))
+        secciones.append(Wire([Spline(pts, periodic=True)]))
+    return Solid.make_loft(secciones, ruled=False)
+
+
+def test_escalar_eje_loft_pesado_termina_muy_por_debajo_del_presupuesto():
+    import time
+
+    from checks.barrido import Presupuesto
+
+    loft = _loft_con_240_secciones()
+    cota = {"id": "tamano_total:x:60.000", "tipo": "tamano_total", "eje": "x",
+            "valor_mm": 60.0, "operacion": "escalar_eje"}
+    inicio = time.monotonic()
+    edicion = cotas_geometria._scale_brep(loft, cota, 60.0, Presupuesto(200, 30.0))
+    transcurrido = time.monotonic() - inicio
+    assert transcurrido < 5.0, f"escalar un loft de 240 secciones tardó {transcurrido:.2f} s"
+    bb = edicion.forma.bounding_box()
+    assert bb.max.X - bb.min.X == pytest.approx(60.0, abs=1e-3)
+
+
+def test_escalar_eje_mide_una_vez_por_cuerpo(monkeypatch):
+    # F24b (revision): el volumen preciso del cuerpo original se mide una sola
+    # vez; se reutiliza para la cifra "antes" de la comprobacion (2 medidas).
+    from checks.barrido import Presupuesto
+
+    real = b123d_kernel.volumen_preciso
+    llamadas = []
+
+    def contar(shape, *a, **k):
+        llamadas.append(shape)
+        return real(shape, *a, **k)
+
+    monkeypatch.setattr(b123d_kernel, "volumen_preciso", contar)
+    cota = {"id": "tamano_total:x:15.000", "tipo": "tamano_total", "eje": "x",
+            "valor_mm": 15.0, "operacion": "escalar_eje"}
+    cotas_geometria._scale_brep(Cylinder(5, 10), cota, 15.0, Presupuesto(2000, 25.0))
+    assert len(llamadas) == 2
+
+
+def test_escalar_eje_cobra_la_medida_al_presupuesto():
+    # F24b (revision): medir cuesta evaluaciones del Presupuesto de la edicion.
+    # Con 2 evaluaciones solo caben el escalado; la medida debe agotarlo.
+    from checks.barrido import Presupuesto, _Agotado
+
+    cota = {"id": "tamano_total:x:15.000", "tipo": "tamano_total", "eje": "x",
+            "valor_mm": 15.0, "operacion": "escalar_eje"}
+    with pytest.raises(_Agotado):
+        cotas_geometria._scale_brep(Cylinder(5, 10), cota, 15.0, Presupuesto(2, 25.0))
+
+
 def test_malla_stl_escala_el_eje_pedido():
     datos = trimesh.creation.box(extents=(40, 30, 20)).export(file_type="stl")
     doc = client.post("/documentos", files={"file": ("malla.stl", io.BytesIO(datos), "application/sla")}, headers=_h()).json()["id"]

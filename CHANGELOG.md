@@ -41,6 +41,26 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - `render.grupos_desde_shape` usa el tope de triángulos compartido `_teselar_con_tope` (mismo reintento y mismo error).
 - Pendiente: la acción «Captura enfocada» de la cinta sigue `proximamente` (fase F20). Activarla requiere elegir un punto en el visor, que no está en el alcance de esta fase.
 
+### Fixed (escala de cuerpos curvos, revisión de 24b)
+
+- Un cilindro escalado en no uniforme dejaba caras BSPLINE y su `.volume` de OCC salía ~0,86 % alto. El volumen que reporta el diseño sigue siendo el B-rep (registro, vista previa, ramas y `solids.json`, igual que antes): así no aparece un cambio de volumen falso al recargar o cambiar de rama. La comprobación de «Escalar eje» en cotas usa ahora `kernel/b123d_kernel.volumen_preciso` (integración adaptativa de OCC, `BRepGProp`, sin teselar) con `eps` = 1e-3, aprobado: error ~0,004 % del valor analítico en el cilindro y ~0,4 s en un loft de 240 secciones. Sustituye a `kernel/mesh.volumen_malla`, que se elimina. Antes, la cota rechazaba ediciones correctas de cilindros.
+- Pruebas: `test_escala_no_uniforme_de_cilindro_volumen_preciso` (`tests/test_design_ops_transform.py`); `test_escalar_eje_acepta_cilindro_y_verifica_volumen_preciso`, `test_escalar_eje_loft_pesado_termina_muy_por_debajo_del_presupuesto`, `test_escalar_eje_mide_una_vez_por_cuerpo` y `test_escalar_eje_cobra_la_medida_al_presupuesto` (`tests/test_cotas_importadas.py`); y `test_apply_conserva_el_volumen_brep_y_sobrevive_a_la_recarga` y `test_comparar_tras_apply_no_marca_cambio_de_volumen` (`tests/test_design_workspace.py`).
+
+### Added (barra de herramientas, fase 24b)
+
+- Sólido > Transformar: **Mover / Rotar**, **Escalar** (por eje, en torno al centro de la pieza), **Alinear** (centros, caras mínimas o máximas por eje, o apilar sobre otra pieza) y **Apoyar sobre cama** (la cara elegida mira a la cama y la base queda en Z = 0). Cada una abre «Preparar una alternativa manual» en Indicaciones ya ajustada; el resultado es un candidato que se compara antes de aplicar.
+- Sólido > Crear: **Caja**, **Cilindro**, **Esfera**, **Cono**, **Toro**, **Cuña** y **Tubo**, como apoyo (unión) a la pieza seleccionada.
+- Sólido > Booleanas: **Unir**, **Restar** e **Intersectar** con una primitiva o con **otra pieza del documento**. La otra pieza no cambia; el candidato lo indica.
+- Claude > **Pedir cambio con lo seleccionado**: abre Indicaciones con la pieza seleccionada como referencia.
+- Backend (ADR-0026): `scale`, `align` y `drop_to_bed` en el pipeline de candidatos; `other`, `factor`, `mode`, `axes` y `normal`; primitivas `sphere`, `cone`, `torus`, `wedge` y `tube`. Validación estricta: `extra=forbid`, números finitos, factor 0.01–100, dimensiones ≤ 2000 mm, pieza auxiliar existente y distinta. `GET /design/capabilities` lista `primitives`. Sin herramienta MCP nueva.
+- Kernel: `escalar` (BRepBuilderAPI_GTransform) y `forma_primitiva` en `app/kernel/b123d_kernel.py`. `Shape.scale` de build123d se descartó: su escala se pierde al exportar a STEP.
+- Iconos propios para las acciones nuevas en `forja-icons.svg` (8 símbolos).
+
+### Changed (barra de herramientas, fase 24b)
+
+- Registro: 105 acciones (71 listas, 34 «Próximamente»; antes 97 con 56 y 41). Hoja de atajos (`?`): 23 filas, sin cambios (24b no añade atajos).
+- Pruebas: `tests/test_design_ops_transform.py` (47); suite Python completa: 901 pasan, 53 omitidas y 1 fallo ambiental conocido (`test_ruta_dentro_de_fuentes_permitida`); `node --test tests/web/*.test.mjs`: 152 de 152 (incluye `tests/web/transformar.test.mjs`, 13).
+
 ### Added (vista explosionada, F19)
 
 - Vista explosionada de solo visualización (ADR-0027): `captura(id, ..., explosion=0..1)` en MCP y `GET /documentos/{id}/captura?explosion=` separan las piezas con nombre para ver las ocultas. Documentos STEP; `explosion=0` (por defecto) es byte a byte igual que antes (mismo PNG y mismo `X-Forja-Captura`).
