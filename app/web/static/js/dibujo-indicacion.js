@@ -7,6 +7,14 @@ export const MAX_TRAZOS_INDICACION = 32;
 
 const copiarPuntos = (puntos) => puntos.map((p) => [...p]);
 
+/** Botones de la barra del visor que quedan marcados para un modo de `notes.js`. */
+export function claseModo(modo) {
+  return {
+    nota: modo === "nota",
+    pizarra: typeof modo === "string" && modo.startsWith("pizarra"),
+  };
+}
+
 export class BorradorIndicacion {
   constructor() {
     this._trazos = [];

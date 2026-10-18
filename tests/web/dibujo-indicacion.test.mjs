@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   BorradorIndicacion,
   MAX_TRAZOS_INDICACION,
+  claseModo,
 } from "../../app/web/static/js/dibujo-indicacion.js";
 
 // ---------------- Modelo puro: trazos de una indicación en curso ----------------
@@ -180,5 +181,49 @@ test("Terminar sin trazos no envía nada", async () => {
   const ctrl = prepararControlador();
   await ctrl._terminarIndicacion();
   assert.equal(ctrl.modo, "pizarra-dibujando");
+  assert.equal(llamadas.length, 0);
+});
+
+test("claseModo marca el botón de nota o de pizarra según el modo activo", () => {
+  assert.deepEqual(claseModo(null), { nota: false, pizarra: false });
+  assert.deepEqual(claseModo("nota"), { nota: true, pizarra: false });
+  assert.deepEqual(claseModo("pizarra-esperando-cara"), { nota: false, pizarra: true });
+  assert.deepEqual(claseModo("pizarra-vista-pendiente"), { nota: false, pizarra: true });
+  assert.deepEqual(claseModo("pizarra-dibujando"), { nota: false, pizarra: true });
+});
+
+test("el controlador avisa cada cambio de modo: al entrar a dibujar y al terminar, cancelar o Esc", async () => {
+  const cambios = [];
+  const ctrl = new ForjaNotasControlador(fakeViewer(), "doc-modos");
+  ctrl.alCambiarModo = (modo) => cambios.push(modo);
+  ctrl._configPizarraPendiente = { modo: "vista", offset: 0, tipo: "anadir", comentario: "Engrosar" };
+  ctrl._entrarEnDibujo();
+  await trazar(ctrl, [[0, 0], [10, 0]]);
+  assert.deepEqual(cambios, ["pizarra-dibujando"]);
+  await ctrl._terminarIndicacion();
+  assert.deepEqual(cambios, ["pizarra-dibujando", null]);
+
+  cambios.length = 0;
+  ctrl._entrarEnDibujo();
+  ctrl._alTecla({ key: "Escape", target: { tagName: "BODY" }, preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(cambios, ["pizarra-dibujando", null]);
+});
+
+test("Esc dentro de un campo no descarta los trazos de la indicación", async () => {
+  const ctrl = prepararControlador();
+  await trazar(ctrl, [[0, 0], [10, 0]]);
+  await trazar(ctrl, [[0, 5], [10, 5]]);
+  let propagacionParada = false;
+  ctrl._alTecla({
+    key: "Escape",
+    target: { tagName: "INPUT" },
+    preventDefault() {},
+    stopPropagation() {
+      propagacionParada = true;
+    },
+  });
+  assert.equal(ctrl.modo, "pizarra-dibujando");
+  assert.equal(ctrl._borrador.cantidad, 2);
+  assert.equal(propagacionParada, false);
   assert.equal(llamadas.length, 0);
 });

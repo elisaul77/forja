@@ -3,7 +3,8 @@ import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor 
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
 import { ForjaViewer } from "./viewer.js?v=design1-22";
-import { ForjaNotasControlador } from "./notes.js?v=28";
+import { ForjaNotasControlador } from "./notes.js?v=29";
+import { claseModo } from "./dibujo-indicacion.js?v=2";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=5";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=6";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=16";
@@ -220,6 +221,12 @@ export class TabManager {
       const activo = await notas.activarModoPizarra();
       btnPizarra.classList.toggle("is-active", activo);
     });
+    // Cualquier cambio de modo (salir con Terminar/Esc/Cancelar, o la animación) marca los botones.
+    notas.alCambiarModo = (modo) => {
+      const activos = claseModo(modo);
+      btnNota.classList.toggle("is-active", activos.nota);
+      btnPizarra.classList.toggle("is-active", activos.pizarra);
+    };
     const btnPanel = document.createElement("button");
     btnPanel.type = "button";
     btnPanel.className = "fj-btn";

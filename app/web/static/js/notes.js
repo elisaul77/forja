@@ -20,7 +20,7 @@ import {
   resolveDesignPiece,
   subsamplePoints,
 } from "./design.js?v=11";
-import { BorradorIndicacion, MAX_TRAZOS_INDICACION } from "./dibujo-indicacion.js?v=1";
+import { BorradorIndicacion, MAX_TRAZOS_INDICACION } from "./dibujo-indicacion.js?v=2";
 
 // ---------------- Diálogos compartidos (uno solo puede estar abierto a la vez) ----------------
 
@@ -120,6 +120,8 @@ export class ForjaNotasControlador {
     this._intentSesion = null;
     // Lo llama tabs.js para refrescar el panel Indicaciones tras cada marca.
     this.alCambiarMarcas = null;
+    // Lo llama tabs.js con el modo nuevo (null al salir) para sincronizar los botones.
+    this.alCambiarModo = null;
 
     this._alClicar = this._alClicar.bind(this);
     this._alBajarBoton = this._alBajarBoton.bind(this);
@@ -142,11 +144,13 @@ export class ForjaNotasControlador {
     return this._modo;
   }
   set modo(valor) {
+    const anterior = this._modo;
     this._modo = valor;
     if (!valor) {
       this.targetIntent = null;
       this._intentSesion = null;
     }
+    if (valor !== anterior) this.alCambiarModo?.(valor ?? null);
   }
 
   async cargarInicial() {
@@ -670,6 +674,8 @@ export class ForjaNotasControlador {
     const enControl = escribiendo || etiqueta === "BUTTON";
     const tecla = String(ev.key).toLowerCase();
     if (ev.key === "Escape") {
+      // Esc dentro de un campo (p. ej. el deslizador del corte) es de ese campo: no descarta trazos.
+      if (escribiendo) return;
       ev.preventDefault();
       ev.stopPropagation();
       this._cancelarIndicacion();
