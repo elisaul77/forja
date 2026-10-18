@@ -614,3 +614,72 @@ def test_prepare_apply_y_discard_publican_evento(monkeypatch):
     _aplicar(doc, candidate["id"])
     assert capturados and capturados[-1][0] == "anotaciones_actualizadas"
     assert "design" in capturados[-1][3]
+
+
+# ---------------- Indicación con varios trazos de pizarra ----------------
+
+TRAZO_A = [[0, 0, 0], [10, 0, 0]]
+TRAZO_B = [[0, 5, 0], [10, 5, 0]]
+TRAZO_C = [[0, 9, 0], [10, 9, 0]]
+
+
+def _trazo(doc, puntos, comentario="engordar"):
+    return ok(
+        client.post(
+            f"/documentos/{doc}/trazos",
+            json={
+                "tipo": "anadir",
+                "comentario": comentario,
+                "puntos": puntos,
+                "plano_origen": [0, 0, 0],
+                "plano_normal": [0, 0, 1],
+            },
+        )
+    )["n"]
+
+
+def test_indicacion_con_varios_trazos_los_enlaza_a_todos():
+    doc = _doc()
+    marcas = [_trazo(doc, TRAZO_A), _trazo(doc, TRAZO_B), _trazo(doc, TRAZO_C)]
+    piece = ok(client.get(f"/documentos/{doc}/design"))["pieces"][0]["name"]
+    iid = _indicacion(
+        doc,
+        text="Engrosar la base",
+        marks=marcas,
+        piece=piece,
+        points=TRAZO_A + TRAZO_B + TRAZO_C,
+    )["created_intent"]
+    view, lectura = _vista(doc, iid)
+    assert view["marks"] == marcas
+    assert [m["n"] for m in view["marks_detail"]] == marcas
+    assert view["missing_marks"] == []
+    assert lectura["loose_marks"] == []
+    assert view["region"]["points"] == TRAZO_A + TRAZO_B + TRAZO_C
+    # Cada trazo sigue siendo su propia marca: contexto_diseno lo lista con su resumen.
+    assert [m["puntos_resumen"]["n_puntos"] for m in view["marks_detail"]] == [2, 2, 2]
+
+
+def test_adjuntar_mas_trazos_a_una_indicacion_existente():
+    doc = _doc()
+    primera = _trazo(doc, TRAZO_A)
+    iid = _indicacion(doc, text="Engrosar", marks=[primera])["created_intent"]
+    resto = [_trazo(doc, TRAZO_B), _trazo(doc, TRAZO_C)]
+    ok(_usuario(doc, iid, action="attach", marks=resto))
+    view, lectura = _vista(doc, iid)
+    assert view["marks"] == [primera, *resto]
+    assert lectura["loose_marks"] == []
+
+
+def test_payload_legado_de_un_solo_trazo_sigue_funcionando():
+    """El cliente anterior enviaba una marca y la polilínea del trazo como región."""
+    doc = _doc()
+    marca = _trazo(doc, TRAZO_A)
+    piece = ok(client.get(f"/documentos/{doc}/design"))["pieces"][0]["name"]
+    iid = _indicacion(
+        doc, text="Quitar aquí", marks=[marca], piece=piece, points=TRAZO_A
+    )["created_intent"]
+    view, _ = _vista(doc, iid)
+    assert view["marks"] == [marca]
+    assert [m["n"] for m in view["marks_detail"]] == [marca]
+    assert view["region"]["points"] == TRAZO_A
+    assert view["piece"] == piece
