@@ -2,7 +2,7 @@ import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor 
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=design1-22";
+import { ForjaViewer } from "./viewer.js?v=design1-23";
 import { ForjaNotasControlador } from "./notes.js?v=31";
 import { claseModo } from "./dibujo-indicacion.js?v=3";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=5";

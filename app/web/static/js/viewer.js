@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
-import { decodePieceBundle } from "./piece-data.js?v=8";
+import { decodePieceBundle, nombreIdentificado } from "./piece-data.js?v=9";
 import { calcularEncuadre, aplicarMarcosOrtograficos, alturaAlRedimensionar, liberarAristas, liberarMalla } from "./viewer-geometria.js?v=2";
 import { aplicarExplosion } from "./explosion.js?v=1";
 
@@ -423,7 +423,7 @@ export class ForjaViewer {
         geometry.boundingBox = bounds;
         geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere());
         const pieceMesh = new THREE.Mesh(geometry, material.clone());
-        pieceMesh.userData = { triangleIds, pieceName: data.nombre };
+        pieceMesh.userData = { triangleIds, pieceName: nombreIdentificado(manifest, data.nombre) };
         this.scene.add(pieceMesh);
         this.pieces.set(data.nombre, { ...data, mesh: pieceMesh, visible: previous.get(data.nombre) ?? true });
       }
