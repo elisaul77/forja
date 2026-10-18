@@ -20,6 +20,7 @@ import {
   resolveDesignPiece,
   subsamplePoints,
 } from "./design.js?v=11";
+import { BorradorIndicacion, MAX_TRAZOS_INDICACION } from "./dibujo-indicacion.js?v=2";
 
 // ---------------- Diálogos compartidos (uno solo puede estar abierto a la vez) ----------------
 
@@ -110,23 +111,31 @@ export class ForjaNotasControlador {
     this.modo = null; // null | "nota" | "pizarra-esperando-cara" | "pizarra-dibujando"
     this._configPizarraPendiente = null;
     this._trazoActual = null;
+    // Trazos de la indicación en curso ("Dibujar indicación"); nada se guarda hasta «Terminar».
+    this._borrador = null;
+    this._barra = null;
     // Indicación a la que se añade la próxima marca (botón "Añadir otra marca").
     this.targetIntent = null;
     // Indicación creada en esta sesión del modo: las marcas siguientes sin texto se suman a ella.
     this._intentSesion = null;
     // Lo llama tabs.js para refrescar el panel Indicaciones tras cada marca.
     this.alCambiarMarcas = null;
+    // Lo llama tabs.js con el modo nuevo (null al salir) para sincronizar los botones.
+    this.alCambiarModo = null;
 
     this._alClicar = this._alClicar.bind(this);
     this._alBajarBoton = this._alBajarBoton.bind(this);
     this._alMoverMouse = this._alMoverMouse.bind(this);
     this._alSoltarBoton = this._alSoltarBoton.bind(this);
+    this._alTecla = this._alTecla.bind(this);
 
     const canvas = this.viewer.renderer.domElement;
     canvas.addEventListener("click", this._alClicar);
     canvas.addEventListener("mousedown", this._alBajarBoton);
     canvas.addEventListener("mousemove", this._alMoverMouse);
     canvas.addEventListener("mouseup", this._alSoltarBoton);
+    // Captura: Ctrl+Z y Enter/Esc mientras se dibuja no deben llegar al historial ni a otros atajos.
+    window.addEventListener("keydown", this._alTecla, true);
   }
 
   // Salir del modo de nota o de pizarra cancela también la indicación objetivo
@@ -135,11 +144,13 @@ export class ForjaNotasControlador {
     return this._modo;
   }
   set modo(valor) {
+    const anterior = this._modo;
     this._modo = valor;
     if (!valor) {
       this.targetIntent = null;
       this._intentSesion = null;
     }
+    if (valor !== anterior) this.alCambiarModo?.(valor ?? null);
   }
 
   async cargarInicial() {
@@ -161,6 +172,7 @@ export class ForjaNotasControlador {
     canvas.removeEventListener("mousedown", this._alBajarBoton);
     canvas.removeEventListener("mousemove", this._alMoverMouse);
     canvas.removeEventListener("mouseup", this._alSoltarBoton);
+    window.removeEventListener("keydown", this._alTecla, true);
   }
 
   invalidarCaras() {
@@ -276,7 +288,7 @@ export class ForjaNotasControlador {
       return;
     }
     await this.recargar();
-    await this._vincularMarca(nota.n, comentario, {
+    await this._vincularMarcas([nota.n], comentario, {
       pieza: this._piezaDe(hit.pieceName),
       puntos: [hit.punto],
     }, destino);
@@ -291,10 +303,10 @@ export class ForjaNotasControlador {
     return resolveDesignPiece(piezas, nombre) ?? undefined;
   }
 
-  /** Une una marca recién guardada a una indicación: una nueva, o la objetivo
-   * si el usuario pulsó "Añadir otra marca". Nunca falla en silencio: la
-   * marca ya está guardada aunque la indicación no se cree. */
-  async _vincularMarca(n, texto, { pieza, puntos }, destino = null) {
+  /** Une marcas recién guardadas (uno o varios trazos) a una indicación: una nueva, o la objetivo
+   * si el usuario pulsó "Añadir otra marca". Nunca falla en silencio: las marcas
+   * ya están guardadas aunque la indicación no se cree. */
+  async _vincularMarcas(marcas, texto, { pieza, puntos }, destino = null) {
     texto = (texto ?? "").trim();
     // Sin indicación objetivo ni texto (el diálogo ya se mostró): se suma a la
     // indicación creada en esta sesión; si no hay, la marca queda suelta.
@@ -306,11 +318,11 @@ export class ForjaNotasControlador {
     }
     try {
       if (destino) {
-        await sendIntentAction(this.docId, destino, { action: "attach", marks: [n] });
+        await sendIntentAction(this.docId, destino, { action: "attach", marks: marcas });
       } else {
         const cuerpo = {
           text: texto,
-          marks: [n],
+          marks: marcas,
           ...(pieza ? { piece: pieza } : {}),
           ...(puntos?.length ? { points: subsamplePoints(puntos) } : {}),
         };
@@ -323,7 +335,7 @@ export class ForjaNotasControlador {
           delete cuerpo.piece;
           leido = await createIntent(this.docId, cuerpo);
         }
-        const creada = (leido?.design?.intents ?? []).find((i) => (i.marks ?? []).includes(n));
+        const creada = (leido?.design?.intents ?? []).find((i) => (i.marks ?? []).some((m) => marcas.includes(m)));
         if (creada && this.modo) this._intentSesion = creada.id;
       }
     } catch (error) {
@@ -391,18 +403,76 @@ export class ForjaNotasControlador {
   _colocarPlanoYEmpezarDibujo(origen, normal, referenciaCara) {
     this.viewer.mostrarPlanoPizarra(origen, normal);
     this._referenciaPizarra = referenciaCara;
-    this.modo = "pizarra-dibujando";
+    this._entrarEnDibujo();
     this._controlesDeDibujo(true);
   }
 
   _salirDeModoPizarra() {
     this._terminarCorte();
+    this._quitarBarra();
     this.viewer.ocultarPlanoPizarra();
     this._controlesDeDibujo(false);
     this.modo = null;
     this._trazoActual = null;
+    this._borrador = null;
     this._configPizarraPendiente = null;
     this._referenciaPizarra = null;
+  }
+
+  /** Entra en el modo de dibujo: la indicación empieza vacía y la barra queda visible
+   * hasta «Terminar» o «Cancelar». Cada trazo suelto añade a la misma indicación. */
+  _entrarEnDibujo() {
+    this.modo = "pizarra-dibujando";
+    this._borrador = new BorradorIndicacion();
+    this._mostrarBarra();
+  }
+
+  /** Barra flotante de la indicación: contador, deshacer, terminar y cancelar. */
+  _mostrarBarra() {
+    this._quitarBarra();
+    const contenedor = this.viewer.container;
+    if (getComputedStyle(contenedor).position === "static") contenedor.style.position = "relative";
+    const barra = document.createElement("div");
+    barra.className = "fj-barra-indicacion";
+    barra.setAttribute("role", "toolbar");
+    barra.setAttribute("aria-label", "Indicación en curso");
+    barra.style.cssText =
+      "position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:20;display:flex;gap:8px;" +
+      "align-items:center;flex-wrap:wrap;justify-content:center;padding:8px 12px;border-radius:8px;" +
+      "background:var(--fj-raised,#26211d);color:var(--fj-text,#ece6df);border:1px solid var(--fj-line,#3a332d);" +
+      "font:13px system-ui;max-width:92%";
+    const contador = document.createElement("span");
+    const crearBoton = (texto, alPulsar) => {
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.className = "fj-btn";
+      boton.textContent = texto;
+      boton.addEventListener("click", alPulsar);
+      return boton;
+    };
+    const deshacer = crearBoton("Deshacer trazo", () => this._deshacerTrazo());
+    const terminar = crearBoton("Terminar indicación", () => this._terminarIndicacion());
+    const cancelar = crearBoton("Cancelar", () => this._cancelarIndicacion());
+    const ayuda = document.createElement("span");
+    ayuda.textContent = "Suelta el botón para añadir otro trazo · Enter termina · Esc cancela · Ctrl+Z deshace";
+    ayuda.style.opacity = "0.7";
+    barra.append(contador, deshacer, terminar, cancelar, ayuda);
+    contenedor.appendChild(barra);
+    this._barra = { barra, contador, deshacer, terminar };
+    this._actualizarBarra();
+  }
+
+  _actualizarBarra() {
+    if (!this._barra) return;
+    const n = this._borrador?.cantidad ?? 0;
+    this._barra.contador.textContent = n === 0 ? "Sin trazos" : n === 1 ? "1 trazo" : `${n} trazos`;
+    this._barra.deshacer.disabled = n === 0;
+    this._barra.terminar.disabled = n === 0;
+  }
+
+  _quitarBarra() {
+    this._barra?.barra.remove();
+    this._barra = null;
   }
 
   /** Plano XY/XZ/YZ movible: vista de frente + corte en vivo; se dibuja sobre el corte. */
@@ -448,7 +518,7 @@ export class ForjaNotasControlador {
     this.viewer.mirarDeFrente(normal);
     colocar();
     this._referenciaPizarra = null;
-    this.modo = "pizarra-dibujando";
+    this._entrarEnDibujo();
     this._controlesDeDibujo(true);
   }
 
@@ -476,7 +546,7 @@ export class ForjaNotasControlador {
     const origen = base.map((v, i) => v + normal[i] * offset);
     this.viewer.mostrarPlanoPizarra(origen, normal);
     this._referenciaPizarra = null;
-    this.modo = "pizarra-dibujando";
+    this._entrarEnDibujo();
   }
 
   /** While drawing: wheel zooms, right button pans, left button draws (no rotation). */
@@ -501,10 +571,7 @@ export class ForjaNotasControlador {
     const punto = this.viewer.proyectarEnPlanoPizarra(ev.clientX, ev.clientY);
     if (!punto) return;
     this._trazoActual = [punto];
-    this.viewer.mostrarAnotaciones(this.notas, [
-      ...this.trazos,
-      { tipo: this._configPizarraPendiente.tipo, visible: true, puntos: this._trazoActual },
-    ]);
+    this._pintar(this._trazoActual);
   }
 
   _alMoverMouse(ev) {
@@ -512,40 +579,115 @@ export class ForjaNotasControlador {
     const punto = this.viewer.proyectarEnPlanoPizarra(ev.clientX, ev.clientY);
     if (!punto) return;
     this._trazoActual.push(punto);
-    this.viewer.mostrarAnotaciones(this.notas, [
-      ...this.trazos,
-      { tipo: this._configPizarraPendiente.tipo, visible: true, puntos: this._trazoActual },
-    ]);
+    this._pintar(this._trazoActual);
   }
 
-  async _alSoltarBoton(ev) {
+  /** Al soltar, el trazo pasa al borrador de la indicación y el modo sigue activo:
+   * nada se guarda hasta «Terminar». */
+  _alSoltarBoton(ev) {
     if (this.modo !== "pizarra-dibujando" || ev.button !== 0 || this._trazoActual === null) return;
     const puntos = this._trazoActual;
-    // Antes de salir del modo de pizarra (que borra targetIntent).
-    const destino = this.targetIntent;
     this._trazoActual = null;
-    if (puntos.length < 2) {
-      this.viewer.mostrarAnotaciones(this.notas, this.trazos);
+    if (!this._borrador.añadirTrazo(puntos) && puntos.length >= 2) {
+      avisarFeedback(`Una indicación admite hasta ${MAX_TRAZOS_INDICACION} trazos; termínala para empezar otra.`);
+    }
+    this._pintar(null);
+    this._actualizarBarra();
+  }
+
+  /** Dibuja los trazos de la indicación en curso más el que se está dibujando. */
+  _pintar(trazoActual) {
+    const { tipo } = this._configPizarraPendiente;
+    const enCurso = (this._borrador?.trazos ?? []).map((puntos) => ({ tipo, visible: true, puntos }));
+    if (trazoActual) enCurso.push({ tipo, visible: true, puntos: trazoActual });
+    this.viewer.mostrarAnotaciones(this.notas, [...this.trazos, ...enCurso]);
+  }
+
+  /** «Terminar indicación»: guarda cada trazo como marca y enlaza todas a una sola
+   * indicación (la nueva, o la objetivo de «Añadir otra marca»). */
+  async _terminarIndicacion() {
+    if (this.modo !== "pizarra-dibujando" || !this._borrador) return;
+    const trazos = this._borrador.finalizar();
+    if (!trazos) {
+      avisarFeedback("Dibuja al menos un trazo antes de terminar la indicación.");
       return;
     }
     const { tipo, comentario } = this._configPizarraPendiente;
     const plano = this.viewer._planoPizarra;
-    const trazo = await crearTrazo(this.docId, {
-      tipo,
-      comentario,
-      puntos,
-      plano_origen: plano.origen,
-      plano_normal: plano.normal,
-      referencia: this._referenciaPizarra,
-    });
+    const referencia = this._referenciaPizarra;
+    // Antes de salir del modo de pizarra (que borra targetIntent) y antes de cualquier await.
+    const destino = this.targetIntent;
+    const puntos = this._borrador.puntos();
+    const pieza = this._piezaDe(this.viewer.selectedPiece);
     this._salirDeModoPizarra();
+
+    const marcas = [];
+    try {
+      for (const puntosTrazo of trazos) {
+        const trazo = await crearTrazo(this.docId, {
+          tipo,
+          comentario,
+          puntos: puntosTrazo,
+          plano_origen: plano.origen,
+          plano_normal: plano.normal,
+          referencia,
+        });
+        marcas.push(trazo.n);
+      }
+    } catch (error) {
+      // Los trazos ya guardados se enlazan igualmente; el aviso dice cuántos faltan.
+      avisarFeedback(`Se guardaron ${marcas.length} de ${trazos.length} trazos: ${error.message ?? error}`);
+      if (!marcas.length) {
+        await this.recargar();
+        return;
+      }
+    }
     await this.recargar();
     // El comentario del diálogo es el texto de la indicación; si está vacío se pregunta una vez.
-    const texto = comentario || (await pedirComentario("¿Qué quieres decir con este trazo?")) || "";
-    await this._vincularMarca(trazo.n, texto, {
-      pieza: this._piezaDe(this.viewer.selectedPiece),
-      puntos,
-    }, destino);
+    const texto = comentario || (await pedirComentario("¿Qué quieres decir con esta indicación?")) || "";
+    await this._vincularMarcas(marcas, texto, { pieza, puntos }, destino);
+  }
+
+  /** «Cancelar» o Esc: descarta todos los trazos sin guardar nada. */
+  _cancelarIndicacion() {
+    if (this.modo !== "pizarra-dibujando") return;
+    this._salirDeModoPizarra();
+  }
+
+  /** «Deshacer trazo» o Ctrl+Z: quita solo el último trazo. */
+  _deshacerTrazo() {
+    if (this.modo !== "pizarra-dibujando" || !this._borrador) return;
+    if (!this._borrador.deshacerTrazo()) {
+      avisarFeedback("No hay trazos que deshacer.");
+      return;
+    }
+    this._pintar(null);
+    this._actualizarBarra();
+  }
+
+  /** Teclado mientras se dibuja: Enter termina, Esc cancela, Ctrl+Z deshace el último trazo.
+   * Enter y Ctrl+Z se dejan a los controles con foco (botones, campos de texto). */
+  _alTecla(ev) {
+    if (this.modo !== "pizarra-dibujando") return;
+    const etiqueta = ev.target?.tagName;
+    const escribiendo = ["INPUT", "TEXTAREA", "SELECT"].includes(etiqueta);
+    const enControl = escribiendo || etiqueta === "BUTTON";
+    const tecla = String(ev.key).toLowerCase();
+    if (ev.key === "Escape") {
+      // Esc dentro de un campo (p. ej. el deslizador del corte) es de ese campo: no descarta trazos.
+      if (escribiendo) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      this._cancelarIndicacion();
+    } else if (ev.key === "Enter" && !enControl) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      void this._terminarIndicacion();
+    } else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && tecla === "z" && !escribiendo) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this._deshacerTrazo();
+    }
   }
 
   // ---------------- panel lateral: notas ----------------

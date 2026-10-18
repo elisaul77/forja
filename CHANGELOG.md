@@ -7,6 +7,10 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (dibujo de indicaciones)
+
+- «Dibujar indicación» admite varios trazos por indicación: cada trazo se añade y el modo sigue activo hasta «Terminar indicación» (Enter), «Deshacer trazo» (Ctrl+Z) o «Cancelar» (Esc, sin guardar nada). Lógica en `app/web/static/js/dibujo-indicacion.js` (nuevo); `notes.js` `?v=28`, `tabs.js` `?v=55`, `app.js` `?v=58`. El backend no cambia: la indicación ya admitía varias marcas.
+
 ### Added (rasgos de modificación, fase 24d)
 
 - Rasgos de modificación como candidatos (ADR 0029): filete, chaflán, vaciado, desfase de cara, matriz lineal o circular, simetría, dividir por plano y reparación de malla. Son `kind` nuevas de `Operation` (`fillet`, `chamfer`, `shell`, `push_pull`, `pattern`, `mirror`, `split`, `mesh_repair`); no hay herramienta MCP nueva.
