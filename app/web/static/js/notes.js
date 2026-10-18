@@ -20,7 +20,7 @@ import {
   resolveDesignPiece,
   subsamplePoints,
 } from "./design.js?v=11";
-import { BorradorIndicacion, MAX_TRAZOS_INDICACION } from "./dibujo-indicacion.js?v=2";
+import { BorradorIndicacion, MAX_TRAZOS_INDICACION, resolverRegionIndicacion } from "./dibujo-indicacion.js?v=3";
 
 // ---------------- Diálogos compartidos (uno solo puede estar abierto a la vez) ----------------
 
@@ -111,6 +111,8 @@ export class ForjaNotasControlador {
     this.modo = null; // null | "nota" | "pizarra-esperando-cara" | "pizarra-dibujando"
     this._configPizarraPendiente = null;
     this._trazoActual = null;
+    // Pieza que toca el trazo en curso (nombre del visor) o null.
+    this._piezaTrazoActual = null;
     // Trazos de la indicación en curso ("Dibujar indicación"); nada se guarda hasta «Terminar».
     this._borrador = null;
     this._barra = null;
@@ -296,11 +298,22 @@ export class ForjaNotasControlador {
 
   /** Nombre canónico de la pieza del golpeo; `undefined` (se omite) si no es inequívoco. */
   _piezaDe(nombreVisor) {
-    const nombre = nombreVisor || this.viewer.selectedPiece;
+    return this._piezaCanonica(nombreVisor || this.viewer.selectedPiece);
+  }
+
+  /** Nombre canónico de una pieza del visor, sin usar la selección; `undefined` si no hay
+   * nombre o no es inequívoco. */
+  _piezaCanonica(nombre) {
+    if (!nombre) return undefined;
     const piezas = designPiecesOf(this.docId);
     // Panel aún sin cargar: el nombre del visor es el candidato; el servidor lo valida.
-    if (!piezas.length) return nombre || undefined;
+    if (!piezas.length) return nombre;
     return resolveDesignPiece(piezas, nombre) ?? undefined;
+  }
+
+  /** Pieza que hay bajo el puntero (nombre del visor), o `null` si no toca ninguna. */
+  _piezaBajo(ev) {
+    return this.viewer.raycastearMalla(ev.clientX, ev.clientY)?.pieceName ?? null;
   }
 
   /** Une marcas recién guardadas (uno o varios trazos) a una indicación: una nueva, o la objetivo
@@ -316,33 +329,62 @@ export class ForjaNotasControlador {
       this.alCambiarMarcas?.();
       return;
     }
+    let sinRegion = false;
     try {
       if (destino) {
         await sendIntentAction(this.docId, destino, { action: "attach", marks: marcas });
       } else {
+        // Una región (points) solo viaja con su pieza: el servidor la rechaza sin ella.
         const cuerpo = {
           text: texto,
           marks: marcas,
-          ...(pieza ? { piece: pieza } : {}),
-          ...(puntos?.length ? { points: subsamplePoints(puntos) } : {}),
+          ...(pieza && puntos?.length ? { piece: pieza, points: subsamplePoints(puntos) } : {}),
         };
         let leido;
         try {
           leido = await createIntent(this.docId, cuerpo);
         } catch (error) {
-          if (!cuerpo.piece) throw error;
-          // Nombre del visor no canónico (STL antiguo): se guarda sin pieza, nunca con otra.
+          // Solo un rechazo de validación (422) reintenta, y sin región: el nombre del
+          // visor no es canónico (STL antiguo) y nunca se guarda con otra pieza.
+          if (!cuerpo.piece || error.status !== 422) throw error;
           delete cuerpo.piece;
+          delete cuerpo.points;
+          sinRegion = true;
           leido = await createIntent(this.docId, cuerpo);
         }
         const creada = (leido?.design?.intents ?? []).find((i) => (i.marks ?? []).some((m) => marcas.includes(m)));
         if (creada && this.modo) this._intentSesion = creada.id;
       }
+      if (sinRegion) avisarFeedback("Indicación guardada sin región: el nombre de la pieza no coincide con el modelo.");
     } catch (error) {
-      avisarFeedback(`La marca se guardó, pero la indicación no: ${error.message ?? error}`);
+      // Atomicidad: sin indicación no quedan marcas huérfanas. Se borran las recién guardadas.
+      const fallidas = await this._descartarMarcas(marcas);
+      const quien = destino ? "No se añadieron a la indicación" : "No se guardó la indicación";
+      const motivo = error.message ?? error;
+      avisarFeedback(
+        fallidas.length
+          ? `${quien}: ${motivo}. No se pudieron descartar estas marcas, que quedan sin indicación: ${fallidas.join(", ")}.`
+          : `${quien}: ${motivo}. Los trazos se descartaron; vuelve a dibujarlos.`,
+      );
+      await this.recargar();
     }
     // «Añadir otra marca» sigue apuntando a la misma indicación hasta salir del modo o cancelar.
     this.alCambiarMarcas?.();
+  }
+
+  /** Borra las marcas (notas o trazos) recién guardadas para una acción que falló.
+   * Devuelve las que no se pudieron borrar, con su motivo. */
+  async _descartarMarcas(marcas) {
+    const fallidas = [];
+    for (const marca of marcas) {
+      try {
+        if (this.notas.some((nota) => nota.n === marca)) await borrarNota(this.docId, marca);
+        else await borrarTrazo(this.docId, marca);
+      } catch (error) {
+        fallidas.push(`${marca} (${error.message ?? error})`);
+      }
+    }
+    return fallidas;
   }
 
   // ---------------- modo "✏ Pizarra" ----------------
@@ -571,6 +613,7 @@ export class ForjaNotasControlador {
     const punto = this.viewer.proyectarEnPlanoPizarra(ev.clientX, ev.clientY);
     if (!punto) return;
     this._trazoActual = [punto];
+    this._piezaTrazoActual = this._piezaBajo(ev);
     this._pintar(this._trazoActual);
   }
 
@@ -579,6 +622,8 @@ export class ForjaNotasControlador {
     const punto = this.viewer.proyectarEnPlanoPizarra(ev.clientX, ev.clientY);
     if (!punto) return;
     this._trazoActual.push(punto);
+    // Pieza del trazo: la primera que toque mientras se dibuja.
+    if (this._piezaTrazoActual === null) this._piezaTrazoActual = this._piezaBajo(ev);
     this._pintar(this._trazoActual);
   }
 
@@ -587,8 +632,10 @@ export class ForjaNotasControlador {
   _alSoltarBoton(ev) {
     if (this.modo !== "pizarra-dibujando" || ev.button !== 0 || this._trazoActual === null) return;
     const puntos = this._trazoActual;
+    const pieza = this._piezaTrazoActual;
     this._trazoActual = null;
-    if (!this._borrador.añadirTrazo(puntos) && puntos.length >= 2) {
+    this._piezaTrazoActual = null;
+    if (!this._borrador.añadirTrazo(puntos, pieza) && puntos.length >= 2) {
       avisarFeedback(`Una indicación admite hasta ${MAX_TRAZOS_INDICACION} trazos; termínala para empezar otra.`);
     }
     this._pintar(null);
@@ -617,8 +664,7 @@ export class ForjaNotasControlador {
     const referencia = this._referenciaPizarra;
     // Antes de salir del modo de pizarra (que borra targetIntent) y antes de cualquier await.
     const destino = this.targetIntent;
-    const puntos = this._borrador.puntos();
-    const pieza = this._piezaDe(this.viewer.selectedPiece);
+    const piezasTrazos = this._borrador.piezas;
     this._salirDeModoPizarra();
 
     const marcas = [];
@@ -642,6 +688,10 @@ export class ForjaNotasControlador {
         return;
       }
     }
+    // Región: la pieza más tocada, con los puntos solo de los trazos realmente guardados.
+    const region = resolverRegionIndicacion(trazos.slice(0, marcas.length), piezasTrazos.slice(0, marcas.length));
+    const pieza = this._piezaCanonica(region.pieza);
+    const puntos = pieza ? region.puntos : [];
     await this.recargar();
     // El comentario del diálogo es el texto de la indicación; si está vacío se pregunta una vez.
     const texto = comentario || (await pedirComentario("¿Qué quieres decir con esta indicación?")) || "";

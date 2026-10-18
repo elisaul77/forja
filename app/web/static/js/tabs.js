@@ -3,8 +3,8 @@ import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor 
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
 import { ForjaViewer } from "./viewer.js?v=design1-22";
-import { ForjaNotasControlador } from "./notes.js?v=29";
-import { claseModo } from "./dibujo-indicacion.js?v=2";
+import { ForjaNotasControlador } from "./notes.js?v=30";
+import { claseModo } from "./dibujo-indicacion.js?v=3";
 import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=5";
 import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=6";
 import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=16";

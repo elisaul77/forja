@@ -4,6 +4,7 @@ import {
   BorradorIndicacion,
   MAX_TRAZOS_INDICACION,
   claseModo,
+  resolverRegionIndicacion,
 } from "../../app/web/static/js/dibujo-indicacion.js";
 
 // ---------------- Modelo puro: trazos de una indicación en curso ----------------
@@ -80,22 +81,41 @@ globalThis.getComputedStyle = () => ({ position: "relative" });
 
 const llamadas = [];
 let contadorTrazos = 0;
+// Fallos simulados del servidor para la indicación (los tests lo activan y lo desactivan).
+const reglas = { fallarIntencion: false, fallarTrazoDesde: 0 };
 globalThis.fetch = async (url, opts = {}) => {
   const cuerpo = opts.body ? JSON.parse(opts.body) : null;
   llamadas.push({ url: String(url), method: opts.method ?? "GET", body: cuerpo });
   let respuesta = {};
+  let status = 200;
   if (String(url).endsWith("/trazos")) {
     contadorTrazos += 1;
-    respuesta = { ...cuerpo, n: `t${contadorTrazos}`, visible: true };
+    if (reglas.fallarTrazoDesde && contadorTrazos >= reglas.fallarTrazoDesde) {
+      status = 500;
+      respuesta = { detail: "trazo simulado" };
+    } else {
+      respuesta = { ...cuerpo, n: `t${contadorTrazos}`, visible: true };
+    }
   } else if (String(url).endsWith("/design/intents")) {
-    respuesta = {
-      created_intent: "i1",
-      design: { intents: [{ id: "i1", marks: cuerpo.marks }] },
-    };
+    // Igual que el servidor: una región (points) exige pieza.
+    if (cuerpo.points && !cuerpo.piece) {
+      status = 422;
+      respuesta = { detail: "Una región necesita pieza" };
+    } else if (reglas.fallarIntencion) {
+      status = 500;
+      respuesta = { detail: "fallo simulado" };
+    } else {
+      respuesta = {
+        created_intent: "i1",
+        design: { intents: [{ id: "i1", marks: cuerpo.marks }] },
+      };
+    }
+  } else if (String(url).includes("/trazos/") && opts.method === "DELETE") {
+    respuesta = { ok: true };
   } else if (String(url).includes("/notas?")) {
     respuesta = { resumen: [] };
   }
-  return { ok: true, status: 200, json: async () => respuesta };
+  return { ok: status < 400, status, json: async () => respuesta };
 };
 
 const { ForjaNotasControlador } = await import("../../app/web/static/js/notes.js");
@@ -111,6 +131,7 @@ function fakeViewer() {
     mostrarPlanoPizarra() {},
     ocultarPlanoPizarra() {},
     proyectarEnPlanoPizarra: (x, y) => [x, y, 0],
+    raycastearMalla: () => null,
   };
 }
 
@@ -226,4 +247,123 @@ test("Esc dentro de un campo no descarta los trazos de la indicación", async ()
   assert.equal(ctrl._borrador.cantidad, 2);
   assert.equal(propagacionParada, false);
   assert.equal(llamadas.length, 0);
+});
+
+// ---------------- Varios trazos: pieza por trazo y región sin huérfanos ----------------
+
+test("cada trazo recuerda la pieza que tocó y deshacer la quita con él", () => {
+  const borrador = new BorradorIndicacion();
+  borrador.añadirTrazo([[0, 0, 0], [1, 0, 0]], "Base");
+  borrador.añadirTrazo([[5, 5, 5], [6, 5, 5]]);
+  assert.deepEqual(borrador.piezas, ["Base", null]);
+  borrador.deshacerTrazo();
+  assert.deepEqual(borrador.piezas, ["Base"]);
+});
+
+test("la región es la pieza que más trazos tocan, con solo los puntos de esos trazos", () => {
+  const trazos = [
+    [[0, 0, 0], [1, 0, 0]],
+    [[0, 5, 0], [1, 5, 0]],
+    [[9, 9, 9], [8, 8, 8]],
+  ];
+  assert.deepEqual(resolverRegionIndicacion(trazos, ["A", "B", "B"]), {
+    pieza: "B",
+    puntos: [[0, 5, 0], [1, 5, 0], [9, 9, 9], [8, 8, 8]],
+  });
+});
+
+test("si ningún trazo toca una pieza la indicación no lleva región", () => {
+  const trazos = [[[0, 0, 0], [1, 0, 0]], [[0, 5, 0], [1, 5, 0]]];
+  assert.deepEqual(resolverRegionIndicacion(trazos, [null, null]), { pieza: null, puntos: [] });
+});
+
+function visorConPieza(piezaEn) {
+  const visor = fakeViewer();
+  visor.raycastearMalla = (x) => {
+    const pieza = piezaEn(x);
+    return pieza ? { punto: [x, 0, 0], pieceName: pieza } : null;
+  };
+  return visor;
+}
+
+function prepararControladorCon(visor, docId) {
+  llamadas.length = 0;
+  contadorTrazos = 0;
+  const ctrl = new ForjaNotasControlador(visor, docId);
+  ctrl._configPizarraPendiente = { modo: "vista", offset: 0, tipo: "anadir", comentario: "Engrosar la base" };
+  ctrl._entrarEnDibujo();
+  return ctrl;
+}
+
+test("varios trazos sobre una pieza: la indicación lleva esa pieza y solo sus puntos", async () => {
+  const ctrl = prepararControladorCon(visorConPieza((x) => (x < 50 ? "Base" : null)), "doc-varios");
+  await trazar(ctrl, [[0, 0], [10, 0]]);
+  await trazar(ctrl, [[0, 5], [10, 5]]);
+  await trazar(ctrl, [[100, 0], [110, 0]]);
+  await ctrl._terminarIndicacion();
+
+  const indicacion = llamadas.find((l) => l.url.endsWith("/design/intents"));
+  assert.ok(indicacion, "debe crear la indicación");
+  assert.equal(indicacion.body.piece, "Base");
+  assert.deepEqual(indicacion.body.points, [[0, 0, 0], [10, 0, 0], [0, 5, 0], [10, 5, 0]]);
+  assert.deepEqual(indicacion.body.marks, ["t1", "t2", "t3"]);
+  assert.equal(ctrl.modo, null);
+});
+
+test("trazos sobre el vacío: la indicación se crea sin región y sin error", async () => {
+  const ctrl = prepararControladorCon(visorConPieza(() => null), "doc-vacio");
+  await trazar(ctrl, [[0, 0], [10, 0]]);
+  await trazar(ctrl, [[0, 5], [10, 5]]);
+  await ctrl._terminarIndicacion();
+
+  const indicacion = llamadas.find((l) => l.url.endsWith("/design/intents"));
+  assert.ok(indicacion, "debe crear la indicación");
+  assert.equal(indicacion.body.piece, undefined);
+  assert.equal(indicacion.body.points, undefined);
+  assert.deepEqual(indicacion.body.marks, ["t1", "t2"]);
+  assert.equal(indicacion.body.text, "Engrosar la base");
+  assert.deepEqual(llamadas.filter((l) => l.method === "DELETE"), []);
+});
+
+test("si la indicación no se crea, los trazos guardados se descartan y el aviso lo dice", async () => {
+  const feedback = fakeEl();
+  const documentoAnterior = globalThis.document;
+  globalThis.document = {
+    getElementById: (id) => (id === "fj-feedback" ? feedback : null),
+    createElement: () => fakeEl(),
+  };
+  reglas.fallarIntencion = true;
+  try {
+    const ctrl = prepararControladorCon(visorConPieza((x) => (x < 50 ? "Base" : null)), "doc-fallo");
+    await trazar(ctrl, [[0, 0], [10, 0]]);
+    await trazar(ctrl, [[0, 5], [10, 5]]);
+    await ctrl._terminarIndicacion();
+
+    const borrados = llamadas.filter((l) => l.method === "DELETE").map((l) => l.url);
+    assert.equal(borrados.length, 2, "cada trazo recién guardado se borra");
+    assert.ok(borrados[0].endsWith("/trazos/t1") && borrados[1].endsWith("/trazos/t2"));
+    assert.match(feedback.textContent, /No se guardó la indicación/);
+    assert.match(feedback.textContent, /descartaron/);
+  } finally {
+    reglas.fallarIntencion = false;
+    globalThis.document = documentoAnterior;
+  }
+});
+
+test("si algún trazo no se llega a guardar, la región solo cubre los trazos guardados", async () => {
+  reglas.fallarTrazoDesde = 2;
+  try {
+    const ctrl = prepararControladorCon(visorConPieza((x) => (x < 50 ? "Base" : null)), "doc-parcial");
+    await trazar(ctrl, [[0, 0], [10, 0]]);
+    await trazar(ctrl, [[0, 5], [10, 5]]);
+    await ctrl._terminarIndicacion();
+
+    const indicacion = llamadas.find((l) => l.url.endsWith("/design/intents"));
+    assert.ok(indicacion, "las marcas guardadas se enlazan igualmente");
+    assert.deepEqual(indicacion.body.marks, ["t1"]);
+    assert.equal(indicacion.body.piece, "Base");
+    assert.deepEqual(indicacion.body.points, [[0, 0, 0], [10, 0, 0]]);
+  } finally {
+    reglas.fallarTrazoDesde = 0;
+  }
 });
