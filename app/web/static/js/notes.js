@@ -12,6 +12,7 @@ import {
   crearTrazo,
   borrarTrazo,
   actualizarVisibilidadTrazo,
+  obtenerDisenoDocumento,
 } from "./api.js?v=14";
 import {
   createIntent,
@@ -19,7 +20,7 @@ import {
   designPiecesOf,
   resolveDesignPiece,
   subsamplePoints,
-} from "./design.js?v=11";
+} from "./design.js?v=12";
 import { BorradorIndicacion, MAX_TRAZOS_INDICACION, resolverRegionIndicacion } from "./dibujo-indicacion.js?v=3";
 
 // ---------------- Diálogos compartidos (uno solo puede estar abierto a la vez) ----------------
@@ -89,6 +90,14 @@ function pedirConfigPizarra() {
 }
 
 /** Aviso en la línea de estado del visor (mismo elemento que usan las herramientas). */
+/** Rechazo definitivo del servidor (4xx): la petición no se guardó. */
+function esRechazoDefinitivo(error) {
+  return Number.isInteger(error?.status) && error.status >= 400 && error.status < 500;
+}
+
+/** Intervalo mínimo entre raycasts de un trazo en movimiento (ms). */
+const INTERVALO_RAYCAST_MS = 50;
+
 function avisarFeedback(texto) {
   const feedback = document.getElementById("fj-feedback");
   if (feedback) {
@@ -113,6 +122,7 @@ export class ForjaNotasControlador {
     this._trazoActual = null;
     // Pieza que toca el trazo en curso (nombre del visor) o null.
     this._piezaTrazoActual = null;
+    this._ultimoRaycast = -Infinity;
     // Trazos de la indicación en curso ("Dibujar indicación"); nada se guarda hasta «Terminar».
     this._borrador = null;
     this._barra = null;
@@ -293,6 +303,7 @@ export class ForjaNotasControlador {
     await this._vincularMarcas([nota.n], comentario, {
       pieza: this._piezaDe(hit.pieceName),
       puntos: [hit.punto],
+      tipo: "nota",
     }, destino);
   }
 
@@ -316,10 +327,20 @@ export class ForjaNotasControlador {
     return this.viewer.raycastearMalla(ev.clientX, ev.clientY)?.pieceName ?? null;
   }
 
+  /** Como `_piezaBajo`, pero para el movimiento del trazo: como mucho un raycast cada
+   * INTERVALO_RAYCAST_MS, para no recorrer la malla en cada píxel. */
+  _piezaEnMovimiento(ev) {
+    const ahora = performance.now();
+    if (ahora - this._ultimoRaycast < INTERVALO_RAYCAST_MS) return null;
+    this._ultimoRaycast = ahora;
+    return this._piezaBajo(ev);
+  }
+
   /** Une marcas recién guardadas (uno o varios trazos) a una indicación: una nueva, o la objetivo
    * si el usuario pulsó "Añadir otra marca". Nunca falla en silencio: las marcas
-   * ya están guardadas aunque la indicación no se cree. */
-  async _vincularMarcas(marcas, texto, { pieza, puntos }, destino = null) {
+   * ya están guardadas aunque la indicación no se cree. `tipo` ("nota" | "trazo") dice cómo
+   * se crearon las marcas: solo los trazos de una indicación fallida se descartan. */
+  async _vincularMarcas(marcas, texto, { pieza, puntos, tipo }, destino = null) {
     texto = (texto ?? "").trim();
     // Sin indicación objetivo ni texto (el diálogo ya se mostró): se suma a la
     // indicación creada en esta sesión; si no hay, la marca queda suelta.
@@ -357,29 +378,68 @@ export class ForjaNotasControlador {
       }
       if (sinRegion) avisarFeedback("Indicación guardada sin región: el nombre de la pieza no coincide con el modelo.");
     } catch (error) {
-      // Atomicidad: sin indicación no quedan marcas huérfanas. Se borran las recién guardadas.
-      const fallidas = await this._descartarMarcas(marcas);
+      await this._fallaVinculo(marcas, error, { tipo, destino });
+    }
+    // «Añadir otra marca» sigue apuntando a la misma indicación hasta salir del modo o cancelar.
+    this.alCambiarMarcas?.();
+  }
+
+  /** La indicación no quedó enlazada. Una nota suelta se conserva («Marcas sin indicación»).
+   * Trazos: ante un rechazo definitivo (4xx) se descartan los recién guardados. Ante error de
+   * servidor, red o tiempo agotado no se sabe si el servidor llegó a guardarla: se lee el
+   * diseño y solo se borran las marcas que ninguna indicación referencia. Si el diseño no se
+   * puede leer, no se borra nada y se avisa. */
+  async _fallaVinculo(marcas, error, { tipo, destino }) {
+    const motivo = error.message ?? error;
+    if (tipo !== "trazo") {
+      avisarFeedback(`La nota se guardó, pero no quedó enlazada a una indicación: ${motivo}. Aparece en «Marcas sin indicación».`);
+      return;
+    }
+    if (esRechazoDefinitivo(error)) {
       const quien = destino ? "No se añadieron a la indicación" : "No se guardó la indicación";
-      const motivo = error.message ?? error;
+      const fallidas = await this._descartarTrazos(marcas);
       avisarFeedback(
         fallidas.length
           ? `${quien}: ${motivo}. No se pudieron descartar estas marcas, que quedan sin indicación: ${fallidas.join(", ")}.`
           : `${quien}: ${motivo}. Los trazos se descartaron; vuelve a dibujarlos.`,
       );
       await this.recargar();
+      return;
     }
-    // «Añadir otra marca» sigue apuntando a la misma indicación hasta salir del modo o cancelar.
-    this.alCambiarMarcas?.();
+    // Estado incierto: el servidor pudo guardar la indicación antes de fallar.
+    let enIndicacion;
+    try {
+      const diseno = await obtenerDisenoDocumento(this.docId);
+      enIndicacion = new Set((diseno.design?.intents ?? []).flatMap((i) => i.marks ?? []));
+    } catch (errorLectura) {
+      avisarFeedback(
+        `No se sabe si la indicación quedó guardada (${motivo}; ${errorLectura.message ?? errorLectura}). ` +
+          "No se borró ninguna marca: revisa «Marcas sin indicación» antes de volver a dibujar.",
+      );
+      return;
+    }
+    const sueltas = marcas.filter((m) => !enIndicacion.has(m));
+    if (!sueltas.length) {
+      avisarFeedback(`La indicación sí se guardó, a pesar del error (${motivo}); sus marcas están enlazadas.`);
+    } else {
+      const fallidas = await this._descartarTrazos(sueltas);
+      avisarFeedback(
+        `No se confirmó la indicación (${motivo}). ` +
+          (fallidas.length
+            ? `No se pudieron descartar estas marcas, que quedan sin indicación: ${fallidas.join(", ")}.`
+            : "Los trazos sin indicación se descartaron; vuelve a dibujarlos."),
+      );
+    }
+    await this.recargar();
   }
 
-  /** Borra las marcas (notas o trazos) recién guardadas para una acción que falló.
-   * Devuelve las que no se pudieron borrar, con su motivo. */
-  async _descartarMarcas(marcas) {
+  /** Borra trazos recién guardados de una indicación fallida. Devuelve los que no se pudieron
+   * borrar, con su motivo. */
+  async _descartarTrazos(marcas) {
     const fallidas = [];
     for (const marca of marcas) {
       try {
-        if (this.notas.some((nota) => nota.n === marca)) await borrarNota(this.docId, marca);
-        else await borrarTrazo(this.docId, marca);
+        await borrarTrazo(this.docId, marca);
       } catch (error) {
         fallidas.push(`${marca} (${error.message ?? error})`);
       }
@@ -623,7 +683,7 @@ export class ForjaNotasControlador {
     if (!punto) return;
     this._trazoActual.push(punto);
     // Pieza del trazo: la primera que toque mientras se dibuja.
-    if (this._piezaTrazoActual === null) this._piezaTrazoActual = this._piezaBajo(ev);
+    if (this._piezaTrazoActual === null) this._piezaTrazoActual = this._piezaEnMovimiento(ev);
     this._pintar(this._trazoActual);
   }
 
@@ -695,7 +755,7 @@ export class ForjaNotasControlador {
     await this.recargar();
     // El comentario del diálogo es el texto de la indicación; si está vacío se pregunta una vez.
     const texto = comentario || (await pedirComentario("¿Qué quieres decir con esta indicación?")) || "";
-    await this._vincularMarcas(marcas, texto, { pieza, puntos }, destino);
+    await this._vincularMarcas(marcas, texto, { pieza, puntos, tipo: "trazo" }, destino);
   }
 
   /** «Cancelar» o Esc: descarta todos los trazos sin guardar nada. */

@@ -318,11 +318,14 @@ async function request(path, method = "GET", body, { token = method !== "GET", r
     try {
       data = await response.json();
     } catch {}
-    throw new Error(
+    // El estado HTTP viaja con el error: quien llama distingue un rechazo (4xx) de un fallo.
+    const error = new Error(
       typeof data?.detail === "string"
         ? data.detail
         : `No se pudo completar (${response.status})`,
     );
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }

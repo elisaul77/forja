@@ -10,7 +10,7 @@ import {
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js?v=4";
 import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=14";
 import { abrirRasgo } from "./features.js?v=1";
-import { prepararOperacion, pedirCambioPieza } from "./design.js?v=11";
+import { prepararOperacion, pedirCambioPieza } from "./design.js?v=12";
 
 const NS = "http://www.w3.org/2000/svg";
 const SPRITE = "/static/icons/forja-icons.svg?v=4";

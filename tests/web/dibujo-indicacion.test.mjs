@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   BorradorIndicacion,
@@ -82,7 +82,14 @@ globalThis.getComputedStyle = () => ({ position: "relative" });
 const llamadas = [];
 let contadorTrazos = 0;
 // Fallos simulados del servidor para la indicación (los tests lo activan y lo desactivan).
-const reglas = { fallarIntencion: false, fallarTrazoDesde: 0 };
+const REGLAS_BASE = {
+  fallarIntencion: false, // false | código HTTP | true (fallo de red)
+  fallarTrazoDesde: 0,
+  confirmarAntesDeFallar: false, // el servidor guarda la indicación y luego falla la respuesta
+  fallarLectura: false, // la lectura del diseño tras el fallo también falla
+};
+const reglas = { ...REGLAS_BASE };
+const disenoIntents = [];
 globalThis.fetch = async (url, opts = {}) => {
   const cuerpo = opts.body ? JSON.parse(opts.body) : null;
   llamadas.push({ url: String(url), method: opts.method ?? "GET", body: cuerpo });
@@ -102,16 +109,21 @@ globalThis.fetch = async (url, opts = {}) => {
       status = 422;
       respuesta = { detail: "Una región necesita pieza" };
     } else if (reglas.fallarIntencion) {
-      status = 500;
+      if (reglas.confirmarAntesDeFallar) {
+        disenoIntents.push({ id: `i${disenoIntents.length + 1}`, marks: cuerpo.marks });
+      }
+      if (reglas.fallarIntencion === true) throw new TypeError("fetch failed");
+      status = reglas.fallarIntencion;
       respuesta = { detail: "fallo simulado" };
     } else {
-      respuesta = {
-        created_intent: "i1",
-        design: { intents: [{ id: "i1", marks: cuerpo.marks }] },
-      };
+      disenoIntents.push({ id: `i${disenoIntents.length + 1}`, marks: cuerpo.marks });
+      respuesta = { created_intent: "i1", design: { intents: [...disenoIntents] } };
     }
   } else if (String(url).includes("/trazos/") && opts.method === "DELETE") {
     respuesta = { ok: true };
+  } else if (String(url).endsWith("/design") && (opts.method ?? "GET") === "GET") {
+    if (reglas.fallarLectura) throw new TypeError("lectura simulada");
+    respuesta = { design: { intents: [...disenoIntents] } };
   } else if (String(url).includes("/notas?")) {
     respuesta = { resumen: [] };
   }
@@ -286,9 +298,17 @@ function visorConPieza(piezaEn) {
   return visor;
 }
 
-function prepararControladorCon(visor, docId) {
+// Los fallos simulados se restauran tras cada test (no al preparar el controlador).
+afterEach(() => Object.assign(reglas, REGLAS_BASE));
+
+function reiniciarMock() {
   llamadas.length = 0;
   contadorTrazos = 0;
+  disenoIntents.length = 0;
+}
+
+function prepararControladorCon(visor, docId) {
+  reiniciarMock();
   const ctrl = new ForjaNotasControlador(visor, docId);
   ctrl._configPizarraPendiente = { modo: "vista", offset: 0, tipo: "anadir", comentario: "Engrosar la base" };
   ctrl._entrarEnDibujo();
@@ -332,7 +352,7 @@ test("si la indicación no se crea, los trazos guardados se descartan y el aviso
     getElementById: (id) => (id === "fj-feedback" ? feedback : null),
     createElement: () => fakeEl(),
   };
-  reglas.fallarIntencion = true;
+  reglas.fallarIntencion = 422;
   try {
     const ctrl = prepararControladorCon(visorConPieza((x) => (x < 50 ? "Base" : null)), "doc-fallo");
     await trazar(ctrl, [[0, 0], [10, 0]]);
@@ -366,4 +386,78 @@ test("si algún trazo no se llega a guardar, la región solo cubre los trazos gu
   } finally {
     reglas.fallarTrazoDesde = 0;
   }
+});
+
+/** Dos trazos sobre la pieza «Base» y «Terminar». Devuelve el controlador y el aviso. */
+async function terminarDosTrazosSobreBase(docId) {
+  const feedback = fakeEl();
+  const documentoAnterior = globalThis.document;
+  globalThis.document = {
+    getElementById: (id) => (id === "fj-feedback" ? feedback : null),
+    createElement: () => fakeEl(),
+  };
+  try {
+    const ctrl = prepararControladorCon(visorConPieza((x) => (x < 50 ? "Base" : null)), docId);
+    await trazar(ctrl, [[0, 0], [10, 0]]);
+    await trazar(ctrl, [[0, 5], [10, 5]]);
+    await ctrl._terminarIndicacion();
+    return feedback;
+  } finally {
+    globalThis.document = documentoAnterior;
+  }
+}
+
+const borrados = () => llamadas.filter((l) => l.method === "DELETE");
+
+test("500 sin confirmar: la indicación no existe y los trazos se descartan", async () => {
+  reglas.fallarIntencion = 500;
+  const feedback = await terminarDosTrazosSobreBase("doc-500-sin");
+  assert.equal(borrados().length, 2);
+  assert.match(feedback.textContent, /No se confirmó la indicación/);
+});
+
+test("500 después de que el servidor guardó la indicación no borra las marcas enlazadas", async () => {
+  reglas.fallarIntencion = 500;
+  reglas.confirmarAntesDeFallar = true;
+  const feedback = await terminarDosTrazosSobreBase("doc-500-guardada");
+  assert.deepEqual(borrados(), [], "las marcas ya están en una indicación");
+  assert.match(feedback.textContent, /sí se guardó/);
+});
+
+test("un fallo de red después de guardar la indicación no borra las marcas enlazadas", async () => {
+  reglas.fallarIntencion = true;
+  reglas.confirmarAntesDeFallar = true;
+  const feedback = await terminarDosTrazosSobreBase("doc-red-guardada");
+  assert.deepEqual(borrados(), []);
+  assert.match(feedback.textContent, /sí se guardó/);
+});
+
+test("si no se puede leer el diseño tras un fallo, no se borra nada y se avisa del estado incierto", async () => {
+  reglas.fallarIntencion = 500;
+  reglas.fallarLectura = true;
+  const feedback = await terminarDosTrazosSobreBase("doc-sin-lectura");
+  assert.deepEqual(borrados(), []);
+  assert.match(feedback.textContent, /No se sabe si la indicación quedó guardada/);
+});
+
+test("una nota suelta nunca se borra si la indicación falla: queda sin indicación", async () => {
+  reglas.fallarIntencion = 422;
+  const ctrl = prepararControladorCon(visorConPieza(() => null), "doc-nota");
+  await ctrl._vincularMarcas(["n1"], "Cambiar aquí", { pieza: "Base", puntos: [[0, 0, 0]], tipo: "nota" }, null);
+  assert.deepEqual(borrados(), []);
+});
+
+test("el raycast del trazo en movimiento se limita a unos pocos por intervalo", async () => {
+  let raycasts = 0;
+  const visor = visorConPieza(() => null);
+  visor.raycastearMalla = () => {
+    raycasts += 1;
+    return null;
+  };
+  const ctrl = prepararControladorCon(visor, "doc-throttle");
+  ctrl._alBajarBoton({ button: 0, clientX: 0, clientY: 0 });
+  for (let i = 1; i <= 50; i++) ctrl._alMoverMouse({ clientX: i, clientY: 0 });
+  await ctrl._alSoltarBoton({ button: 0 });
+  // Una pulsación más, como mucho, un movimiento dentro del mismo intervalo: no 51.
+  assert.ok(raycasts <= 2, `raycasts: ${raycasts}`);
 });
