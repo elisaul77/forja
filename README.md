@@ -442,6 +442,17 @@ Los scripts del usuario no corren en `forja`: van al contenedor
 fuentes y sin secretos), comunicado solo por el volumen `staging`; Forja
 trata todo lo que devuelve como dato no confiable.
 
+### Tests
+
+`scripts/test.sh` es el único camino para correr la suite: levanta el servicio
+`test` (perfil `test` de `docker-compose.yml`), un contenedor sin
+`documentos_data` ni secretos montados, con su propio backend de prueba en
+`127.0.0.1:8001` y datos temporales. `scripts/test.sh web` corre los tests de
+la UI con `node --test` en `node:22-bookworm-slim`. Nunca `docker exec forja
+python -m pytest`: ese contenedor sirve los documentos reales, y la guarda de
+`tests/conftest.py` rechaza los tests en vivo si no corren en el backend de
+prueba.
+
 ### Estado
 
 Proyecto en construcción por fases (ver `plans/forja-plan.md` y
@@ -455,7 +466,7 @@ mostertruck quedó reproducido por la propia Forja — y destapó un fallo real
 de `check_colisiones` con pares que sí se intersecan (corregido y cubierto
 por tests). Fase 10 (abrir en OrcaSlicer desde el navegador) completada: ruta de
 descarga sin token, botones en el visor, enlace `enlace_orca` en `exportar`,
-`FORJA_PUBLIC_URL` y ADR-0011. `docker exec forja python -m pytest /tests -q` →
+`FORJA_PUBLIC_URL` y ADR-0011. `scripts/test.sh` →
 977 passed, 59 skipped (fase 24d; la única falla conocida del entorno, `test_ruta_dentro_de_fuentes_permitida`, no se cuenta); `node --test tests/web/*.test.mjs` → 172 passed.
 
 ---

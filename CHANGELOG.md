@@ -7,6 +7,11 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (infra de tests)
+
+- La suite ya no corre contra el backend vivo: `scripts/test.sh` levanta el servicio `test` (perfil `test`, sin `documentos_data` ni secretos) con su backend de prueba. `tests/conftest.py` rechaza los tests en vivo fuera de ese runner.
+- La limpieza de `tests/test_mcp_tools.py` borra solo los documentos cuyo id devolvió una respuesta de creación del propio test (`docs_propios`), nunca lo que apareciera en el listado.
+
 ### Added (galería ordenada, fase 1: papelera)
 
 - Papelera reversible: `POST /documentos/{id}/papelera` saca un documento de la galería sin borrar ningún archivo; `GET /papelera`, `POST /papelera/{id}/restaurar` y `DELETE /papelera/{id}` (borrado definitivo, solo de documentos ya en papelera). Todas exigen el token. Estado en `{id}.estado.json` (sin sidecar = documento normal, sin migración); módulos nuevos `app/papelera.py` y `app/papelera_routes.py`.

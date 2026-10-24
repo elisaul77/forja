@@ -44,21 +44,16 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(autouse=True)
-def _limpiar_documentos_creados(token_vivo):
-    """These tests hit the live `uvicorn` process (a separate OS process, so
-    it never sees `tests/conftest.py`'s `FORJA_DATA_DIR` tmp-dir override) —
-    any document a test creates would otherwise permanently pile up in the
-    real `documentos_data/` (Phase 4 fix-review: test isolation). Diffing
-    the document list before/after each test and deleting whatever appeared
-    catches every creation path (`ejecutar_script`, `abrir_archivo`, the
-    raw `POST /documentos` calls a couple of tests make directly) without
-    having to thread cleanup through each test individually."""
-    # Con borradores: un borrador creado por el test no debe quedar en el disco real.
-    antes = {d["id"] for d in client.listar_documentos(incluir_borradores=True)}
+def _limpiar_documentos_creados(docs_propios):
+    """Deletes only the documents this test created, by the ids its own
+    creation responses returned (`conftest.docs_propios`). The old listing
+    diff also hard-deleted any document that merely appeared during the test,
+    which could be a user's. The backend here is the hermetic one (conftest
+    guard), so the permanent delete cannot reach real data."""
     yield
-    despues = {d["id"] for d in client.listar_documentos(incluir_borradores=True)}
-    for doc_id in despues - antes:
-        client.eliminar_documento(doc_id)
+    for doc_id in docs_propios:
+        borrado = client.eliminar_documento(doc_id)
+        assert not borrado.get("error"), borrado
 
 
 def test_tool_names_match_skill_table():
