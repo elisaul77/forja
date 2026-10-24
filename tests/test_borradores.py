@@ -16,6 +16,7 @@ vivo ni el token real.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from datetime import datetime, timezone
@@ -155,14 +156,27 @@ def test_actualizar_por_id_mantiene_borrador_y_desliza_la_caducidad(creados):
     assert despues["expira"] > antes
 
 
-def test_horas_por_entorno(monkeypatch):
+def test_horas_por_entorno(monkeypatch, caplog):
     monkeypatch.delenv("FORJA_BORRADOR_HORAS", raising=False)
     assert papelera.horas_borrador() == 24
     monkeypatch.setenv("FORJA_BORRADOR_HORAS", "2")
     assert papelera.horas_borrador() == 2
+    # Valor invalido: vuelve al por defecto y deja un aviso en el log.
+    for crudo in ["no", "-1", "0", "nan", "inf"]:
+        caplog.clear()
+        monkeypatch.setenv("FORJA_BORRADOR_HORAS", crudo)
+        assert papelera.horas_borrador() == 24, crudo
+        assert "FORJA_BORRADOR_HORAS" in caplog.text, crudo
+
+
+def test_entorno_invalido_no_tumba_el_listado(monkeypatch, caplog, creados):
+    creado = _script(nombre="listado_con_entorno_invalido")
+    creados.append(creado["id"])
     monkeypatch.setenv("FORJA_BORRADOR_HORAS", "no")
-    with pytest.raises(ValueError):
-        papelera.horas_borrador()
+    with caplog.at_level(logging.WARNING):
+        visibles = _galeria(borradores="true")
+    assert creado["id"] in [d["id"] for d in visibles]
+    assert "FORJA_BORRADOR_HORAS" in caplog.text
 
 
 # ------------------------------------------------------------ conservar
@@ -255,9 +269,12 @@ def test_arranque_barre_los_vencidos(creados):
     assert _en_papelera(vencido["id"])
 
 
-def test_barrido_periodico_por_defecto_cada_15_minutos(monkeypatch):
+def test_barrido_periodico_por_defecto_cada_15_minutos(monkeypatch, caplog):
     monkeypatch.delenv("FORJA_BARRIDO_MIN", raising=False)
     assert papelera.barrido_minutos() == 15
+    monkeypatch.setenv("FORJA_BARRIDO_MIN", "abc")
+    assert papelera.barrido_minutos() == 15
+    assert "FORJA_BARRIDO_MIN" in caplog.text
 
 
 # ------------------------------------------------------------ MCP

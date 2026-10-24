@@ -1,5 +1,5 @@
 import { parseLiveEvent } from "./live-core.js?v=11";
-import { listarDocumentos } from "./api.js?v=15";
+import { listarDocumentos } from "./api.js?v=16";
 
 /** Owns the one SSE connection for this page and reconciles after every hello. */
 export function startLive({ tabs, onLibraryChanged = () => {} }) {

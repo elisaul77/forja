@@ -1,4 +1,4 @@
-import { listarDocumentos, conservarDocumento, enviarDocumentoAPapelera, listarPapelera, restaurarDePapelera, purgarDePapelera } from "./api.js?v=15";
+import { listarDocumentos, conservarDocumento, enviarDocumentoAPapelera, listarPapelera, restaurarDePapelera, purgarDePapelera } from "./api.js?v=16";
 
 export function latestStep(documents) {
   return documents.filter(doc => /^(step|stp)$/i.test(doc.formato ?? doc.nombre.split('.').pop()))

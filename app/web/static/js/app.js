@@ -1,10 +1,10 @@
 // Forja — orquestación de la página: barra superior, lista de documentos
 // del servidor, subida de archivos y apertura de pestañas.
-import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=15";
-import { createLibrary, latestStep } from "./library.js?v=14";
+import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=16";
+import { createLibrary, latestStep } from "./library.js?v=15";
 import { TabManager } from "./tabs.js?v=59";
 import { montarBarraHerramientas } from "./toolbar-ui.js?v=12";
-import { startLive } from "./live.js?v=15";
+import { startLive } from "./live.js?v=16";
 import { iniciarPanelPerfil } from "./perfil.js?v=3";
 
 const tabs = new TabManager({

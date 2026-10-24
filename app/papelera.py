@@ -13,12 +13,15 @@ tocan los registros viven en `app/papelera_routes.py`.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Ids de documento: `uuid.uuid4().hex` (documents.py crea todos asi).
 _ID_RE = re.compile(r"[0-9a-f]{32}")
@@ -105,15 +108,18 @@ def ruta_archivo(directorio: Path, doc_id: str) -> Path | None:
 
 
 def _leer_entorno_positivo(nombre: str, por_defecto: float) -> float:
+    """Numero positivo del entorno. Un valor invalido no tumba el listado: cae al
+    por defecto y deja un aviso en el log."""
     crudo = os.environ.get(nombre)
     if crudo is None or crudo.strip() == "":
         return por_defecto
     try:
         valor = float(crudo)
-    except ValueError as exc:
-        raise ValueError(f"{nombre} no es un numero: {crudo!r}") from exc
+    except ValueError:
+        valor = math.nan
     if not math.isfinite(valor) or valor <= 0:
-        raise ValueError(f"{nombre} debe ser un numero positivo: {crudo!r}")
+        logger.warning("%s invalido (%r); se usa el por defecto %s", nombre, crudo, por_defecto)
+        return por_defecto
     return valor
 
 

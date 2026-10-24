@@ -18,7 +18,7 @@ test('legacy extension, empty library and timestamp ties', () => {
 });
 
 test('delete cancellation sends no request; unauthorized clears saved token', async () => {
-  const { eliminarDocumento } = await import('../../app/web/static/js/api.js?v=15');
+  const { eliminarDocumento } = await import('../../app/web/static/js/api.js?v=16');
   let sent = 0;
   let removed = false;
   globalThis.sessionStorage = {getItem: () => null, setItem() {}, removeItem() { removed = true; }};
@@ -33,7 +33,7 @@ test('delete cancellation sends no request; unauthorized clears saved token', as
 });
 
 test('papelera: sin token no se envía nada y un 401 olvida el token guardado', async () => {
-  const api = await import('../../app/web/static/js/api.js?v=15');
+  const api = await import('../../app/web/static/js/api.js?v=16');
   let sent = 0;
   let removed = false;
   globalThis.sessionStorage = {getItem: () => null, setItem() {}, removeItem() { removed = true; }};
@@ -57,7 +57,7 @@ test('borradores: la insignia dice cuanto falta para caducar', async () => {
 });
 
 test('borradores: el listado pide ?borradores=true solo cuando se pide; conservar hace POST con token', async () => {
-  const api = await import('../../app/web/static/js/api.js?v=15');
+  const api = await import('../../app/web/static/js/api.js?v=16');
   const llamadas = [];
   globalThis.sessionStorage = {getItem: () => 'test-only', setItem() {}, removeItem() {}};
   globalThis.fetch = async (url, opts = {}) => {
