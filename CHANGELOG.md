@@ -7,6 +7,14 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (ejemplos al abrir)
+
+- Galería de ejemplos: carpeta `ejemplos/` con seis scripts build123d paramétricos (caja con tapa a presión, soporte de teléfono, tornillo y tuerca, bisagra de pasador, par de engranajes rectos y mesa auxiliar con piezas nombradas) e `ejemplos/index.json` con título, descripción y técnicas. Sin miniaturas: el índice no tiene ninguna.
+- `GET /ejemplos` (público) lista el índice sin código. `POST /ejemplos/{id}/abrir` (token) ejecuta el script por la ruta de `POST /documentos/script` y crea un documento nuevo «Ejemplo — <título>». El id se valida contra el índice; nunca llega una ruta desde la petición. Módulo `app/galeria_ejemplos.py`.
+- Visor: sin documento abierto, la bienvenida muestra tarjetas de ejemplo; la biblioteca tiene el botón «Ejemplos» para el mismo listado. Módulo nuevo `app/web/static/js/ejemplos.js`; `library.js` `?v=15`, `index.html` `app.js?v=64` y `forja-base.css?v=29`.
+- `Dockerfile` copia `ejemplos/` a `/app/ejemplos/`; `docker-compose.yml` lo monta en solo lectura en el servicio `forja`.
+- Sin herramienta MCP nueva; las instrucciones del servidor MCP mencionan los ejemplos.
+
 ### Added (galería ordenada, fase 1: papelera)
 
 - Papelera reversible: `POST /documentos/{id}/papelera` saca un documento de la galería sin borrar ningún archivo; `GET /papelera`, `POST /papelera/{id}/restaurar` y `DELETE /papelera/{id}` (borrado definitivo, solo de documentos ya en papelera). Todas exigen el token. Estado en `{id}.estado.json` (sin sidecar = documento normal, sin migración); módulos nuevos `app/papelera.py` y `app/papelera_routes.py`.

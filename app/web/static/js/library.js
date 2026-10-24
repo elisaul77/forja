@@ -8,11 +8,11 @@ export function latestStep(documents) {
 const TEXTO_GALERIA = 'Vista de galería · documentos guardados en este servidor';
 const TEXTO_PAPELERA = 'Papelera · documentos movidos a la papelera; puedes restaurarlos o borrarlos para siempre';
 
-export function createLibrary({ openDocument, onDeleted, onRestored }) {
+export function createLibrary({ openDocument, onDeleted, onRestored, onEjemplos }) {
   const dialog = document.createElement("dialog");
   dialog.className = "fj-gallery";
   dialog.setAttribute("aria-labelledby", "fj-gallery-title");
-  dialog.innerHTML = `<header><div><h2 id="fj-gallery-title">Biblioteca</h2><p>${TEXTO_GALERIA}</p></div><button class="fj-btn" type="button" data-papelera aria-pressed="false">Papelera</button><button class="fj-btn" type="button" data-close>Cerrar</button></header><label>Buscar documento<input class="fj-input" type="search" placeholder="Nombre del documento…"></label><p role="status"></p><div class="fj-gallery-grid"></div>`;
+  dialog.innerHTML = `<header><div><h2 id="fj-gallery-title">Biblioteca</h2><p>${TEXTO_GALERIA}</p></div><button class="fj-btn" type="button" data-ejemplos>Ejemplos</button><button class="fj-btn" type="button" data-papelera aria-pressed="false">Papelera</button><button class="fj-btn" type="button" data-close>Cerrar</button></header><label>Buscar documento<input class="fj-input" type="search" placeholder="Nombre del documento…"></label><p role="status"></p><div class="fj-gallery-grid"></div>`;
   document.body.append(dialog);
   const grid = dialog.querySelector('.fj-gallery-grid');
   const status = dialog.querySelector('[role=status]');
@@ -39,6 +39,7 @@ export function createLibrary({ openDocument, onDeleted, onRestored }) {
     refreshEpoch++;
   });
   dialog.querySelector('[data-close]').onclick = () => dialog.close();
+  dialog.querySelector('[data-ejemplos]').onclick = () => { dialog.close(); onEjemplos?.(); };
 
   function confirmRemoval(doc) {
     return new Promise(resolve => {

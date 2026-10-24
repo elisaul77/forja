@@ -20,6 +20,8 @@ services:
       - ./app:/app
       - ./mcp_server:/app/mcp_server
       - ./tests:/tests
+      # Galería de ejemplos (GET /ejemplos), editable sin reconstruir la imagen.
+      - ./ejemplos:/app/ejemplos:ro
       - ./documentos_data:/data/documentos
       - ${FORJA_FUENTES:-./fuentes}:/data/fuentes:ro
       # F0.2 (ADR-0013): job exchange with forja-sandbox, and the token as a

@@ -1163,3 +1163,17 @@ a.fj-btn { text-decoration: none; }
 .fj-medidas__estado--holgura { color: var(--fj-ink-2); }
 .fj-medidas__mm { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fj-medidas.is-obsoleto { opacity: 0.5; }
+
+/* Galería de ejemplos (al abrir y desde la biblioteca) */
+.fj-ejemplos { width: 100%; margin-top: var(--fj-space-6); text-align: left; }
+.fj-ejemplos h3 { font-size: var(--fj-text-lg); margin: 0 0 var(--fj-space-2); color: var(--fj-ink-1); }
+.fj-ejemplos p.fj-ejemplos__ayuda { font-size: var(--fj-text-xs); color: var(--fj-ink-3); margin: 0 0 var(--fj-space-3); max-width: none; }
+.fj-ejemplos__lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--fj-space-3); }
+.fj-ejemplos__aviso { font-size: var(--fj-text-sm); color: var(--fj-ink-3); margin: 0; }
+.fj-gallery .fj-ejemplos__lista { margin-top: var(--fj-space-4); }
+.fj-ejemplo { display: flex; flex-direction: column; gap: var(--fj-space-2); min-width: 0; padding: var(--fj-space-3); border: 1px solid var(--fj-line); border-radius: var(--fj-r-md); background: var(--fj-sunk); text-align: left; }
+.fj-ejemplo h4 { margin: 0; font-size: var(--fj-text-sm); color: var(--fj-ink-1); overflow-wrap: anywhere; }
+.fj-ejemplo p { margin: 0; font-size: var(--fj-text-xs); color: var(--fj-ink-3); max-width: none; }
+.fj-ejemplo__tecnicas { display: flex; flex-wrap: wrap; gap: var(--fj-space-1); margin: 0; padding: 0; list-style: none; }
+.fj-ejemplo__tecnicas li { font-size: var(--fj-text-xs); padding: 2px var(--fj-space-2); border: 1px solid var(--fj-line-strong); border-radius: var(--fj-r-full); color: var(--fj-ink-2); }
+.fj-ejemplo > .fj-btn { align-self: flex-start; margin-top: auto; }

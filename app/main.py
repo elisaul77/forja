@@ -24,6 +24,7 @@ import papelera_routes
 import perfiles
 import ramas
 import fusion
+import galeria_ejemplos
 import historial_grafo
 import incorporar
 import versioning
@@ -58,6 +59,7 @@ app.include_router(historial_grafo.router)
 app.include_router(ramas.router)
 app.include_router(incorporar.router)
 app.include_router(papelera_routes.router)
+app.include_router(galeria_ejemplos.router)
 
 
 class _OrigenDelCambio:

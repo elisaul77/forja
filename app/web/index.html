@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Forja</title>
 <link rel="stylesheet" href="/static/css/forja-tokens.css?v=7">
-<link rel="stylesheet" href="/static/css/forja-base.css?v=28">
+<link rel="stylesheet" href="/static/css/forja-base.css?v=29">
 <link rel="stylesheet" href="/static/css/forja-toolbar.css?v=6">
 <script type="importmap">
 {
@@ -50,6 +50,11 @@
           <h2>De la idea a la pieza.</h2>
           <p>Abre un modelo para explorar su geometría, ajustar sus parámetros y revisar cada detalle.</p>
           <div class="fj-welcome__actions"><button id="fj-empty-open" class="fj-btn fj-btn--primary" type="button">Abrir archivo</button><button id="fj-empty-documents" class="fj-btn" type="button">Explorar biblioteca</button></div>
+          <section class="fj-ejemplos" aria-labelledby="fj-ejemplos-titulo">
+            <h3 id="fj-ejemplos-titulo">Ejemplos para empezar</h3>
+            <p class="fj-ejemplos__ayuda">Ábrelos para ver cómo está construida cada pieza. Cada uno se crea como documento nuevo.</p>
+            <div id="fj-ejemplos-lista" class="fj-ejemplos__lista"></div>
+          </section>
           <span class="fj-welcome__formats">STEP · STP · STL <span aria-hidden="true">/</span> Modelos guardados en tu servidor</span>
           <div class="fj-welcome__steps"><span><b>01</b> Explora el modelo</span><span><b>02</b> Ajusta y ensambla</span><span><b>03</b> Anota tus ideas</span></div>
         </div>
@@ -124,6 +129,11 @@
     </form>
   </dialog>
 
+  <dialog id="fj-dialogo-ejemplos" class="fj-gallery" aria-labelledby="fj-ejemplos-dialogo-titulo">
+    <header><div><h2 id="fj-ejemplos-dialogo-titulo">Ejemplos</h2><p>Piezas paramétricas de muestra. Al abrir una se crea un documento nuevo que puedes modificar.</p></div><button id="fj-ejemplos-cerrar" class="fj-btn" type="button">Cerrar</button></header>
+    <div id="fj-ejemplos-dialogo-lista" class="fj-ejemplos__lista"></div>
+  </dialog>
+
   <dialog id="fj-dialogo-perfil" class="fj-dialogo fj-dialogo--perfil" aria-labelledby="fj-perfil-titulo">
     <div class="fj-dialogo__form">
       <div class="fj-perfil__cabecera">
@@ -159,6 +169,6 @@
   </footer>
 </div>
 
-<script type="module" src="/static/js/app.js?v=63"></script>
+<script type="module" src="/static/js/app.js?v=64"></script>
 </body>
 </html>

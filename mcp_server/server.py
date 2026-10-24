@@ -47,6 +47,8 @@ def crear_servidor() -> MCPServer:
             "candidato_diseno aplica tras revisar resultados. exportar_diseno excluye "
             "referencias y usa la postura de impresion sin mover el montaje. "
             "referencia_visual muestra fotos adjuntas por el usuario. "
+            "Ejemplos de referencia (scripts con PARAMETROS y construir, listados en "
+            "GET /ejemplos; abrirlos es solo del visor web): ejemplos/ en el repo. "
             "Flujo tipico: abrir_archivo -> resumen_documento -> ejecutar_script "
             "(con PARAMETROS + construir(params) si la pieza se va a iterar) "
             "-> percibir (contactos) -> cortes solo si hace falta ver una forma "

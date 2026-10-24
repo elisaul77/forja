@@ -1,0 +1,40 @@
+{
+  "ejemplos": [
+    {
+      "id": "caja_tapa_encaje",
+      "titulo": "Caja con tapa a presión",
+      "descripcion": "Caja con su tapa a presión y holgura ajustable. Dos piezas separadas, listas para imprimir sin soportes.",
+      "tecnicas": ["cavidad por sustracción", "encaje a presión con holgura", "piezas separadas para imprimir"]
+    },
+    {
+      "id": "soporte_telefono",
+      "titulo": "Soporte de teléfono",
+      "descripcion": "Soporte inclinado para el teléfono, con el ancho y la inclinación a tu medida y un tope frontal.",
+      "tecnicas": ["perfil triangular extruido", "parámetros de ancho e inclinación", "sin voladizos"]
+    },
+    {
+      "id": "tornillo_tuerca",
+      "titulo": "Tornillo y tuerca roscados",
+      "descripcion": "Rosca helicoidal en un tornillo y su tuerca, con holgura radial para que encajen sin apretarse.",
+      "tecnicas": ["barrido helicoidal", "resta de rosca con holgura", "validación de sólidos"]
+    },
+    {
+      "id": "bisagra_articulada",
+      "titulo": "Bisagra de pasador",
+      "descripcion": "Dos hojas con nudillos alternos y un pasador que gira, impresos como piezas separadas.",
+      "tecnicas": ["nudillos cilíndricos", "taladros con holgura", "piezas que no se tocan"]
+    },
+    {
+      "id": "engranaje_recto",
+      "titulo": "Par de engranajes rectos",
+      "descripcion": "Dos engranajes que engranan a la distancia entre centros correcta, con módulo y dientes a elegir.",
+      "tecnicas": ["perfil de diente repetido", "distancia entre centros", "desfase de medio paso"]
+    },
+    {
+      "id": "mesa_auxiliar",
+      "titulo": "Mesa auxiliar con piezas nombradas",
+      "descripcion": "Mesa de cinco piezas con nombre propio: tablero y cuatro patas, para seleccionar cada una en el panel de piezas.",
+      "tecnicas": ["piezas nombradas", "composición por posición", "validación de dimensiones"]
+    }
+  ]
+}

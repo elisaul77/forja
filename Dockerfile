@@ -32,6 +32,8 @@ RUN mkdir -p /staging/trabajos /staging/ejecutor /run/secrets \
 
 COPY app/ /app/
 COPY mcp_server/ /app/mcp_server/
+# Galería de ejemplos (GET /ejemplos): scripts y índice, leídos por app/galeria_ejemplos.py.
+COPY ejemplos/ /app/ejemplos/
 RUN chmod 0755 /app/entrypoint.sh
 
 EXPOSE 8000
