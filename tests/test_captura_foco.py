@@ -330,11 +330,25 @@ _ARTICULACION_MCP = dict(id="deslizador", tipo="deslizamiento", padre="base", hi
 _ARTICULACION_MCP_LEJOS = dict(_ARTICULACION_MCP, limites=[0, 20])
 
 
+@pytest.fixture
+def docs_mcp_creados(token_vivo):
+    """Los tests MCP hablan con el backend vivo (otro proceso: no ve el FORJA_DATA_DIR
+    temporal de la suite). Cada documento que creen se registra aqui en cuanto existe y
+    se borra al final con el mismo borrado duro que usa `test_mcp_tools.py`; asi nada
+    queda en `documentos_data/` real aunque el test falle a mitad."""
+    ids: list[str] = []
+    yield ids
+    for doc_id in ids:
+        borrado = client.eliminar_documento(doc_id)
+        assert not borrado.get("error"), borrado
+
+
 @pytestmark_mcp
-def test_mcp_captura_foco_devuelve_imagen_y_rechaza_entradas_malas(token_vivo):
+def test_mcp_captura_foco_devuelve_imagen_y_rechaza_entradas_malas(docs_mcp_creados):
     creado = tools.ejecutar_script(_SCRIPT_MCP_CHOQUE, nombre="captura_foco_mcp")
     assert "error" not in creado, creado
     doc_id = creado["id"]
+    docs_mcp_creados.append(doc_id)
     bien = tools.captura(doc_id, ancho=200, alto=200, foco=[0.0, 0.0, 0.0], radio=3.0)
     assert isinstance(bien, list) and len(bien) == 2
     assert "encuadre en foco" in bien[1]
@@ -345,10 +359,11 @@ def test_mcp_captura_foco_devuelve_imagen_y_rechaza_entradas_malas(token_vivo):
 
 
 @pytestmark_mcp
-def test_mcp_ensamble_captura_en_choque_devuelve_una_imagen_del_primer_choque(token_vivo):
+def test_mcp_ensamble_captura_en_choque_devuelve_una_imagen_del_primer_choque(docs_mcp_creados):
     creado = tools.ejecutar_script(_SCRIPT_MCP_CHOQUE, nombre="captura_choque_mcp")
     assert "error" not in creado, creado
     doc_id = creado["id"]
+    docs_mcp_creados.append(doc_id)
     assert tools.ensamble(doc_id, articulaciones=[dict(_ARTICULACION_MCP)])["articulaciones"]
 
     resultado = tools.ensamble(doc_id, barrido="todas", captura_en_choque=True)
@@ -362,9 +377,11 @@ def test_mcp_ensamble_captura_en_choque_devuelve_una_imagen_del_primer_choque(to
 
 
 @pytestmark_mcp
-def test_mcp_ensamble_captura_en_choque_sin_choque_no_da_imagen(token_vivo):
+def test_mcp_ensamble_captura_en_choque_sin_choque_no_da_imagen(docs_mcp_creados):
     creado = tools.ejecutar_script(_SCRIPT_MCP_CHOQUE, nombre="captura_sin_choque_mcp")
+    assert "error" not in creado, creado
     doc_id = creado["id"]
+    docs_mcp_creados.append(doc_id)
     assert tools.ensamble(doc_id, articulaciones=[dict(_ARTICULACION_MCP_LEJOS)])["articulaciones"]
 
     resultado = tools.ensamble(doc_id, barrido="todas", captura_en_choque=True)
