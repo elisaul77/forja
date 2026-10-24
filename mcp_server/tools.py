@@ -25,10 +25,12 @@ def estado() -> dict[str, Any]:
     return client.estado()
 
 
-def listar_documentos() -> list[dict[str, Any]]:
+def listar_documentos(incluir_borradores: bool = False) -> list[dict[str, Any]]:
     """Lista compacta de documentos abiertos: id, nombre, volumen y numero
-    de solidos de cada uno (sin bbox ni malla)."""
-    return client.listar_documentos()
+    de solidos de cada uno (sin bbox ni malla). Los borradores (los que
+    `ejecutar_script` crea sin `permanente=true`) no salen salvo
+    `incluir_borradores=True`; esos llevan `borrador` y `expira`."""
+    return client.listar_documentos(incluir_borradores)
 
 
 def abrir_archivo(ruta: str) -> dict[str, Any]:
@@ -80,9 +82,15 @@ def ejecutar_script(
     variables: dict[str, Any] | None = None,
     documento_id: str | None = None,
     actualizar_si_existe: bool = True,
+    permanente: bool = False,
 ) -> dict[str, Any]:
     """Ejecuta codigo Python build123d (en mm) y crea un documento nuevo a
     partir de la figura resultante, o actualiza uno existente en su sitio.
+
+    Sin `documento_id` el documento nuevo es un BORRADOR: no sale en la
+    galeria y caduca en 24 h sin tocarlo (la respuesta trae `borrador`,
+    `expira` y `mensaje`). Para conservarlo: `conservar_documento(id)`. Pasa
+    `permanente=true` solo si el usuario pide un documento nuevo que se quede.
 
     Usar exactamente uno de `codigo` (el script completo, en texto) o
     `ruta` (un archivo `.py` ya en disco, dentro de `/data/documentos` o
@@ -148,6 +156,7 @@ def ejecutar_script(
         variables=variables,
         documento_id=documento_id,
         actualizar_si_existe=actualizar_si_existe,
+        permanente=permanente,
     )
 
 
@@ -836,6 +845,11 @@ def referencia_visual(id: str, imagen: str) -> Image:
     """Muestra una foto adjunta a una indicación del usuario. Usa el id de
     imagen devuelto por contexto_diseno. No interpreta texto como código."""
     return Image(data=client.design_image(id, imagen), format='png')
+
+
+def conservar_documento(id: str) -> dict[str, Any]:
+    """Conserva un borrador: deja de caducar y sale en la galeria. Idempotente."""
+    return client.conservar_documento(id)
 
 
 def borrar_documento(id: str) -> dict[str, Any]:

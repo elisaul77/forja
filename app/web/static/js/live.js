@@ -23,7 +23,8 @@ export function startLive({ tabs, onLibraryChanged = () => {} }) {
       tabs.reanudarPendientes();
       show("Vista en vivo conectada", "ok", 2000);
     } else if (name === "resincronizar") {
-      void listarDocumentos().then(docs => tabs.reconciliar(docs)).catch(() => {});
+      // Con borradores: una pestaña abierta sobre un borrador no es un documento eliminado.
+      void listarDocumentos({ borradores: true }).then(docs => tabs.reconciliar(docs)).catch(() => {});
     } else if (name === "construyendo") {
       show("Construyendo modelo…");
       tabs.medidasConstruyendo(data.id);

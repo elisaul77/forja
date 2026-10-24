@@ -75,10 +75,16 @@ async function parseError(resp) {
 }
 
 /** Lista compacta de documentos ya existentes en el servidor. */
-export async function listarDocumentos() {
-  const resp = await fetch(`${BASE}/documentos`);
+/** Sin opciones, la galería sin borradores (fase 2); `borradores: true` los incluye. */
+export async function listarDocumentos({ borradores = false } = {}) {
+  const resp = await fetch(`${BASE}/documentos${borradores ? "?borradores=true" : ""}`);
   if (!resp.ok) throw await parseError(resp);
   return resp.json();
+}
+
+/** Conserva un borrador (fase 2): deja de caducar y sale de la galería. Pide el token. */
+export function conservarDocumento(id) {
+  return pedirConToken("POST", `/documentos/${encodeURIComponent(id)}/conservar`);
 }
 
 /** Ficha completa de un documento (incluye bbox/volumen/solidos/valido). */

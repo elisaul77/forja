@@ -2,7 +2,9 @@
 the MCP Streamable HTTP endpoint at `/mcp`, ADR-0008)."""
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 from importlib import metadata
 from pathlib import Path
@@ -20,6 +22,7 @@ import documents
 import design_routes
 import eventos
 import notes
+import papelera
 import papelera_routes
 import perfiles
 import ramas
@@ -30,19 +33,38 @@ import versioning
 from mcp_server.http_app import app_mcp_http
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
+logger = logging.getLogger(__name__)
 
+
+async def _barrido_periodico() -> None:
+    """Sends expired drafts to the papelera every `FORJA_BARRIDO_MIN` minutes
+    (galeria fase 2). A failed sweep is logged and retried on the next cycle."""
+    while True:
+        await asyncio.sleep(papelera.barrido_minutos() * 60)
+        try:
+            await run_in_threadpool(papelera_routes.barrer_borradores)
+        except Exception:  # noqa: BLE001 - logged; the loop must survive
+            logger.exception("barrido de borradores fallido; se reintenta en el proximo ciclo")
 
 
 @contextlib.asynccontextmanager
 async def _ciclo_de_vida(_app: FastAPI) -> AsyncIterator[None]:
     """Rebuild the document registry from disk (Phase 4: a restart must not
     orphan notes attached to a document that already exists under
-    `DOCUMENTOS_DIR`), then run the MCP HTTP session manager for the whole
-    lifetime of the app (ADR-0008: the SDK requires its task group to be
-    running before `/mcp` can serve a request)."""
+    `DOCUMENTOS_DIR`), sweep expired drafts (fase 2), then run the periodic
+    sweep and the MCP HTTP session manager for the whole lifetime of the app
+    (ADR-0008: the SDK requires its task group to be running before `/mcp`
+    can serve a request)."""
     documents.recargar_documentos()
-    async with app_mcp_http.ciclo_de_vida():
-        yield
+    papelera_routes.barrer_borradores()
+    tarea_barrido = asyncio.create_task(_barrido_periodico())
+    try:
+        async with app_mcp_http.ciclo_de_vida():
+            yield
+    finally:
+        tarea_barrido.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tarea_barrido
 
 
 app = FastAPI(title="Forja", lifespan=_ciclo_de_vida)

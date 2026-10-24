@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query as ParametroURL, Up
 from fastapi.responses import Response, FileResponse
 from datetime import datetime, timezone
 import uuid
-import auth, documents, parametros, ramas, versioning, eventos, notes
+import auth, documents, parametros, papelera, ramas, versioning, eventos, notes
 import design_state as ds
 import design_geometry as geo
 import design_analysis as analysis
@@ -274,6 +274,8 @@ def save_design(doc_id: str, body: Save):
             ramas._snapshot_actual(doc_id, documents._files[doc_id]),
         )
         ds.save(doc_id, body.design)
+        # Guardar el diseno es intencion deliberada: un borrador se conserva (fase 2).
+        papelera.quitar_borrador(documents.DOCUMENTOS_DIR, doc_id)
         eventos.publicar(
             "anotaciones_actualizadas", doc_id, body.revision, ["design", "historial"]
         )

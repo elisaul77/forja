@@ -53,9 +53,10 @@ def _limpiar_documentos_creados(token_vivo):
     catches every creation path (`ejecutar_script`, `abrir_archivo`, the
     raw `POST /documentos` calls a couple of tests make directly) without
     having to thread cleanup through each test individually."""
-    antes = {d["id"] for d in tools.listar_documentos()}
+    # Con borradores: un borrador creado por el test no debe quedar en el disco real.
+    antes = {d["id"] for d in client.listar_documentos(incluir_borradores=True)}
     yield
-    despues = {d["id"] for d in tools.listar_documentos()}
+    despues = {d["id"] for d in client.listar_documentos(incluir_borradores=True)}
     for doc_id in despues - antes:
         client.eliminar_documento(doc_id)
 
@@ -83,6 +84,7 @@ def test_tool_names_match_skill_table():
         "suspension",
         "puentes",
         "borrar_documento", "papelera",  # galeria: papelera reversible (fase 1)
+        "conservar_documento",  # galeria fase 2: borradores que caducan
         "cupon",  # fdm-B
         "rama",
         "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",

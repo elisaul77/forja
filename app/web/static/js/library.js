@@ -1,4 +1,4 @@
-import { listarDocumentos, enviarDocumentoAPapelera, listarPapelera, restaurarDePapelera, purgarDePapelera } from "./api.js?v=15";
+import { listarDocumentos, conservarDocumento, enviarDocumentoAPapelera, listarPapelera, restaurarDePapelera, purgarDePapelera } from "./api.js?v=15";
 
 export function latestStep(documents) {
   return documents.filter(doc => /^(step|stp)$/i.test(doc.formato ?? doc.nombre.split('.').pop()))
@@ -8,20 +8,30 @@ export function latestStep(documents) {
 const TEXTO_GALERIA = 'Vista de galería · documentos guardados en este servidor';
 const TEXTO_PAPELERA = 'Papelera · documentos movidos a la papelera; puedes restaurarlos o borrarlos para siempre';
 
+/** Insignia de un borrador: horas que faltan para que caduque (fase 2). */
+export function textoCaducidad(expira, ahora = Date.now()) {
+  const horas = (Date.parse(expira) - ahora) / 3600000;
+  if (Number.isNaN(horas)) return 'Borrador';
+  if (horas < 1) return 'Borrador · caduca en menos de 1 h';
+  return `Borrador · expira en ${Math.round(horas)} h`;
+}
+
 export function createLibrary({ openDocument, onDeleted, onRestored }) {
   const dialog = document.createElement("dialog");
   dialog.className = "fj-gallery";
   dialog.setAttribute("aria-labelledby", "fj-gallery-title");
-  dialog.innerHTML = `<header><div><h2 id="fj-gallery-title">Biblioteca</h2><p>${TEXTO_GALERIA}</p></div><button class="fj-btn" type="button" data-papelera aria-pressed="false">Papelera</button><button class="fj-btn" type="button" data-close>Cerrar</button></header><label>Buscar documento<input class="fj-input" type="search" placeholder="Nombre del documento…"></label><p role="status"></p><div class="fj-gallery-grid"></div>`;
+  dialog.innerHTML = `<header><div><h2 id="fj-gallery-title">Biblioteca</h2><p>${TEXTO_GALERIA}</p></div><button class="fj-btn" type="button" data-papelera aria-pressed="false">Papelera</button><button class="fj-btn" type="button" data-close>Cerrar</button></header><label>Buscar documento<input class="fj-input" type="search" placeholder="Nombre del documento…"></label><label><input type="checkbox" data-borradores> Mostrar borradores</label><p role="status"></p><div class="fj-gallery-grid"></div>`;
   document.body.append(dialog);
   const grid = dialog.querySelector('.fj-gallery-grid');
   const status = dialog.querySelector('[role=status]');
-  const search = dialog.querySelector('input');
+  const search = dialog.querySelector('input[type=search]');
   const subtitle = dialog.querySelector('header p');
   const papeleraToggle = dialog.querySelector('[data-papelera]');
+  const borradoresToggle = dialog.querySelector('[data-borradores]');
   let documents = [];
   let trashed = [];
   let mode = 'galeria';
+  let verBorradores = false;
   let deleting = false;
   let refreshEpoch = 0;
   let refreshTimer;
@@ -82,6 +92,18 @@ export function createLibrary({ openDocument, onDeleted, onRestored }) {
       status.textContent = `No se movió el documento: ${error.message}`;
       if (!dialog.open) window.alert(status.textContent);
     } finally { deleting = false; }
+  }
+
+  // Conservar (fase 2): el borrador deja de caducar y pasa a la galería normal.
+  async function conservar(doc) {
+    try {
+      await conservarDocumento(doc.id);
+    } catch (error) {
+      status.textContent = `No se conservó «${doc.nombre}»: ${error.message}`;
+      return;
+    }
+    await refresh();
+    status.textContent = `«${doc.nombre}» conservado: ya no caduca.`;
   }
 
   async function restore(doc) {
@@ -156,7 +178,15 @@ export function createLibrary({ openDocument, onDeleted, onRestored }) {
       const trashButton = button('Mover a la papelera', 'fj-btn', () => trash(doc), `Mover ${doc.nombre} a la papelera`);
       const actions = document.createElement('div');
       actions.append(open, trashButton);
-      card.append(preview, fallback, title, meta, actions);
+      const piezas = [preview, fallback, title, meta];
+      if (doc.borrador) {
+        const insignia = document.createElement('p');
+        insignia.className = 'fj-badge';
+        insignia.textContent = textoCaducidad(doc.expira);
+        piezas.push(insignia);
+        actions.append(button('Conservar', 'fj-btn', () => conservar(doc), `Conservar ${doc.nombre}`));
+      }
+      card.append(...piezas, actions);
       grid.append(card);
       observer.observe(card);
     }
@@ -189,7 +219,7 @@ export function createLibrary({ openDocument, onDeleted, onRestored }) {
   async function refresh() {
     const epoch = ++refreshEpoch;
     try {
-      const next = await listarDocumentos();
+      const next = await listarDocumentos({ borradores: verBorradores });
       if (epoch !== refreshEpoch || !dialog.open) return;
       documents = next.filter(doc => !deleted.has(doc.id));
       render();
@@ -216,12 +246,17 @@ export function createLibrary({ openDocument, onDeleted, onRestored }) {
     papeleraToggle.setAttribute('aria-pressed', String(enPapelera));
     papeleraToggle.textContent = enPapelera ? 'Galería' : 'Papelera';
     subtitle.textContent = enPapelera ? TEXTO_PAPELERA : TEXTO_GALERIA;
+    borradoresToggle.closest('label').hidden = enPapelera;
     grid.replaceChildren();
     status.textContent = enPapelera ? 'Cargando papelera…' : 'Cargando biblioteca…';
     void (enPapelera ? refreshTrash() : refresh());
   }
 
   papeleraToggle.onclick = () => setMode(mode === 'galeria' ? 'papelera' : 'galeria');
+  borradoresToggle.onchange = () => {
+    verBorradores = borradoresToggle.checked;
+    void refresh();
+  };
   document.addEventListener('forja:library-changed', () => {
     if (!dialog.open) return;
     clearTimeout(refreshTimer);

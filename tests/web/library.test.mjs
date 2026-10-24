@@ -47,3 +47,27 @@ test('papelera: sin token no se envía nada y un 401 olvida el token guardado', 
   assert.equal(sent, 1);
   assert.equal(removed, true);
 });
+
+test('borradores: la insignia dice cuanto falta para caducar', async () => {
+  const { textoCaducidad } = await import('../../app/web/static/js/library.js');
+  const ahora = Date.parse('2026-10-24T12:00:00Z');
+  assert.equal(textoCaducidad('2026-10-25T12:00:00Z', ahora), 'Borrador · expira en 24 h');
+  assert.equal(textoCaducidad('2026-10-24T12:30:00Z', ahora), 'Borrador · caduca en menos de 1 h');
+  assert.equal(textoCaducidad('no-es-fecha', ahora), 'Borrador');
+});
+
+test('borradores: el listado pide ?borradores=true solo cuando se pide; conservar hace POST con token', async () => {
+  const api = await import('../../app/web/static/js/api.js?v=15');
+  const llamadas = [];
+  globalThis.sessionStorage = {getItem: () => 'test-only', setItem() {}, removeItem() {}};
+  globalThis.fetch = async (url, opts = {}) => {
+    llamadas.push({url, metodo: opts.method ?? 'GET', token: opts.headers?.['X-Forja-Token']});
+    return {ok: true, status: 200, json: async () => []};
+  };
+  await api.listarDocumentos();
+  await api.listarDocumentos({borradores: true});
+  await api.conservarDocumento('abc');
+  assert.equal(llamadas[0].url, '/documentos');
+  assert.equal(llamadas[1].url, '/documentos?borradores=true');
+  assert.deepEqual(llamadas[2], {url: '/documentos/abc/conservar', metodo: 'POST', token: 'test-only'});
+});

@@ -234,12 +234,13 @@ NOMBRES_20 = {  # fdm-B: + cupon
     "responder_indicacion",  # unified intents (ADR-0019)
     "preparar_candidato", "candidato_diseno", "trabajo_diseno", "exportar_diseno", "referencia_visual",
     "borrar_documento", "papelera",  # galeria: papelera reversible (fase 1)
+    "conservar_documento",  # galeria fase 2: borradores que caducan
 }
 
 
 def test_inventario_de_herramientas_no_cambia():
     registradas = {t.name for t in crear_servidor()._tool_manager.list_tools()}  # noqa: SLF001
-    assert registradas == NOMBRES_20 and len(registradas) == 33
+    assert registradas == NOMBRES_20 and len(registradas) == 34
 
 
 def test_docstring_documenta_los_campos():

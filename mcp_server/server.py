@@ -66,7 +66,9 @@ def crear_servidor() -> MCPServer:
             "posicion; 'suspension' consulta el simulador del mostertruck por "
             "el puente de solo lectura y 'puentes' dice que servicios locales "
             "estan encendidos y respondiendo. "
-            "Galeria: borrar_documento manda un documento a la papelera (reversible: "
+            "Galeria: ejecutar_script sin documento_id crea un BORRADOR (oculto, caduca "
+            "en 24 h); conservar_documento lo deja, listar_documentos(incluir_borradores=true) "
+            "los muestra. borrar_documento manda un documento a la papelera (reversible: "
             "papelera con accion restaurar lo devuelve; no borra archivos); no hay "
             "borrado definitivo por MCP. "
             "Todas las unidades son milimetros. Las respuestas "
@@ -104,6 +106,7 @@ def crear_servidor() -> MCPServer:
     servidor.tool(name="referencia_visual", structured_output=False)(tools.referencia_visual)
     servidor.tool(name="borrar_documento")(tools.borrar_documento)
     servidor.tool(name="papelera")(tools.papelera)
+    servidor.tool(name="conservar_documento")(tools.conservar_documento)
     return servidor
 
 

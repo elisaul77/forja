@@ -96,9 +96,10 @@ def estado() -> dict[str, Any]:
     }
 
 
-def listar_documentos() -> list[dict[str, Any]]:
+def listar_documentos(incluir_borradores: bool = False) -> list[dict[str, Any]]:
+    params = {"borradores": "true"} if incluir_borradores else None
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
-        resp = c.get("/documentos")
+        resp = c.get("/documentos", params=params)
     resp.raise_for_status()
     return resp.json()
 
@@ -150,6 +151,17 @@ def _detalle_estructurado(resp: httpx.Response) -> dict[str, Any]:
     return {"mensaje": str(detalle)}
 
 
+def _nombre_comparable(nombre: str) -> str:
+    """Nombre para comparar nombres de documento: sin `.step`/`.stp` y sin
+    mayusculas. El servidor guarda `nombre + ".step"`, asi que comparar el
+    nombre crudo nunca casaba (fase 2, bug de reutilizacion)."""
+    base = nombre.strip().casefold()
+    for extension in (".step", ".stp"):
+        if base.endswith(extension):
+            return base[: -len(extension)]
+    return base
+
+
 def ejecutar_script(
     codigo: str | None = None,
     ruta: str | None = None,
@@ -158,20 +170,27 @@ def ejecutar_script(
     variables: dict[str, Any] | None = None,
     documento_id: str | None = None,
     actualizar_si_existe: bool = True,
+    permanente: bool = False,
 ) -> dict[str, Any]:
     reutilizado = False
-    if documento_id is None and nombre and actualizar_si_existe:
-        # Editing should keep one document (history + live view), not spawn
-        # copies: reuse the single existing document with the same name.
+    if documento_id is None and nombre and actualizar_si_existe and not permanente:
+        # Editing keeps one document (history + live view), not spawn copies:
+        # reuse the newest document with the same name, drafts included. The
+        # listing is newest-first, so with 2+ matches the first one wins.
         try:
             with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
-                docs = c.get("/documentos").json()
-            iguales = [d["id"] for d in docs if d.get("nombre") == nombre]
-            if len(iguales) == 1:
-                documento_id, reutilizado = iguales[0], True
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            pass
+                resp = c.get("/documentos", params={"borradores": "true"})
+            resp.raise_for_status()
+            docs = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"error": True, "mensaje": f"no se pudo consultar la galeria para reutilizar '{nombre}': {exc}"}
+        clave = _nombre_comparable(nombre)
+        iguales = [d["id"] for d in docs if _nombre_comparable(d.get("nombre") or "") == clave]
+        if iguales:
+            documento_id, reutilizado = iguales[0], True
     payload: dict[str, Any] = {"timeout": timeout}
+    if permanente:
+        payload["permanente"] = True
     if codigo is not None:
         payload["codigo"] = codigo
     if ruta is not None:
@@ -191,6 +210,15 @@ def ejecutar_script(
     if reutilizado and isinstance(data, dict):
         data["actualizado_por_nombre"] = True
     return data
+
+
+def conservar_documento(doc_id: str) -> dict[str, Any]:
+    """Promote a draft to a permanent document (token-protected)."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        resp = c.post(f"/documentos/{urllib.parse.quote(doc_id, safe='')}/conservar", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
 
 
 PUBLIC_URL_DEFAULT = "http://localhost:8710"

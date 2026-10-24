@@ -14,6 +14,7 @@ Todas exigen el token (ADR-0005). La persistencia del estado vive en
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ import papelera
 import parametros
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _DIR = documents.DOCUMENTOS_DIR
 
@@ -60,29 +62,81 @@ def _quitar_de_memoria(doc_id: str) -> None:
     medidas.olvidar(doc_id)
 
 
+def _mover_a_papelera_bloqueado(doc_id: str, motivo: str | None = None) -> None:
+    """Caller holds `parametros.bloqueo(doc_id)` and checked the registry. The
+    sidecar is written first, so a crash in between leaves the document loaded
+    (and it is skipped on the next startup)."""
+    registro = documents._registry[doc_id]
+    estado: dict[str, Any] = {
+        "papelera": _ahora(),
+        "nombre": registro["nombre"],
+        "volumen": registro["volumen"],
+        "solidos": registro["solidos"],
+        "formato": _formato(documents._files.get(doc_id)),
+    }
+    if motivo is not None:
+        estado["motivo"] = motivo
+    papelera.guardar_estado(_DIR, doc_id, estado)
+    _quitar_de_memoria(doc_id)
+    eventos.publicar("documento_eliminado", doc_id)
+
+
 @router.post("/documentos/{doc_id}/papelera", dependencies=[Depends(auth.requiere_token)])
 def mover_a_papelera(doc_id: str) -> dict[str, Any]:
-    """Send a live document to the papelera. Nothing is deleted from disk:
-    the sidecar is written first, so a crash in between leaves the document
-    loaded (and it is skipped on the next startup)."""
+    """Send a live document to the papelera. Nothing is deleted from disk."""
     # Validated before the lock (mirrors DELETE /documentos/{id}): the lock
     # helper creates one entry per id it is asked about and never evicts it.
     if doc_id not in documents._registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
     with parametros.bloqueo(doc_id):
-        registro = documents._registry.get(doc_id)
-        if registro is None:
+        if doc_id not in documents._registry:
             raise HTTPException(status_code=404, detail="documento no encontrado")
-        papelera.guardar_estado(_DIR, doc_id, {
-            "papelera": _ahora(),
-            "nombre": registro["nombre"],
-            "volumen": registro["volumen"],
-            "solidos": registro["solidos"],
-            "formato": _formato(documents._files.get(doc_id)),
-        })
-        _quitar_de_memoria(doc_id)
-        eventos.publicar("documento_eliminado", doc_id)
+        _mover_a_papelera_bloqueado(doc_id)
     return {"ok": True, "id": doc_id}
+
+
+def barrer_borradores(ahora: datetime | None = None) -> list[str]:
+    """Send every draft whose expiry (`papelera.expiracion`) has passed to the
+    papelera with `motivo: borrador_expirado`. Idempotent. Files are never
+    deleted. A corrupt sidecar is logged and left alone: never trashed on
+    unreadable state. Returns the ids sent this time."""
+    instante = ahora or datetime.now(timezone.utc)
+    enviados: list[str] = []
+    for doc_id in papelera.ids_con_estado(_DIR):
+        if doc_id not in documents._registry:
+            continue  # ya en papelera, o sin cargar: nada que caducar aqui
+        with parametros.bloqueo(doc_id):
+            if doc_id not in documents._registry:
+                continue
+            try:
+                estado = papelera.leer_estado(_DIR, doc_id)
+            except ValueError:
+                logger.warning("estado ilegible, el borrador %s no caduca hasta corregirlo", doc_id)
+                continue
+            ruta = documents._files.get(doc_id)
+            if not papelera.es_borrador(estado) or ruta is None or not ruta.exists():
+                continue
+            if papelera.expiracion(ruta.stat().st_mtime, estado) > instante:
+                continue
+            _mover_a_papelera_bloqueado(doc_id, motivo="borrador_expirado")
+            enviados.append(doc_id)
+    return enviados
+
+
+@router.post("/documentos/{doc_id}/conservar", dependencies=[Depends(auth.requiere_token)])
+def conservar_documento(doc_id: str) -> dict[str, Any]:
+    """Promote a draft to a permanent document. Idempotent; a document that is
+    not a draft is answered with `cambiado: false`."""
+    if doc_id not in documents._registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    with parametros.bloqueo(doc_id):
+        if doc_id not in documents._registry:
+            raise HTTPException(status_code=404, detail="documento no encontrado")
+        try:
+            cambiado = papelera.quitar_borrador(_DIR, doc_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="estado de documento ilegible") from exc
+    return {"ok": True, "id": doc_id, "borrador": False, "cambiado": cambiado}
 
 
 @router.get("/papelera", dependencies=[Depends(auth.requiere_token)])

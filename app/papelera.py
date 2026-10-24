@@ -13,8 +13,10 @@ tocan los registros viven en `app/papelera_routes.py`.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,8 @@ from typing import Any
 _ID_RE = re.compile(r"[0-9a-f]{32}")
 _EXTS_GEOMETRIA = (".step", ".stp", ".stl")
 _SUFIJO_ESTADO = ".estado.json"
+_HORAS_BORRADOR_POR_DEFECTO = 24.0
+_MINUTOS_BARRIDO_POR_DEFECTO = 15.0
 
 
 def doc_id_valido(doc_id: Any) -> bool:
@@ -91,3 +95,63 @@ def ruta_archivo(directorio: Path, doc_id: str) -> Path | None:
         if ruta.is_file():
             return ruta
     return None
+
+
+# ---------------------------------------------------------------- borradores
+# Un borrador es un documento creado por `ejecutar_script` sin `documento_id` ni
+# `permanente=true`: fuera de la galeria por defecto y con caducidad. Su sidecar
+# lleva `{"borrador": true, "creado": iso}`; la caducidad se calcula con el mtime
+# del archivo (desliza con cada modificacion), no se guarda.
+
+
+def _leer_entorno_positivo(nombre: str, por_defecto: float) -> float:
+    crudo = os.environ.get(nombre)
+    if crudo is None or crudo.strip() == "":
+        return por_defecto
+    try:
+        valor = float(crudo)
+    except ValueError as exc:
+        raise ValueError(f"{nombre} no es un numero: {crudo!r}") from exc
+    if not math.isfinite(valor) or valor <= 0:
+        raise ValueError(f"{nombre} debe ser un numero positivo: {crudo!r}")
+    return valor
+
+
+def horas_borrador() -> float:
+    """Horas que vive un borrador desde su ultima modificacion (`FORJA_BORRADOR_HORAS`)."""
+    return _leer_entorno_positivo("FORJA_BORRADOR_HORAS", _HORAS_BORRADOR_POR_DEFECTO)
+
+
+def barrido_minutos() -> float:
+    """Cada cuantos minutos corre el barrido periodico (`FORJA_BARRIDO_MIN`)."""
+    return _leer_entorno_positivo("FORJA_BARRIDO_MIN", _MINUTOS_BARRIDO_POR_DEFECTO)
+
+
+def es_borrador(estado: dict[str, Any]) -> bool:
+    return bool(estado.get("borrador")) and not estado.get("papelera")
+
+
+def marcar_borrador(directorio: Path, doc_id: str, ahora: datetime) -> None:
+    guardar_estado(directorio, doc_id, {"borrador": True, "creado": ahora.isoformat()})
+
+
+def quitar_borrador(directorio: Path, doc_id: str) -> bool:
+    """Promueve a permanente: borra el sidecar de borrador. True si cambio algo."""
+    if not es_borrador(leer_estado(directorio, doc_id)):
+        return False
+    borrar_estado(directorio, doc_id)
+    return True
+
+
+def expiracion(mtime: float, estado: dict[str, Any]) -> datetime:
+    """Caducidad de un borrador: ultima modificacion del archivo + horas_borrador()."""
+    base = datetime.fromtimestamp(mtime, timezone.utc)
+    creado = estado.get("creado")
+    if isinstance(creado, str):
+        base = max(base, datetime.fromisoformat(creado))
+    return base + timedelta(hours=horas_borrador())
+
+
+def ids_con_estado(directorio: Path) -> list[str]:
+    """Ids que tienen sidecar de estado (borrador o papelera), sin leerlos."""
+    return [r.name[: -len(_SUFIJO_ESTADO)] for r in sorted(directorio.glob(f"*{_SUFIJO_ESTADO}"))]

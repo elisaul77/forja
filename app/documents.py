@@ -199,6 +199,16 @@ def recargar_documentos() -> None:
             continue
 
 
+def _estado_de_listado(doc_id: str) -> dict[str, Any]:
+    """Estado de galeria para listar. Un sidecar ilegible NO oculta el documento:
+    se avisa en el log y se lista como permanente (nunca se pierde de vista)."""
+    try:
+        return papelera.leer_estado(DOCUMENTOS_DIR, doc_id)
+    except ValueError:
+        logger.warning("estado ilegible para %s: se lista como permanente", doc_id)
+        return {}
+
+
 def _cargar_documento(ruta: Path) -> None:
     """Index one stored STEP/STL file in the registries (startup reload and
     papelera restore). Raises when the file cannot be analysed; the startup
@@ -495,6 +505,7 @@ class _ScriptBody(BaseModel):
     nombre: str | None = None
     timeout: float | None = None
     documento_id: str | None = None
+    permanente: bool = False  # sin documento_id: False crea un BORRADOR (fase 2)
 
 
 def _detalle_script_error(exc: scripts_runner.ScriptError) -> dict[str, Any] | str:
@@ -741,7 +752,10 @@ def crear_documento_desde_script(body: _ScriptBody) -> dict[str, Any]:
     doc_id = uuid.uuid4().hex
     with _construyendo(doc_id):
         return _con_ignorados(
-            _crear_documento_desde_script(doc_id, codigo, timeout, variables, body.nombre, _recordar_script)
+            _crear_documento_desde_script(
+                doc_id, codigo, timeout, variables, body.nombre, _recordar_script,
+                borrador=not body.permanente,
+            )
         )
 
 
@@ -752,6 +766,7 @@ def _crear_documento_desde_script(
     variables: dict[str, Any] | None,
     nombre_pedido: str | None,
     recordar_script: Any,
+    borrador: bool = False,
 ) -> dict[str, Any]:
     try:
         salida_temporal, nombres_ordenados = scripts_runner.ejecutar_script(
@@ -791,8 +806,27 @@ def _crear_documento_desde_script(
         "documento creado (script)",
         _con_solidos_snapshot({destino.name: destino.read_bytes()}, doc_id, entradas),
     )
+    if borrador:
+        ahora = datetime.now(timezone.utc)
+        papelera.marcar_borrador(DOCUMENTOS_DIR, doc_id, ahora)
     confirmar_revision(doc_id, "documento_creado")
-    return {**registro, "revision": _revisiones.get(doc_id)}
+    respuesta = {**registro, "revision": _revisiones.get(doc_id)}
+    if borrador:
+        expira = papelera.expiracion(destino.stat().st_mtime, {"creado": ahora.isoformat()})
+        respuesta.update(_datos_de_borrador(expira))
+    return respuesta
+
+
+def _datos_de_borrador(expira: datetime) -> dict[str, Any]:
+    hora = expira.astimezone().strftime("%H:%M")
+    return {
+        "borrador": True,
+        "expira": expira.isoformat(),
+        "mensaje": (
+            f"Borrador: se archiva en la papelera a las {hora} si no lo conservas "
+            "con conservar_documento"
+        ),
+    }
 
 
 def crear_documento_desde_formas(nombrados: dict[str, Any], nombre_pedido: str) -> dict[str, Any]:
@@ -1331,13 +1365,21 @@ def verificar_fdm_documento(
 
 
 @router.get("/documentos")
-def listar_documentos() -> list[dict[str, Any]]:
+def listar_documentos(borradores: bool = False) -> list[dict[str, Any]]:
     """Compact picker/gallery listing, newest geometry first.
 
     Geometry mtime survives restarts and changes on rebuild/restore, unlike
     registry insertion order or metadata timestamps (which notes may change).
     Format comes from the stored file, not its user-facing display name.
+
+    Drafts (fase 2) are hidden unless ``borradores=true``; the listing first
+    sends expired drafts to the papelera (lazy sweep). A draft entry carries
+    ``borrador: true`` and ``expira``; every other entry is unchanged.
     """
+    # Local import: papelera_routes imports this module.
+    from papelera_routes import barrer_borradores
+
+    barrer_borradores()
     entries = []
     for registro in list(_registry.values()):
         path = _files.get(registro["id"])
@@ -1348,7 +1390,11 @@ def listar_documentos() -> list[dict[str, Any]]:
         except FileNotFoundError:
             # A concurrent deletion must not break the entire gallery.
             continue
-        entries.append({
+        estado = _estado_de_listado(registro["id"])
+        es_borrador = papelera.es_borrador(estado)
+        if es_borrador and not borradores:
+            continue
+        entry = {
             "id": registro["id"],
             "nombre": registro["nombre"],
             "volumen": registro["volumen"],
@@ -1356,7 +1402,11 @@ def listar_documentos() -> list[dict[str, Any]]:
             "formato": "step" if path.suffix.lower() in _STEP_EXTS else "stl",
             "actualizado": datetime.fromtimestamp(modified, timezone.utc).isoformat(),
             "revision": _revisiones.get(registro["id"]),
-        })
+        }
+        if es_borrador:
+            entry["borrador"] = True
+            entry["expira"] = papelera.expiracion(modified, estado).isoformat()
+        entries.append(entry)
     return sorted(entries, key=lambda entry: (
         -datetime.fromisoformat(entry["actualizado"]).timestamp(), entry["id"]
     ))

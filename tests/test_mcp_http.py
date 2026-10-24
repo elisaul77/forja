@@ -52,7 +52,7 @@ _TOOLS = {
     "ensamble",
     "suspension",
     "puentes",
-    "borrar_documento", "papelera",
+    "borrar_documento", "papelera", "conservar_documento",
     "rama",
     "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
     "responder_indicacion",  # unified intents (ADR-0019)
@@ -208,7 +208,7 @@ def test_mcp_http_vivo_percibir_documento_pequeno(vivo_post):
     finally:
         if "id" in creado:
             client.eliminar_documento(creado["id"])
-    assert creado["id"] not in {d["id"] for d in tools.listar_documentos()}
+    assert creado["id"] not in {d["id"] for d in tools.listar_documentos(incluir_borradores=True)}
 
 
 @vivo
@@ -294,4 +294,4 @@ def test_mcp_http_vivo_ensamble_y_puentes(vivo_post):
     finally:
         if "id" in creado:
             client.eliminar_documento(creado["id"])
-    assert creado["id"] not in {d["id"] for d in tools.listar_documentos()}
+    assert creado["id"] not in {d["id"] for d in tools.listar_documentos(incluir_borradores=True)}
