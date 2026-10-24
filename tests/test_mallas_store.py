@@ -285,3 +285,11 @@ def test_papelera_conserva_el_almacen_y_la_purga_lo_borra(fuente, docs):
     purga = client.delete(f"/papelera/{base}", headers=_h())
     assert purga.status_code == 200, purga.text
     assert not _almacen(base).exists(), "la purga borra el almacen de mallas"
+
+
+def test_tope_de_triangulos_coincide_con_design_geometry():
+    # Import dentro del test: design_geometry importa incorporar, que importa mallas.
+    import design_geometry
+    import mallas
+
+    assert mallas.MAX_TRIANGULOS == design_geometry.MAX_FACES

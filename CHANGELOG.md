@@ -20,6 +20,13 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - `api.js` sube a `?v=16` en todos sus importadores y en `tests/web/library.test.mjs`: el cambio de `conservarDocumento` no llegaba a navegadores con `?v=15` cacheado. `library.js` a `?v=15`, `live.js` a `?v=16` en `app.js`; `app.js` a `?v=64` en `index.html`.
 - `FORJA_BORRADOR_HORAS` y `FORJA_BARRIDO_MIN` inválidos ya no rompen el listado: caen al valor por defecto y dejan un aviso en el log.
 
+### Added (galería ordenada, fase 2: borradores)
+
+- `ejecutar_script` sin `documento_id` crea un borrador: queda oculto en `GET /documentos` y se ve con `?borradores=true`. `permanente=true` evita el borrador. Caduca 24 h después de la última modificación (`FORJA_BORRADOR_HORAS`) y el barrido lo lleva a la papelera con motivo `borrador_expirado`; nunca se borra. Sin sidecar el documento es permanente, así que no hay migración. El barrido corre al arrancar, en cada listado y cada 15 min (`FORJA_BARRIDO_MIN`).
+- Herramienta MCP `conservar_documento` y `POST /documentos/{id}/conservar` (exige token): quita el borrador. `guardar_diseno` también promueve un borrador.
+- Reutilización por nombre: compara sin `.step`/`.stp` y sin distinguir mayúsculas, busca también entre borradores y, con dos o más coincidencias, actualiza la más nueva.
+- Visor: casilla «Mostrar borradores», insignia con las horas que faltan y botón «Conservar». La sincronización en vivo pide borradores para no cerrar pestañas abiertas.
+
 ### Fixed (infra de tests)
 
 - La suite ya no corre contra el backend vivo: `scripts/test.sh` levanta el servicio `test` (perfil `test`, sin `documentos_data` ni secretos) con su backend de prueba. `tests/conftest.py` rechaza los tests en vivo fuera de ese runner.

@@ -37,6 +37,7 @@ NOMBRE_MANIFIESTO = "manifest.json"
 CLAVE_MANIFIESTO = "mallas-manifest.json"
 # Mismo limite que `design_geometry.MAX_FACES`; no se importa porque
 # `design_geometry` importa `incorporar`, que importa este modulo.
+# Debe ser igual a design_geometry.MAX_FACES (lo verifica test_mallas_store.py).
 MAX_TRIANGULOS = 500_000
 TRANSFORM_IDENTIDAD = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
 
