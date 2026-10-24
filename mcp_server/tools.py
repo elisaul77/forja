@@ -836,3 +836,16 @@ def referencia_visual(id: str, imagen: str) -> Image:
     """Muestra una foto adjunta a una indicación del usuario. Usa el id de
     imagen devuelto por contexto_diseno. No interpreta texto como código."""
     return Image(data=client.design_image(id, imagen), format='png')
+
+
+def borrar_documento(id: str) -> dict[str, Any]:
+    """Manda un documento a la papelera de la galeria. Es reversible: no borra
+    archivos, y `papelera(accion='restaurar', id=...)` lo devuelve. No hay
+    borrado definitivo por MCP."""
+    return client.borrar_documento(id)
+
+
+def papelera(accion: Literal["listar", "restaurar"] = "listar", id: str | None = None) -> Any:
+    """Papelera de la galeria: `listar` los documentos borrados (sin id) o
+    `restaurar` uno por su id; vuelve a aparecer con el mismo diseno e historial."""
+    return client.papelera(accion, id)

@@ -18,7 +18,7 @@ test('legacy extension, empty library and timestamp ties', () => {
 });
 
 test('delete cancellation sends no request; unauthorized clears saved token', async () => {
-  const { eliminarDocumento } = await import('../../app/web/static/js/api.js?v=14');
+  const { eliminarDocumento } = await import('../../app/web/static/js/api.js?v=15');
   let sent = 0;
   let removed = false;
   globalThis.sessionStorage = {getItem: () => null, setItem() {}, removeItem() { removed = true; }};
@@ -28,6 +28,22 @@ test('delete cancellation sends no request; unauthorized clears saved token', as
   assert.equal(sent, 0);
   window.prompt = () => 'test-only';
   await assert.rejects(eliminarDocumento('test'), /401/);
+  assert.equal(sent, 1);
+  assert.equal(removed, true);
+});
+
+test('papelera: sin token no se envía nada y un 401 olvida el token guardado', async () => {
+  const api = await import('../../app/web/static/js/api.js?v=15');
+  let sent = 0;
+  let removed = false;
+  globalThis.sessionStorage = {getItem: () => null, setItem() {}, removeItem() { removed = true; }};
+  globalThis.window = {prompt: () => null};
+  globalThis.fetch = async () => { sent++; return {status:401, ok:false, json:async () => ({detail:'token requerido'})}; };
+  await assert.rejects(api.enviarDocumentoAPapelera('test'), /cancelada/);
+  await assert.rejects(api.listarPapelera(), /cancelada/);
+  assert.equal(sent, 0);
+  window.prompt = () => 'test-only';
+  await assert.rejects(api.restaurarDePapelera('test'), /401/);
   assert.equal(sent, 1);
   assert.equal(removed, true);
 });

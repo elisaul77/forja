@@ -7,6 +7,13 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (galería ordenada, fase 1: papelera)
+
+- Papelera reversible: `POST /documentos/{id}/papelera` saca un documento de la galería sin borrar ningún archivo; `GET /papelera`, `POST /papelera/{id}/restaurar` y `DELETE /papelera/{id}` (borrado definitivo, solo de documentos ya en papelera). Todas exigen el token. Estado en `{id}.estado.json` (sin sidecar = documento normal, sin migración); módulos nuevos `app/papelera.py` y `app/papelera_routes.py`.
+- Arranque: no carga los documentos en papelera. `DELETE /documentos/{id}` sigue igual.
+- Herramientas MCP `borrar_documento(id)` y `papelera(accion="listar"|"restaurar", id=None)`; sin borrado definitivo por MCP.
+- Visor: «Mover a la papelera» reemplaza al «Eliminar» de la galería; vista «Papelera» con restaurar y eliminar para siempre. `api.js` sube a `?v=15` en todos sus importadores; `library.js` a `?v=15`, `app.js` a `?v=14`, `index.html` a `app.js?v=63`.
+
 ### Fixed (dibujo de indicaciones)
 
 - «Dibujar indicación» admite varios trazos por indicación: cada trazo se añade y el modo sigue activo hasta «Terminar indicación» (Enter), «Deshacer trazo» (Ctrl+Z) o «Cancelar» (Esc, sin guardar nada). Lógica en `app/web/static/js/dibujo-indicacion.js` (nuevo); `notes.js` `?v=28`, `tabs.js` `?v=55`, `app.js` `?v=58`. El backend no cambia: la indicación ya admitía varias marcas.

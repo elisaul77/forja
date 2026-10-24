@@ -20,6 +20,7 @@ import documents
 import design_routes
 import eventos
 import notes
+import papelera_routes
 import perfiles
 import ramas
 import fusion
@@ -56,6 +57,7 @@ app.include_router(fusion.router)
 app.include_router(historial_grafo.router)
 app.include_router(ramas.router)
 app.include_router(incorporar.router)
+app.include_router(papelera_routes.router)
 
 
 class _OrigenDelCambio:

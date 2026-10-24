@@ -539,10 +539,10 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
 
     if accion not in _ACCIONES_RAMA:
         return {"error": True, "mensaje": f"accion desconocida: {accion!r} (usa {'|'.join(_ACCIONES_RAMA)})"}
-    base = f"/documentos/{quote(doc_id, safe='')}/ramas"
+    base = f"/documentos/{urllib.parse.quote(doc_id, safe='')}/ramas"
     q = (lambda v: quote(v or "", safe=""))
     timeout = _heavy_timeout() if accion in ("cambiar", "comparar", "fusionar", "traer_pieza", "restaurar_pieza", "incorporar") else _TIMEOUT
-    doc_base = f"/documentos/{quote(doc_id, safe='')}"
+    doc_base = f"/documentos/{urllib.parse.quote(doc_id, safe='')}"
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=timeout) as c:
         if accion == "listar":
             resp = c.get(base)
@@ -587,7 +587,7 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
                 if actual.status_code >= 400:
                     return {"error": True, "mensaje": _detalle(actual)}
                 destino = actual.json().get("activa", "main")
-            resp = c.get(f"/documentos/{quote(doc_id, safe='')}/comparar", params={"a": desde, "b": destino})
+            resp = c.get(f"/documentos/{urllib.parse.quote(doc_id, safe='')}/comparar", params={"a": desde, "b": destino})
         elif not nombre:
             return {"error": True, "mensaje": f"{accion} necesita nombre"}
         elif accion == "crear":
@@ -616,6 +616,50 @@ def eliminar_documento(doc_id: str) -> dict[str, Any]:
     `documentos_data/`."""
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
         resp = c.delete(f"/documentos/{doc_id}", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
+
+
+# ---------------------------------------------------------------- galeria:
+# papelera (fase 1). Mover a la papelera es reversible; el borrado definitivo
+# no es herramienta MCP (solo REST, con el boton de la galeria y los tests).
+
+_ACCIONES_PAPELERA = ("listar", "restaurar")
+
+
+def borrar_documento(doc_id: str) -> dict[str, Any]:
+    """Send a document to the papelera (reversible: nothing is deleted)."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        resp = c.post(f"/documentos/{urllib.parse.quote(doc_id, safe='')}/papelera", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
+
+
+def papelera(accion: str, doc_id: str | None = None) -> Any:
+    """`listar` the documents in the papelera, or `restaurar` one by id."""
+    if accion not in _ACCIONES_PAPELERA:
+        return {"error": True, "mensaje": "accion desconocida: usa 'listar' o 'restaurar'"}
+    if accion == "listar" and doc_id is not None:
+        return {"error": True, "mensaje": "'listar' no lleva id"}
+    if accion == "restaurar" and not doc_id:
+        return {"error": True, "mensaje": "'restaurar' necesita el id del documento"}
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        if accion == "listar":
+            resp = c.get("/papelera", headers=_headers_con_token())
+        else:
+            resp = c.post(f"/papelera/{urllib.parse.quote(doc_id, safe='')}/restaurar", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
+
+
+def purgar_papelera(doc_id: str) -> dict[str, Any]:
+    """Permanent delete of a document already in the papelera. REST only, not
+    an MCP tool: used by the live tests' cleanup (`tests/test_papelera.py`)."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        resp = c.delete(f"/papelera/{urllib.parse.quote(doc_id, safe='')}", headers=_headers_con_token())
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
     return resp.json()

@@ -66,6 +66,9 @@ def crear_servidor() -> MCPServer:
             "posicion; 'suspension' consulta el simulador del mostertruck por "
             "el puente de solo lectura y 'puentes' dice que servicios locales "
             "estan encendidos y respondiendo. "
+            "Galeria: borrar_documento manda un documento a la papelera (reversible: "
+            "papelera con accion restaurar lo devuelve; no borra archivos); no hay "
+            "borrado definitivo por MCP. "
             "Todas las unidades son milimetros. Las respuestas "
             "son compactas (ids, numeros, mensajes cortos); pedir 'captura' "
             "solo cuando de verdad haga falta ver la geometria."
@@ -99,6 +102,8 @@ def crear_servidor() -> MCPServer:
                  "exportar_diseno"):
         servidor.tool(name=name)(getattr(tools, name))
     servidor.tool(name="referencia_visual", structured_output=False)(tools.referencia_visual)
+    servidor.tool(name="borrar_documento")(tools.borrar_documento)
+    servidor.tool(name="papelera")(tools.papelera)
     return servidor
 
 

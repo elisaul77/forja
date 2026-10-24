@@ -52,6 +52,7 @@ _TOOLS = {
     "ensamble",
     "suspension",
     "puentes",
+    "borrar_documento", "papelera",
     "rama",
     "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
     "responder_indicacion",  # unified intents (ADR-0019)

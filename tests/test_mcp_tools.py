@@ -82,6 +82,7 @@ def test_tool_names_match_skill_table():
         "ensamble",
         "suspension",
         "puentes",
+        "borrar_documento", "papelera",  # galeria: papelera reversible (fase 1)
         "cupon",  # fdm-B
         "rama",
         "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",

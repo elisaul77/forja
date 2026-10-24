@@ -94,7 +94,7 @@ def test_shared_workspace_over_real_mcp_http(tmp_path):
                         "clientInfo": {"name": "workspace-test", "version": "1"},
                     },
                 )
-                assert len(rpc("tools/list", {})["tools"]) == 31
+                assert len(rpc("tools/list", {})["tools"]) == 33
                 uploaded = c.post(
                     "/documentos",
                     files={

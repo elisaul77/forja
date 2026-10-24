@@ -1,7 +1,7 @@
 // Forja — orquestación de la página: barra superior, lista de documentos
 // del servidor, subida de archivos y apertura de pestañas.
-import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=14";
-import { createLibrary, latestStep } from "./library.js?v=13";
+import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=15";
+import { createLibrary, latestStep } from "./library.js?v=14";
 import { TabManager } from "./tabs.js?v=59";
 import { montarBarraHerramientas } from "./toolbar-ui.js?v=12";
 import { startLive } from "./live.js?v=15";
@@ -84,12 +84,16 @@ const documentSearch = document.getElementById("fj-document-search");
 let documents = [];
 const library = createLibrary({
   openDocument: doc => withLoading(`Abriendo ${doc.nombre}…`, () => abrirDocumentoPorId(doc.id)),
+  onRestored: id => {
+    deletedDocuments.delete(id);
+    void refrescarListaDocumentos();
+  },
   onDeleted: id => {
     deletedDocuments.add(id);
     tabs.cerrar(id);
     feedback.hidden = false;
     feedback.classList.remove('is-error');
-    feedback.textContent = 'Documento eliminado definitivamente de la biblioteca.';
+    feedback.textContent = 'Documento movido a la papelera. Puedes restaurarlo desde la biblioteca.';
     documents = documents.filter(doc => doc.id !== id);
     filterDocuments();
     const url = new URL(location.href);
@@ -181,9 +185,9 @@ function renderDocuments(documentos) {
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'fj-btn';
-    remove.textContent = 'Eliminar';
-    remove.setAttribute('aria-label', `Eliminar ${doc.nombre}`);
-    remove.onclick = () => library.remove(doc);
+    remove.textContent = 'Papelera';
+    remove.setAttribute('aria-label', `Mover ${doc.nombre} a la papelera`);
+    remove.onclick = () => library.trash(doc);
     row.append(item, remove);
     listaDocumentos.appendChild(row);
   }

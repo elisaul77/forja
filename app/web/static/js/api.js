@@ -33,6 +33,32 @@ export async function eliminarDocumento(id) {
   return resp.json();
 }
 
+/** Papelera de la galería (fase 1): mover, listar, restaurar y purgar; todas piden el token. */
+async function pedirConToken(metodo, ruta) {
+  const token = obtenerTokenSesion().trim();
+  if (!token) throw new Error("Operación cancelada: no se proporcionó la clave de edición");
+  const resp = await fetch(`${BASE}${ruta}`, { method: metodo, headers: { "X-Forja-Token": token } });
+  if (resp.status === 401) sessionStorage.removeItem(CLAVE_TOKEN_SESION);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export function enviarDocumentoAPapelera(id) {
+  return pedirConToken("POST", `/documentos/${encodeURIComponent(id)}/papelera`);
+}
+
+export function listarPapelera() {
+  return pedirConToken("GET", "/papelera");
+}
+
+export function restaurarDePapelera(id) {
+  return pedirConToken("POST", `/papelera/${encodeURIComponent(id)}/restaurar`);
+}
+
+export function purgarDePapelera(id) {
+  return pedirConToken("DELETE", `/papelera/${encodeURIComponent(id)}`);
+}
+
 async function parseError(resp) {
   let detalle = resp.statusText;
   try {

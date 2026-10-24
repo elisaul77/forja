@@ -8,7 +8,7 @@ import {
   repartirGrupos,
 } from "./toolbar.js?v=5";
 import { buildDescargaUrl, buildOrcaLink, slugDescarga, AVISO_ORCA } from "./orca.js?v=4";
-import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=14";
+import { obtenerEstadoDeshacer, deshacerDocumento, rehacerDocumento } from "./api.js?v=15";
 import { abrirRasgo } from "./features.js?v=1";
 import { prepararOperacion, pedirCambioPieza } from "./design.js?v=12";
 

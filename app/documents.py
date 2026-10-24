@@ -40,6 +40,7 @@ import export as export_solidos
 import git_store
 import naming
 import notes
+import papelera
 import parametros
 import percepcion
 import planos
@@ -187,19 +188,34 @@ def recargar_documentos() -> None:
         if doc_id in _registry:
             continue
         try:
-            analisis = _analyze(ruta, ext)
+            if papelera.esta_en_papelera(DOCUMENTOS_DIR, doc_id):
+                continue  # en papelera: los archivos siguen ahi, la galeria no lo carga
+        except ValueError:
+            logger.warning("estado de documento ilegible, no se carga %s", doc_id)
+            continue
+        try:
+            _cargar_documento(ruta)
         except Exception:  # noqa: BLE001 - skip, never crash startup
             continue
-        nombre = _leer_meta(doc_id, ruta.name)
-        _registry[doc_id] = {"id": doc_id, "nombre": nombre, **analisis}
-        _files[doc_id] = ruta
-        if ext in _STEP_EXTS and solids.cargar(doc_id) is None:
-            try:
-                shape = b123d_kernel.import_from_step(ruta)
-                solids.guardar(doc_id, solids.construir_entradas(shape))
-            except Exception:  # noqa: BLE001 - best-effort bootstrap only
-                pass
-        _fijar_revision(doc_id)
+
+
+def _cargar_documento(ruta: Path) -> None:
+    """Index one stored STEP/STL file in the registries (startup reload and
+    papelera restore). Raises when the file cannot be analysed; the startup
+    caller decides to skip it, the restore caller turns it into a 422."""
+    ext = ruta.suffix.lower()
+    doc_id = ruta.stem
+    analisis = _analyze(ruta, ext)
+    nombre = _leer_meta(doc_id, ruta.name)
+    _registry[doc_id] = {"id": doc_id, "nombre": nombre, **analisis}
+    _files[doc_id] = ruta
+    if ext in _STEP_EXTS and solids.cargar(doc_id) is None:
+        try:
+            shape = b123d_kernel.import_from_step(ruta)
+            solids.guardar(doc_id, solids.construir_entradas(shape))
+        except Exception:  # noqa: BLE001 - best-effort bootstrap only
+            pass
+    _fijar_revision(doc_id)
 
 
 def calcular_revision(doc_id: str) -> str | None:
@@ -2543,13 +2559,23 @@ def _borrar_directorio_exportado(doc_id: str) -> None:
 def _eliminar_documento_bloqueado(doc_id: str) -> dict[str, Any]:
     if doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
+    return _purgar_archivos(doc_id)
 
+
+def _purgar_archivos(doc_id: str) -> dict[str, Any]:
+    """Delete everything stored for ``doc_id`` from disk and the registries.
+    Caller holds ``parametros.bloqueo(doc_id)``. Works for a live document
+    and for one in the papelera (its file is no longer in ``_files``, so it
+    is looked up on disk by id)."""
     ruta = _files.pop(doc_id, None)
+    if ruta is None:
+        ruta = papelera.ruta_archivo(DOCUMENTOS_DIR, doc_id)
     if ruta is not None:
         ruta.unlink(missing_ok=True)
     _ruta_meta(doc_id).unlink(missing_ok=True)
     _borrar_cache_malla(doc_id)
     notes.ruta_notas(doc_id).unlink(missing_ok=True)
+    papelera.borrar_estado(DOCUMENTOS_DIR, doc_id)
     solids.borrar(doc_id)
     materiales.borrar(doc_id)
     design_state.path(doc_id).unlink(missing_ok=True)
