@@ -1,4 +1,7 @@
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { listarEjemplos, abrirEjemplo } from '../../app/web/static/js/ejemplos.js';
 
@@ -56,4 +59,28 @@ test('401 borra el token guardado; un id desconocido se reporta con su código',
   globalThis.fetch = async () => ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({ detail: 'ejemplo no encontrado' }) });
   await assert.rejects(abrirEjemplo('no-existe'), /404 ejemplo no encontrado/);
   assert.equal(globalThis.sessionStorage.has('fj_token'), true);
+});
+
+// Bienvenida con la galería: el contenedor es desplazable y arranca desde
+// arriba. Centrar el contenido con flex (align-items/justify-content:center)
+// recorta el título y los botones por encima del viewport, que no se pueden
+// alcanzar con el scroll; por eso el bloque se centra con margin:auto.
+const raizWeb = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const cssBase = fs.readFileSync(path.join(raizWeb, 'app/web/static/css/forja-base.css'), 'utf8');
+
+function declaracionesDe(selector) {
+  const escapado = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const bloques = [...cssBase.matchAll(new RegExp(`(?:^|\\n)${escapado}\\s*\\{([^}]*)\\}`, 'g'))];
+  return bloques.map(m => m[1]).join(';');
+}
+
+test('la bienvenida no se centra con flex (recorta arriba y no se puede desplazar)', () => {
+  const vacio = declaracionesDe('.fj-main__vacio');
+  assert.doesNotMatch(vacio, /align-items\s*:\s*center/);
+  assert.doesNotMatch(vacio, /justify-content\s*:\s*center/);
+  assert.match(declaracionesDe('.fj-welcome'), /margin\s*:\s*auto/);
+});
+
+test('las tarjetas de bienvenida se ordenan en 3 columnas', () => {
+  assert.match(declaracionesDe('.fj-welcome .fj-ejemplos__lista'), /repeat\(3,/);
 });

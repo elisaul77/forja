@@ -497,6 +497,10 @@ class _ScriptBody(BaseModel):
     documento_id: str | None = None
 
 
+# Alias público para quien construye el cuerpo desde otro módulo (galeria_ejemplos).
+ScriptBody = _ScriptBody
+
+
 def _detalle_script_error(exc: scripts_runner.ScriptError) -> dict[str, Any] | str:
     """``HTTPException.detail`` for a ``ScriptError``: a plain string when
     there is no script line to point at (kernel/export failures), or a

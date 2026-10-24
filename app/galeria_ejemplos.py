@@ -51,5 +51,5 @@ def abrir_ejemplo(ejemplo_id: str) -> dict[str, Any]:
     entrada = _entrada(ejemplo_id)
     codigo = (DIRECTORIO / f"{entrada['id']}.py").read_text(encoding="utf-8")
     return documents.crear_documento_desde_script(
-        documents._ScriptBody(codigo=codigo, nombre=f"Ejemplo — {entrada['titulo']}")
+        documents.ScriptBody(codigo=codigo, nombre=f"Ejemplo — {entrada['titulo']}")
     )
