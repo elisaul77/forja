@@ -7,6 +7,19 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Added (galería ordenada, fase 3a: cuerpos de malla dentro de un documento)
+
+- Un STL importado dentro de un documento STEP queda como cuerpo de malla en `{id}.mallas/` (`manifest.json` con `schema: "mallas-v1"` y un STL binario por cuerpo). No entra en `solidos.json` ni en el registro público, el STEP no cambia y no aparece documento nuevo. Módulo nuevo `app/mallas.py`.
+- `abrir_archivo(ruta, documento_id, nombre_solido)` (MCP) y `POST /documentos/desde_ruta` aceptan `documento_id`: un STEP aporta sus sólidos con nombre y un STL un cuerpo de malla. `nombre_solido` sin `documento_id` responde 400. Nueva ruta `POST /documentos/{id}/incorporar_archivo` (exige token).
+- `POST /documentos/{id}/incorporar` con un STL de origen en un documento STEP añade el cuerpo de malla; antes respondía 400. STL en STL sigue fusionando regiones igual que antes.
+- Validación de la malla: vacía, con NaN/infinitos o con más de 500 000 triángulos → 400 sin escribir nada; malla abierta → se acepta con aviso (`estanca: false`, no sirve para booleanas). El tope de tamaño de archivo es `FORJA_MAX_UPLOAD_MB`.
+- La revisión, los snapshots, `restaurar`, el cambio de rama y la purga incluyen el almacen de mallas; la papelera lo conserva.
+
+### Fixed (galería ordenada, fase 2: caché del visor y ajustes de borradores)
+
+- `api.js` sube a `?v=16` en todos sus importadores y en `tests/web/library.test.mjs`: el cambio de `conservarDocumento` no llegaba a navegadores con `?v=15` cacheado. `library.js` a `?v=15`, `live.js` a `?v=16` en `app.js`; `app.js` a `?v=64` en `index.html`.
+- `FORJA_BORRADOR_HORAS` y `FORJA_BARRIDO_MIN` inválidos ya no rompen el listado: caen al valor por defecto y dejan un aviso en el log.
+
 ### Fixed (infra de tests)
 
 - La suite ya no corre contra el backend vivo: `scripts/test.sh` levanta el servicio `test` (perfil `test`, sin `documentos_data` ni secretos) con su backend de prueba. `tests/conftest.py` rechaza los tests en vivo fuera de ese runner.

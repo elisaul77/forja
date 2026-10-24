@@ -138,13 +138,17 @@ def test_step_en_step_con_nombres(docs):
     assert r.status_code == 200 and r.json()["solidos"] == 2
 
 
-def test_stl_en_step_es_400(docs):
+def test_stl_en_step_anade_cuerpo_de_malla(docs):
+    # Fase 3a (galeria ordenada): antes 400; ahora el STL entra como cuerpo de
+    # malla en {id}.mallas/. El STEP y solidos.json quedan intactos.
     base, carro = _script(SCRIPT_BASE, "base"), _stl()
     docs += [base, carro]
     huella = _huella(base)
     r = client.post(f"/documentos/{base}/incorporar", json={"desde": carro}, headers=_h())
-    assert r.status_code == 400 and "STL" in r.json()["detail"]
+    assert r.status_code == 200, r.text
+    assert r.json()["incorporadas"] == ["carro"]
     assert _huella(base) == huella
+    assert (documents.DOCUMENTOS_DIR / f"{base}.mallas" / "carro.stl").is_file()
 
 
 def test_token_requerido_e_ids_invalidos(docs):

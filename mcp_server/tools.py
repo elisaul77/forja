@@ -33,16 +33,24 @@ def listar_documentos(incluir_borradores: bool = False) -> list[dict[str, Any]]:
     return client.listar_documentos(incluir_borradores)
 
 
-def abrir_archivo(ruta: str) -> dict[str, Any]:
-    """Abre un archivo STEP o STL como un nuevo documento de Forja.
+def abrir_archivo(
+    ruta: str, documento_id: str | None = None, nombre_solido: str | None = None
+) -> dict[str, Any]:
+    """Abre un archivo STEP o STL como un nuevo documento de Forja, o lo
+    importa dentro de un documento existente si pasas `documento_id`.
 
     `ruta` debe estar dentro de una raiz permitida: `/data/documentos`
     (almacenamiento de Forja) o `/data/fuentes` (fuentes externas montadas
     en solo lectura). Cualquier otra ruta, o un intento de traversal
-    (`..`), se rechaza. Devuelve {"id", "nombre"}; usa `resumen_documento`
-    para ver bbox/volumen/solidos.
+    (`..`), se rechaza. Sin `documento_id` devuelve {"id", "nombre"}; usa
+    `resumen_documento` para ver bbox/volumen/solidos.
+
+    Con `documento_id` no se crea documento: un STEP aporta sus solidos y un
+    STL un cuerpo de malla (aproximado, no B-rep), con el nombre
+    `nombre_solido` (o el del archivo). Devuelve {"id", "anadidos", "avisos"}.
+    `nombre_solido` sin `documento_id` es un error.
     """
-    return client.abrir_archivo(ruta)
+    return client.abrir_archivo(ruta, documento_id, nombre_solido)
 
 
 def resumen_documento(

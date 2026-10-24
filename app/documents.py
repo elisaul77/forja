@@ -25,13 +25,14 @@ from typing import Any, Callable
 import trimesh
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 import assemblies
 import auth
 import cotas
 import cotas_geometria
 import deshacer
+import mallas
 import materiales
 import eventos
 import explosion as vista_explosionada
@@ -240,7 +241,10 @@ def calcular_revision(doc_id: str) -> str | None:
         return None
     ruta_solidos_doc = solids.ruta_solidos(doc_id)
     sidecar = ruta_solidos_doc.read_bytes() if ruta_solidos_doc.exists() else None
-    return revision.calcular(geometria, ruta.suffix.lower() in _STEP_EXTS, [("solidos.json", sidecar)])
+    # Fase 3a: el manifiesto del almacen de mallas (sha256 por cuerpo) entra en
+    # la revision; sin almacen no aporta nada y la revision no cambia.
+    sidecars = [("solidos.json", sidecar), *mallas.firma_revision(DOCUMENTOS_DIR, doc_id)]
+    return revision.calcular(geometria, ruta.suffix.lower() in _STEP_EXTS, sidecars)
 
 
 def _fijar_revision(doc_id: str) -> tuple[str | None, str | None]:
@@ -399,6 +403,8 @@ def _con_ensamble_snapshot(archivos: dict[str, bytes], doc_id: str) -> dict[str,
     caller may already hold `parametros.bloqueo(doc_id)`, which is not
     reentrant; this helper only reads files."""
     archivos.update(assemblies.snapshot_files(doc_id))
+    # Fase 3a: el almacen de mallas viaja con la geometria (sin almacen, nada).
+    archivos.update(mallas.archivos_snapshot(DOCUMENTOS_DIR, doc_id))
     return archivos
 
 
@@ -454,6 +460,11 @@ async def crear_documento(request: Request, file: UploadFile = File(...)) -> dic
 
 class _DesdeRutaBody(BaseModel):
     ruta: str
+    # Fase 3a (galeria ordenada): con `documento_id` el archivo se importa DENTRO
+    # de ese documento (sin documento nuevo); `nombre_solido` nombra el solido o
+    # el cuerpo de malla y exige `documento_id`.
+    documento_id: str | None = Field(default=None, max_length=64)
+    nombre_solido: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/documentos/desde_ruta", dependencies=[Depends(auth.requiere_token)])
@@ -461,7 +472,14 @@ def crear_documento_desde_ruta(body: _DesdeRutaBody) -> dict[str, Any]:
     """Register a document from a file already on disk (used by the MCP
     `abrir_archivo` tool). Only paths inside `ALLOWED_READ_ROOTS` are
     accepted; the file is copied into `DOCUMENTOS_DIR`, so the read-only
-    `/data/fuentes` mount is never written to."""
+    `/data/fuentes` mount is never written to. With `documento_id` the file
+    is imported into that document instead (see `app/incorporar.py`)."""
+    if body.nombre_solido is not None and body.documento_id is None:
+        raise HTTPException(status_code=400, detail="nombre_solido requiere documento_id")
+    if body.documento_id is not None:
+        import incorporar  # tardio: incorporar importa este modulo
+
+        return incorporar.incorporar_archivo(body.documento_id, body.ruta, body.nombre_solido)
     origen = _validar_ruta_permitida(body.ruta)
     if not origen.is_file():
         raise HTTPException(status_code=404, detail="archivo no encontrado")
@@ -2486,6 +2504,10 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str,
     # check existed this route answered 200 while planting state the very
     # next read could not parse.
     assemblies.validate_snapshot(archivos)
+    try:
+        mallas.validar_snapshot(archivos)
+    except mallas.MallaInvalida as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     actuales: dict[str, bytes] = {}
     if ruta.exists():
@@ -2520,8 +2542,11 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str,
             # at startup and would register a phantom `ensamble_base`
             # document (Phase 6.0 finding 7 / contract C5).
             continue
+        elif mallas.es_clave_snapshot(nombre):
+            continue  # cuerpos de malla (fase 3a): se aplican tras el bucle
         else:
             (DOCUMENTOS_DIR / nombre).write_bytes(contenido)
+    mallas.restaurar_snapshot(DOCUMENTOS_DIR, doc_id, archivos)
     if "notas.json" not in archivos:
         # Ese snapshot es anterior a que existieran notas: restaurarlo debe
         # reflejar fielmente ese estado (sin notas), no dejar las de hoy.
@@ -2631,6 +2656,7 @@ def _purgar_archivos(doc_id: str) -> dict[str, Any]:
     design_state.path(doc_id).unlink(missing_ok=True)
     shutil.rmtree(DOCUMENTOS_DIR / ".design-assets" / doc_id, ignore_errors=True)
     shutil.rmtree(DOCUMENTOS_DIR / ".design-candidates" / doc_id, ignore_errors=True)
+    mallas.quitar(DOCUMENTOS_DIR, doc_id)  # cuerpos de malla (fase 3a): la purga no deja nada
     # The assembly is part of the document (Phase 6, ADR-0003/0006: deleting
     # a document must leave nothing of it behind, not even state a restore
     # could not reach); `clear` also removes `.ensambles/<id>/` itself.

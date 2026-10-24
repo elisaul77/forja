@@ -105,15 +105,28 @@ def listar_documentos(incluir_borradores: bool = False) -> list[dict[str, Any]]:
 
 
 @_heavy_operation
-def abrir_archivo(ruta: str) -> dict[str, Any]:
+def abrir_archivo(
+    ruta: str, documento_id: str | None = None, nombre_solido: str | None = None
+) -> dict[str, Any]:
+    # nombre_solido nombra el solido o cuerpo de malla dentro de un documento
+    # existente: sin documento_id no tiene sentido, se rechaza antes de pedir nada.
+    if nombre_solido is not None and documento_id is None:
+        return {"error": True, "mensaje": "nombre_solido requiere documento_id: el archivo se importa dentro de ese documento"}
+    cuerpo: dict[str, Any] = {"ruta": ruta}
+    if documento_id is not None:
+        cuerpo["documento_id"] = documento_id
+    if nombre_solido is not None:
+        cuerpo["nombre_solido"] = nombre_solido
     # Importing a large STEP (30 MB+) easily exceeds the light 30 s budget.
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.post(
-            "/documentos/desde_ruta", json={"ruta": ruta}, headers=_headers_con_token()
+            "/documentos/desde_ruta", json=cuerpo, headers=_headers_con_token()
         )
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
     data = resp.json()
+    if documento_id is not None:
+        return data  # importado dentro de un documento existente: {id, anadidos, ...}
     return {"id": data["id"], "nombre": data["nombre"]}
 
 

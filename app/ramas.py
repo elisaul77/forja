@@ -46,6 +46,7 @@ import documents
 import design_state
 import eventos
 import git_store
+import mallas
 import materiales
 import notes
 import parametros
@@ -312,6 +313,9 @@ def _materializar(doc_id: str, ruta: Path, archivos: dict[str, bytes]) -> None:
         temporal = estado.with_name("state.json.rama.tmp")
         temporal.write_bytes(ensamble[assemblies.STATE_KEY])
         os.replace(temporal, estado)
+    # Fase 3a: el almacen de mallas sigue al estado de la rama (sin almacen en
+    # el estado, el almacen de hoy se quita).
+    mallas.restaurar_snapshot(documents.DOCUMENTOS_DIR, doc_id, archivos)
 
 
 def _sha256(contenido: bytes) -> str:
