@@ -31,6 +31,13 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 - La suite ya no corre contra el backend vivo: `scripts/test.sh` levanta el servicio `test` (perfil `test`, sin `documentos_data` ni secretos) con su backend de prueba. `tests/conftest.py` rechaza los tests en vivo fuera de ese runner.
 - La limpieza de `tests/test_mcp_tools.py` borra solo los documentos cuyo id devolvió una respuesta de creación del propio test (`docs_propios`), nunca lo que apareciera en el listado.
+### Added (ejemplos al abrir)
+
+- Galería de ejemplos: carpeta `ejemplos/` con seis scripts build123d paramétricos (caja con tapa a presión, soporte de teléfono, tornillo y tuerca, bisagra de pasador, par de engranajes rectos y mesa auxiliar con piezas nombradas) e `ejemplos/index.json` con título, descripción y técnicas. Sin miniaturas: el índice no tiene ninguna.
+- `GET /ejemplos` (público) lista el índice sin código. `POST /ejemplos/{id}/abrir` (token) ejecuta el script por la ruta de `POST /documentos/script` y crea un documento nuevo «Ejemplo — <título>». El id se valida contra el índice; nunca llega una ruta desde la petición. Módulo `app/galeria_ejemplos.py`.
+- Visor: sin documento abierto, la bienvenida muestra tarjetas de ejemplo; la biblioteca tiene el botón «Ejemplos» para el mismo listado. Módulo nuevo `app/web/static/js/ejemplos.js`; `library.js` `?v=15`, `index.html` `app.js?v=64` y `forja-base.css?v=29`.
+- `Dockerfile` copia `ejemplos/` a `/app/ejemplos/`; `docker-compose.yml` lo monta en solo lectura en el servicio `forja`.
+- Sin herramienta MCP nueva; las instrucciones del servidor MCP mencionan los ejemplos.
 
 ### Added (galería ordenada, fase 1: papelera)
 

@@ -8,7 +8,7 @@
 // Los nombres de piezas vienen del usuario: solo se escriben con textContent.
 import {
   obtenerDisenoDocumento, obtenerReferenciasDiseno, prepararCandidatoDiseno,
-} from "./api.js?v=16";
+} from "./api.js?v=17";
 
 const TOPE_MM = 1000;
 const TOPE_CANTIDAD = 32;

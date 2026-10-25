@@ -321,8 +321,6 @@ a.fj-btn { text-decoration: none; }
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
   color: var(--fj-ink-4);
   font-size: var(--fj-text-lg);
   text-align: center;
@@ -641,8 +639,10 @@ a.fj-btn { text-decoration: none; }
 .fj-tab { flex-shrink: 0; }
 .fj-main { min-width: 0; }
 .fj-workspace { position: relative; min-width: 0; }
-.fj-main__vacio { background: var(--fj-shell-gradient); overflow-y: auto; }
-.fj-welcome { max-width: var(--fj-welcome-width); width: 100%; }
+/* Bienvenida desplazable: margin:auto centra el bloque si cabe y, si desborda,
+   queda alineado arriba (sin centrado flex, que dejaría el título inalcanzable). */
+.fj-main__vacio { background: var(--fj-shell-gradient); overflow-y: auto; --fj-welcome-width: 760px; }
+.fj-welcome { max-width: var(--fj-welcome-width); width: 100%; margin: auto; }
 .fj-welcome__mark { display: inline-flex; align-items: center; justify-content: center; width: var(--fj-space-8); height: var(--fj-space-8); margin-bottom: var(--fj-space-5); color: var(--fj-accent); background: var(--fj-accent-soft); border: 1px solid var(--fj-line-strong); border-radius: var(--fj-r-xl); font-size: var(--fj-text-2xl); }
 .fj-eyebrow { display: block; font-size: var(--fj-text-xs); letter-spacing: .16em; color: var(--fj-ink-3); margin-bottom: var(--fj-space-3); }
 .fj-welcome h2 { font-size: clamp(1.6rem, 4vw, 2.5rem); letter-spacing: -.045em; line-height: var(--fj-lh-xl); }
@@ -652,6 +652,21 @@ a.fj-btn { text-decoration: none; }
 .fj-welcome__formats > span { padding: 0 var(--fj-space-2); }
 .fj-welcome__steps { display: flex; justify-content: center; flex-wrap: wrap; gap: var(--fj-space-5); border-top: 1px solid var(--fj-line); padding-top: var(--fj-space-5); margin-top: var(--fj-space-7); color: var(--fj-ink-3); font-size: var(--fj-text-xs); }
 .fj-welcome__steps b { color: var(--fj-accent); font-family: var(--fj-mono); margin-right: var(--fj-space-1); }
+/* Tarjetas compactas en 3 columnas: la primera fila cabe bajo los botones en 1280x720. */
+.fj-welcome .fj-ejemplos__lista { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--fj-space-2); }
+.fj-welcome .fj-ejemplo { padding: var(--fj-space-2) var(--fj-space-3); gap: var(--fj-space-1); }
+.fj-welcome .fj-ejemplo__tecnicas li { padding: 1px var(--fj-space-2); }
+@media (max-height: 820px) {
+  .fj-welcome__mark { width: var(--fj-space-7); height: var(--fj-space-7); margin-bottom: var(--fj-space-3); }
+  .fj-welcome p { margin: var(--fj-space-3) auto var(--fj-space-4); }
+  .fj-welcome__steps { margin-top: var(--fj-space-5); padding-top: var(--fj-space-4); }
+}
+@media (max-width: 760px) {
+  .fj-welcome .fj-ejemplos__lista { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .fj-welcome .fj-ejemplos__lista { grid-template-columns: minmax(0, 1fr); }
+}
 .fj-dropdown { width: min(var(--fj-library-width), calc(100vw - var(--fj-space-6))); min-width: 0; max-height: min(70dvh, 560px); }
 .fj-library-heading { display: flex; flex-direction: column; gap: var(--fj-space-1); padding: var(--fj-space-3); }
 .fj-library-heading strong { font-size: var(--fj-text-sm); color: var(--fj-ink-1); }
@@ -1168,3 +1183,17 @@ a.fj-btn { text-decoration: none; }
 .fj-medidas__estado--holgura { color: var(--fj-ink-2); }
 .fj-medidas__mm { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fj-medidas.is-obsoleto { opacity: 0.5; }
+
+/* Galería de ejemplos (al abrir y desde la biblioteca) */
+.fj-ejemplos { width: 100%; margin-top: var(--fj-space-6); text-align: left; }
+.fj-ejemplos h3 { font-size: var(--fj-text-lg); margin: 0 0 var(--fj-space-2); color: var(--fj-ink-1); }
+.fj-ejemplos p.fj-ejemplos__ayuda { font-size: var(--fj-text-xs); color: var(--fj-ink-3); margin: 0 0 var(--fj-space-3); max-width: none; }
+.fj-ejemplos__lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--fj-space-3); }
+.fj-ejemplos__aviso { font-size: var(--fj-text-sm); color: var(--fj-ink-3); margin: 0; }
+.fj-gallery .fj-ejemplos__lista { margin-top: var(--fj-space-4); }
+.fj-ejemplo { display: flex; flex-direction: column; gap: var(--fj-space-2); min-width: 0; padding: var(--fj-space-3); border: 1px solid var(--fj-line); border-radius: var(--fj-r-md); background: var(--fj-sunk); text-align: left; }
+.fj-ejemplo h4 { margin: 0; font-size: var(--fj-text-sm); color: var(--fj-ink-1); overflow-wrap: anywhere; }
+.fj-ejemplo p { margin: 0; font-size: var(--fj-text-xs); color: var(--fj-ink-3); max-width: none; }
+.fj-ejemplo__tecnicas { display: flex; flex-wrap: wrap; gap: var(--fj-space-1); margin: 0; padding: 0; list-style: none; }
+.fj-ejemplo__tecnicas li { font-size: var(--fj-text-xs); padding: 2px var(--fj-space-2); border: 1px solid var(--fj-line-strong); border-radius: var(--fj-r-full); color: var(--fj-ink-2); }
+.fj-ejemplo > .fj-btn { align-self: flex-start; margin-top: auto; }

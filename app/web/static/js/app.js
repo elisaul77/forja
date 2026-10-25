@@ -1,7 +1,8 @@
 // Forja — orquestación de la página: barra superior, lista de documentos
 // del servidor, subida de archivos y apertura de pestañas.
-import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=16";
-import { createLibrary, latestStep } from "./library.js?v=16";
+import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=17";
+import { createLibrary, latestStep } from "./library.js?v=17";
+import { abrirEjemplo as pedirEjemplo, cargarEjemplos } from "./ejemplos.js?v=1";
 import { TabManager } from "./tabs.js?v=59";
 import { montarBarraHerramientas } from "./toolbar-ui.js?v=12";
 import { startLive } from "./live.js?v=16";
@@ -82,8 +83,26 @@ const dropdownDocumentos = document.getElementById("fj-dropdown-documentos");
 const listaDocumentos = document.getElementById("fj-lista-documentos");
 const documentSearch = document.getElementById("fj-document-search");
 let documents = [];
+const dialogoEjemplos = document.getElementById("fj-dialogo-ejemplos");
+const listaEjemplosDialogo = document.getElementById("fj-ejemplos-dialogo-lista");
+// Galería de ejemplos: crea un documento nuevo «Ejemplo — …» y lo abre.
+function abrirEjemplo(ejemplo) {
+  if (dialogoEjemplos.open) dialogoEjemplos.close();
+  return withLoading(`Creando «${ejemplo.titulo}»…`, async () => {
+    const ficha = await pedirEjemplo(ejemplo.id);
+    await abrirDocumentoPorId(ficha.id);
+  });
+}
+function mostrarEjemplos() {
+  dialogoEjemplos.showModal();
+  void cargarEjemplos(listaEjemplosDialogo, abrirEjemplo);
+}
+document.getElementById("fj-ejemplos-cerrar").onclick = () => dialogoEjemplos.close();
+void cargarEjemplos(document.getElementById("fj-ejemplos-lista"), abrirEjemplo);
+
 const library = createLibrary({
   openDocument: doc => withLoading(`Abriendo ${doc.nombre}…`, () => abrirDocumentoPorId(doc.id)),
+  onEjemplos: mostrarEjemplos,
   onRestored: id => {
     deletedDocuments.delete(id);
     void refrescarListaDocumentos();

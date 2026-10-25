@@ -1,5 +1,5 @@
 // Articulaciones y puente de suspensión: comparte la API utilizada por MCP.
-import { obtenerTokenSesion } from "./api.js?v=16";
+import { obtenerTokenSesion } from "./api.js?v=17";
 
 async function request(path, method = "GET", data, withRevision = false) {
   const headers = method === "GET" ? {} : { "Content-Type": "application/json", "X-Forja-Token": obtenerTokenSesion() };

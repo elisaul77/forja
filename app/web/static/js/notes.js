@@ -13,7 +13,7 @@ import {
   borrarTrazo,
   actualizarVisibilidadTrazo,
   obtenerDisenoDocumento,
-} from "./api.js?v=16";
+} from "./api.js?v=17";
 import {
   createIntent,
   sendIntentAction,
