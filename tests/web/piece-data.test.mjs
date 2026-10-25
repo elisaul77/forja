@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decodePieceBundle } from "../../app/web/static/js/piece-data.js";
+import { decodePieceBundle, nombreIdentificado } from "../../app/web/static/js/piece-data.js";
 
-function bundle(pieces, count = 3) {
+function bundle(pieces, count = 3, extra = {}) {
   const stl = new Uint8Array(84 + count * 50);
   new DataView(stl.buffer).setUint32(80, count, true);
-  const header = new TextEncoder().encode(JSON.stringify({ version: 1, triangulos: count, piezas: pieces }));
+  const header = new TextEncoder().encode(JSON.stringify({ version: 1, triangulos: count, piezas: pieces, ...extra }));
   const result = new Uint8Array(8 + header.length + stl.length);
   result.set(new TextEncoder().encode("FJP1"));
   new DataView(result.buffer).setUint32(4, header.length, true);
@@ -45,4 +45,36 @@ test("truncated envelope and changed triangle count cannot be paired silently", 
   const offset = 8 + new DataView(data).getUint32(4, true);
   new DataView(data).setUint32(offset + 80, 4, true);
   assert.throws(() => decodePieceBundle(data), /no coinciden/);
+});
+
+// Nombres de sólido como los de un STEP importado (con guiones bajos e índices).
+const SOLIDOS_STEP = ["base", "piso2", "columna_1", "columna_2"];
+
+test("con piezas identificadas el visor usa los nombres de sólido del servidor", () => {
+  const data = bundle(
+    SOLIDOS_STEP.map((n, i) => piece(n, [[i, 1]])),
+    4,
+    { identificadas: true, nombres_inciertos: false },
+  );
+  const { manifest } = decodePieceBundle(data);
+  assert.deepEqual(
+    manifest.piezas.map((p) => nombreIdentificado(manifest, p.nombre)),
+    SOLIDOS_STEP,
+  );
+});
+
+test("sin piezas identificadas el visor no entrega un nombre de pieza inventado", () => {
+  // Caso real: caras compartidas entre sólidos → una sola pieza «Modelo completo».
+  const data = bundle([piece("Modelo completo", [[0, 3]])], 3, {
+    identificadas: false,
+    nombres_inciertos: true,
+    aviso: "Hay caras compartidas o sin una pieza propietaria inequívoca; se muestra el modelo completo.",
+  });
+  const { manifest } = decodePieceBundle(data);
+  assert.equal(nombreIdentificado(manifest, "Modelo completo"), null);
+});
+
+test("nombres inciertos anulan la identificación aunque el paquete diga identificadas", () => {
+  assert.equal(nombreIdentificado({ identificadas: true, nombres_inciertos: true }, "base"), null);
+  assert.equal(nombreIdentificado({ nombres_inciertos: false }, "base"), null);
 });

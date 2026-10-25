@@ -14,34 +14,45 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import unicodedata
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import trimesh
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import Response
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field
 
 import assemblies
 import auth
+import cotas
+import cotas_geometria
+import deshacer
+import mallas
 import materiales
 import eventos
+import explosion as vista_explosionada
+import medidas
 import export as export_solidos
 import git_store
 import naming
 import notes
+import papelera
 import parametros
 import percepcion
+import planos
 import piece_mesh
 import render
 import revision
 import scripts_runner
 import solids
+import mesh_parts
 import versioning
+import design_state
 from checks import colisiones as colisiones_checks
 from checks import fdm as fdm_checks
 from kernel import b123d_kernel, mesh
@@ -178,19 +189,44 @@ def recargar_documentos() -> None:
         if doc_id in _registry:
             continue
         try:
-            analisis = _analyze(ruta, ext)
+            if papelera.esta_en_papelera(DOCUMENTOS_DIR, doc_id):
+                continue  # en papelera: los archivos siguen ahi, la galeria no lo carga
+        except ValueError:
+            logger.warning("estado de documento ilegible, no se carga %s", doc_id)
+            continue
+        try:
+            _cargar_documento(ruta)
         except Exception:  # noqa: BLE001 - skip, never crash startup
             continue
-        nombre = _leer_meta(doc_id, ruta.name)
-        _registry[doc_id] = {"id": doc_id, "nombre": nombre, **analisis}
-        _files[doc_id] = ruta
-        if ext in _STEP_EXTS and solids.cargar(doc_id) is None:
-            try:
-                shape = b123d_kernel.import_from_step(ruta)
-                solids.guardar(doc_id, solids.construir_entradas(shape))
-            except Exception:  # noqa: BLE001 - best-effort bootstrap only
-                pass
-        _fijar_revision(doc_id)
+
+
+def _estado_de_listado(doc_id: str) -> dict[str, Any]:
+    """Estado de galeria para listar. Un sidecar ilegible NO oculta el documento:
+    se avisa en el log y se lista como permanente (nunca se pierde de vista)."""
+    try:
+        return papelera.leer_estado(DOCUMENTOS_DIR, doc_id)
+    except ValueError:
+        logger.warning("estado ilegible para %s: se lista como permanente", doc_id)
+        return {}
+
+
+def _cargar_documento(ruta: Path) -> None:
+    """Index one stored STEP/STL file in the registries (startup reload and
+    papelera restore). Raises when the file cannot be analysed; the startup
+    caller decides to skip it, the restore caller turns it into a 422."""
+    ext = ruta.suffix.lower()
+    doc_id = ruta.stem
+    analisis = _analyze(ruta, ext)
+    nombre = _leer_meta(doc_id, ruta.name)
+    _registry[doc_id] = {"id": doc_id, "nombre": nombre, **analisis}
+    _files[doc_id] = ruta
+    if ext in _STEP_EXTS and solids.cargar(doc_id) is None:
+        try:
+            shape = b123d_kernel.import_from_step(ruta)
+            solids.guardar(doc_id, solids.construir_entradas(shape))
+        except Exception:  # noqa: BLE001 - best-effort bootstrap only
+            pass
+    _fijar_revision(doc_id)
 
 
 def calcular_revision(doc_id: str) -> str | None:
@@ -205,7 +241,10 @@ def calcular_revision(doc_id: str) -> str | None:
         return None
     ruta_solidos_doc = solids.ruta_solidos(doc_id)
     sidecar = ruta_solidos_doc.read_bytes() if ruta_solidos_doc.exists() else None
-    return revision.calcular(geometria, ruta.suffix.lower() in _STEP_EXTS, [("solidos.json", sidecar)])
+    # Fase 3a: el manifiesto del almacen de mallas (sha256 por cuerpo) entra en
+    # la revision; sin almacen no aporta nada y la revision no cambia.
+    sidecars = [("solidos.json", sidecar), *mallas.firma_revision(DOCUMENTOS_DIR, doc_id)]
+    return revision.calcular(geometria, ruta.suffix.lower() in _STEP_EXTS, sidecars)
 
 
 def _fijar_revision(doc_id: str) -> tuple[str | None, str | None]:
@@ -295,12 +334,22 @@ def _analizar_con_solidos(
 
     Callers persist the returned entries via ``solids.guardar`` when not
     ``None``."""
-    analisis = _analyze(path, ext)
-    if ext in _STEP_EXTS:
-        shape = b123d_kernel.import_from_step(path)
-        entradas: list[dict[str, Any]] | None = solids.construir_entradas(shape, nombres_ordenados)
-    else:
-        entradas = None
+    if ext not in _STEP_EXTS:
+        return _analyze(path, ext), None
+
+    # STEP parsing is the dominant cost for large assemblies. Keep the same
+    # analytic summary and per-solid entries, but derive both from one import.
+    shape = b123d_kernel.import_from_step(path)
+    info = b123d_kernel.analyze(shape)
+    if info.solidos == 0:
+        raise ValueError("archivo STEP sin solidos")
+    analisis = {
+        "bbox": list(info.bbox),
+        "volumen": info.volumen,
+        "solidos": info.solidos,
+        "valido": info.valido,
+    }
+    entradas = solids.construir_entradas(shape, nombres_ordenados)
     return analisis, entradas
 
 
@@ -320,6 +369,7 @@ def _con_solidos_snapshot(
 def _con_parametros_snapshot(archivos: dict[str, bytes], doc_id: str) -> dict[str, bytes]:
     """Add the parametric state (``parametros.json``, Phase 5C fix-review)
     to a snapshot's file set when the document has a stored script."""
+    archivos.update(design_state.snapshot(doc_id))
     estado = parametros.estado_para_snapshot(doc_id)
     if estado is not None:
         archivos[parametros.NOMBRE_SNAPSHOT] = estado
@@ -353,6 +403,8 @@ def _con_ensamble_snapshot(archivos: dict[str, bytes], doc_id: str) -> dict[str,
     caller may already hold `parametros.bloqueo(doc_id)`, which is not
     reentrant; this helper only reads files."""
     archivos.update(assemblies.snapshot_files(doc_id))
+    # Fase 3a: el almacen de mallas viaja con la geometria (sin almacen, nada).
+    archivos.update(mallas.archivos_snapshot(DOCUMENTOS_DIR, doc_id))
     return archivos
 
 
@@ -378,8 +430,14 @@ async def crear_documento(request: Request, file: UploadFile = File(...)) -> dic
     destino = DOCUMENTOS_DIR / f"{doc_id}{ext}"
 
     try:
-        destino.write_bytes(contenido)
-        analisis, entradas = _analizar_con_solidos(destino, ext)
+        # A slow import must not expose an unvalidated file to startup reload.
+        # Stage in a directory that recargar_documentos ignores, then publish
+        # the exact source bytes on the same filesystem after analysis succeeds.
+        with tempfile.TemporaryDirectory(prefix=".importando-", dir=DOCUMENTOS_DIR) as staging:
+            temporal = Path(staging) / f"{doc_id}{ext}"
+            temporal.write_bytes(contenido)
+            analisis, entradas = _analizar_con_solidos(temporal, ext)
+            os.replace(temporal, destino)
     except HTTPException:
         destino.unlink(missing_ok=True)
         raise
@@ -402,6 +460,11 @@ async def crear_documento(request: Request, file: UploadFile = File(...)) -> dic
 
 class _DesdeRutaBody(BaseModel):
     ruta: str
+    # Fase 3a (galeria ordenada): con `documento_id` el archivo se importa DENTRO
+    # de ese documento (sin documento nuevo); `nombre_solido` nombra el solido o
+    # el cuerpo de malla y exige `documento_id`.
+    documento_id: str | None = Field(default=None, max_length=64)
+    nombre_solido: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/documentos/desde_ruta", dependencies=[Depends(auth.requiere_token)])
@@ -409,7 +472,14 @@ def crear_documento_desde_ruta(body: _DesdeRutaBody) -> dict[str, Any]:
     """Register a document from a file already on disk (used by the MCP
     `abrir_archivo` tool). Only paths inside `ALLOWED_READ_ROOTS` are
     accepted; the file is copied into `DOCUMENTOS_DIR`, so the read-only
-    `/data/fuentes` mount is never written to."""
+    `/data/fuentes` mount is never written to. With `documento_id` the file
+    is imported into that document instead (see `app/incorporar.py`)."""
+    if body.nombre_solido is not None and body.documento_id is None:
+        raise HTTPException(status_code=400, detail="nombre_solido requiere documento_id")
+    if body.documento_id is not None:
+        import incorporar  # tardio: incorporar importa este modulo
+
+        return incorporar.incorporar_archivo(body.documento_id, body.ruta, body.nombre_solido)
     origen = _validar_ruta_permitida(body.ruta)
     if not origen.is_file():
         raise HTTPException(status_code=404, detail="archivo no encontrado")
@@ -422,8 +492,11 @@ def crear_documento_desde_ruta(body: _DesdeRutaBody) -> dict[str, Any]:
     destino = DOCUMENTOS_DIR / f"{doc_id}{ext}"
 
     try:
-        shutil.copyfile(origen, destino)
-        analisis, entradas = _analizar_con_solidos(destino, ext)
+        with tempfile.TemporaryDirectory(prefix=".importando-", dir=DOCUMENTOS_DIR) as staging:
+            temporal = Path(staging) / f"{doc_id}{ext}"
+            shutil.copyfile(origen, temporal)
+            analisis, entradas = _analizar_con_solidos(temporal, ext)
+            os.replace(temporal, destino)
     except Exception as exc:  # noqa: BLE001 - unparsable geometry is a client error
         destino.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=f"archivo invalido: {exc}") from exc
@@ -450,6 +523,11 @@ class _ScriptBody(BaseModel):
     nombre: str | None = None
     timeout: float | None = None
     documento_id: str | None = None
+    permanente: bool = False  # sin documento_id: False crea un BORRADOR (fase 2)
+
+
+# Alias público para quien construye el cuerpo desde otro módulo (galeria_ejemplos).
+ScriptBody = _ScriptBody
 
 
 def _detalle_script_error(exc: scripts_runner.ScriptError) -> dict[str, Any] | str:
@@ -465,15 +543,55 @@ def _detalle_script_error(exc: scripts_runner.ScriptError) -> dict[str, Any] | s
     return detalle
 
 
+def _reresolver_notas(doc_id: str, nueva_shape: Any, notas_previas: bytes) -> None:
+    """Notes and strokes whose `referencia` points at a face or edge are re-resolved against the
+    rebuilt shape (never left pointing at a stale index). Shared by the script path and F23b."""
+    datos_notas = json.loads(notas_previas)
+    cambiaron = False
+    for coleccion in ("notas", "trazos"):
+        for item in datos_notas.get(coleccion, []):
+            referencia = item.get("referencia")
+            if referencia is None:
+                continue
+            resultado = naming.resolver_referencia(nueva_shape, referencia)
+            # `resolver_referencia` carries `referencia_perdida`/`ambigua`
+            # inside the returned dict itself (its own return contract,
+            # exercised directly in `tests/test_naming.py`); those flags
+            # belong on `item` (the note/stroke) as the single top-level
+            # source of truth, never duplicated inside the nested
+            # `referencia` sub-dict that gets persisted (Phase 4 review
+            # finding).
+            perdida = resultado.pop("referencia_perdida")
+            ambigua = resultado.pop("ambigua", False)
+            if resultado != referencia or item.get("referencia_perdida") != perdida:
+                item["referencia"] = resultado
+                item["referencia_perdida"] = perdida
+                cambiaron = True
+            if ambigua:
+                if item.get("ambigua") is not True:
+                    cambiaron = True
+                item["ambigua"] = True
+            elif item.pop("ambigua", None) is not None:
+                cambiaron = True
+    if cambiaron:
+        notes.guardar(doc_id, datos_notas)
+
+
 def _actualizar_documento_desde_script(
     doc_id: str,
     codigo: str,
     timeout: float,
     variables: dict[str, Any] | None = None,
     mensaje_snapshot: str = "actualizar documento (script)",
+    verificar: Callable[[Any, list[str]], None] | None = None,
 ) -> dict[str, Any]:
     """Re-run a build123d script against an EXISTING document (Phase 4:
     "script re-run... updating a document", ADR-0003 versioning + naming).
+
+    ``verificar(forma, nombres)`` (F23a, ADR-0023) sees the rebuilt shape
+    before anything is written: it raises to refuse the edit, and then nothing
+    is committed, moved or changed (no preventive snapshot either). Without it
+    the preventive snapshot is taken before the run, as always.
 
     Snapshots the current STEP file (+ notes, if any) *before* applying;
     if the script fails or the kernel rejects the result, the file is
@@ -483,6 +601,7 @@ def _actualizar_documento_desde_script(
     re-resolved against the rebuilt shape (`naming.resolver_referencia`),
     never left silently pointing at a stale index.
     """
+    design_state.require_unprotected_legacy_edit(doc_id)
     registro_previo = _registry.get(doc_id)
     if registro_previo is None:
         raise HTTPException(status_code=404, detail="documento no encontrado")
@@ -506,17 +625,28 @@ def _actualizar_documento_desde_script(
     if solidos_previos is not None:
         archivos_snapshot["solidos.json"] = solidos_previos
     archivos_snapshot = _con_parametros_snapshot(archivos_snapshot, doc_id)
-    versioning.crear_snapshot(
-        doc_id, mensaje_snapshot, _con_ensamble_snapshot(archivos_snapshot, doc_id)
-    )
+    snapshot_tomado = False
+
+    def tomar_snapshot() -> None:
+        nonlocal snapshot_tomado
+        if not snapshot_tomado:
+            versioning.crear_snapshot(
+                doc_id, mensaje_snapshot, _con_ensamble_snapshot(archivos_snapshot, doc_id)
+            )
+            snapshot_tomado = True
+
+    if verificar is None:
+        tomar_snapshot()
 
     try:
         salida_temporal, nombres_ordenados = scripts_runner.ejecutar_script(
             codigo, timeout=timeout, variables=variables
         )
     except scripts_runner.ScriptTimeoutError as exc:
+        tomar_snapshot()
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except scripts_runner.ScriptError as exc:
+        tomar_snapshot()
         raise HTTPException(status_code=422, detail=_detalle_script_error(exc)) from exc
 
     tmp_dir = salida_temporal.parent
@@ -525,8 +655,14 @@ def _actualizar_documento_desde_script(
         analisis = b123d_kernel.analyze(nueva_shape)
         if analisis.solidos == 0:
             raise ValueError("script produjo una figura sin solidos")
+        if verificar is not None:
+            verificar(nueva_shape, nombres_ordenados)
+        tomar_snapshot()
         shutil.move(str(salida_temporal), str(ruta))
+    except (cotas.CotaNoSigue, HTTPException):
+        raise  # refused before any write: the file, the history and the registry stay as they were
     except Exception as exc:  # noqa: BLE001 - rollback: state unchanged, error returned
+        tomar_snapshot()
         ruta.write_bytes(archivo_previo)
         raise HTTPException(status_code=422, detail=f"script invalido: {exc}") from exc
     finally:
@@ -547,35 +683,7 @@ def _actualizar_documento_desde_script(
     solids.guardar(doc_id, solids.construir_entradas(nueva_shape, nombres_ordenados))
 
     if notas_previas is not None:
-        datos_notas = json.loads(notas_previas)
-        cambiaron = False
-        for coleccion in ("notas", "trazos"):
-            for item in datos_notas.get(coleccion, []):
-                referencia = item.get("referencia")
-                if referencia is None:
-                    continue
-                resultado = naming.resolver_referencia(nueva_shape, referencia)
-                # `resolver_referencia` carries `referencia_perdida`/`ambigua`
-                # inside the returned dict itself (its own return contract,
-                # exercised directly in `tests/test_naming.py`); those flags
-                # belong on `item` (the note/stroke) as the single top-level
-                # source of truth, never duplicated inside the nested
-                # `referencia` sub-dict that gets persisted (Phase 4 review
-                # finding).
-                perdida = resultado.pop("referencia_perdida")
-                ambigua = resultado.pop("ambigua", False)
-                if resultado != referencia or item.get("referencia_perdida") != perdida:
-                    item["referencia"] = resultado
-                    item["referencia_perdida"] = perdida
-                    cambiaron = True
-                if ambigua:
-                    if item.get("ambigua") is not True:
-                        cambiaron = True
-                    item["ambigua"] = True
-                elif item.pop("ambigua", None) is not None:
-                    cambiaron = True
-        if cambiaron:
-            notes.guardar(doc_id, datos_notas)
+        _reresolver_notas(doc_id, nueva_shape, notas_previas)
 
     return registro
 
@@ -666,7 +774,10 @@ def crear_documento_desde_script(body: _ScriptBody) -> dict[str, Any]:
     doc_id = uuid.uuid4().hex
     with _construyendo(doc_id):
         return _con_ignorados(
-            _crear_documento_desde_script(doc_id, codigo, timeout, variables, body.nombre, _recordar_script)
+            _crear_documento_desde_script(
+                doc_id, codigo, timeout, variables, body.nombre, _recordar_script,
+                borrador=not body.permanente,
+            )
         )
 
 
@@ -677,6 +788,7 @@ def _crear_documento_desde_script(
     variables: dict[str, Any] | None,
     nombre_pedido: str | None,
     recordar_script: Any,
+    borrador: bool = False,
 ) -> dict[str, Any]:
     try:
         salida_temporal, nombres_ordenados = scripts_runner.ejecutar_script(
@@ -716,8 +828,27 @@ def _crear_documento_desde_script(
         "documento creado (script)",
         _con_solidos_snapshot({destino.name: destino.read_bytes()}, doc_id, entradas),
     )
+    if borrador:
+        ahora = datetime.now(timezone.utc)
+        papelera.marcar_borrador(DOCUMENTOS_DIR, doc_id, ahora)
     confirmar_revision(doc_id, "documento_creado")
-    return {**registro, "revision": _revisiones.get(doc_id)}
+    respuesta = {**registro, "revision": _revisiones.get(doc_id)}
+    if borrador:
+        expira = papelera.expiracion(destino.stat().st_mtime, {"creado": ahora.isoformat()})
+        respuesta.update(_datos_de_borrador(expira))
+    return respuesta
+
+
+def _datos_de_borrador(expira: datetime) -> dict[str, Any]:
+    hora = expira.astimezone().strftime("%H:%M")
+    return {
+        "borrador": True,
+        "expira": expira.isoformat(),
+        "mensaje": (
+            f"Borrador: se archiva en la papelera a las {hora} si no lo conservas "
+            "con conservar_documento"
+        ),
+    }
 
 
 def crear_documento_desde_formas(nombrados: dict[str, Any], nombre_pedido: str) -> dict[str, Any]:
@@ -820,54 +951,331 @@ def aplicar_parametros(doc_id: str, body: _ParametrosBody) -> dict[str, Any]:
     # happens under the per-document lock (fix-review): a concurrent apply
     # or restore can't hand us a stale script/values pair.
     with parametros.bloqueo(doc_id):
+        return _aplicar_parametros_bloqueado(doc_id, body.valores, body.confirmar_script)
+
+
+def _aplicar_parametros_bloqueado(
+    doc_id: str, nuevos: dict[str, Any], confirmar_script: bool,
+    verificar: Callable[[dict[str, Any], Any, list[str]], None] | None = None,
+) -> dict[str, Any]:
+    """Body of `aplicar_parametros` (F23a). The caller holds `parametros.bloqueo(doc_id)`;
+    the cotas route holds it across its revision check, its listing and this write.
+    ``verificar(valores, forma, nombres)`` runs on the staged build (see `_actualizar_documento_desde_script`)."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    datos = parametros.cargar(doc_id)
+    script = datos["script"]
+    if not script:
+        raise HTTPException(
+            status_code=400, detail="documento sin script parametrico (crearlo con ejecutar_script)"
+        )
+    if "ruta" in script:
+        aviso = aviso_script_divergente(doc_id, script)
+        if aviso and not confirmar_script:
+            raise HTTPException(
+                status_code=409,
+                detail="no se regenera: " + aviso.split(": ", 1)[1],
+            )
+        origen = _validar_ruta_permitida(script["ruta"])
+        try:
+            codigo = origen.read_text()
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
+    else:
+        codigo = script["codigo"]
+    editada = aviso_geometria_editada(doc_id)
+    if editada and not confirmar_script:
+        raise HTTPException(status_code=409, detail="no se regenera: " + editada.split(": ", 1)[1])
+    try:
+        esquema = parametros.esquema_desde_codigo(codigo)
+        valores = parametros.aplicar_valores(esquema, datos["valores"], nuevos)
+        declarados = materiales.desde_codigo(codigo)
+    except (parametros.ParametrosInvalidos, materiales.MaterialesInvalidos) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    def verificar_staged(forma: Any, nombres: list[str]) -> None:
+        if verificar is not None:
+            verificar(valores, forma, nombres)
+
+    inicio = time.perf_counter()
+    with _construyendo(doc_id):
+        registro = _actualizar_documento_desde_script(
+            doc_id,
+            codigo,
+            datos["timeout"] or scripts_runner.DEFAULT_TIMEOUT,
+            parametros.variables_efectivas(datos["variables"], valores),
+            mensaje_snapshot=parametros.resumen_valores(valores),
+            verificar=verificar_staged if verificar is not None else None,
+        )
+        ms = round((time.perf_counter() - inicio) * 1000)
+        parametros.guardar_valores(doc_id, esquema, valores)
+        materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
+        if "ruta" in script:  # confirmed (or matching) file: mark resolved
+            git_store.fijar_script_divergente(doc_id, None, None)
+        parametros.quitar_geometria_editada(doc_id)  # G4: script rebuilt everything
+        confirmar_revision(doc_id)
+    return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
+
+def _es_malla(doc_id: str) -> bool:
+    ruta = _files.get(doc_id)
+    return ruta is not None and ruta.suffix.lower() in _STL_EXTS
+
+
+# Cotas listings per (doc, revision, inputs): a panel render does not re-project
+# (ADR-0023). Bounded: the oldest entry goes first.
+_CACHE_COTAS: dict[tuple[str, str, str], dict[str, Any]] = {}
+_CACHE_COTAS_MAX = 32
+
+
+def _codigo_del_script(doc_id: str) -> str | None:
+    """Code of the stored script (inline, or the file of its `ruta`); ``None``
+    without script. An unreadable `ruta` answers 400, as the re-run would."""
+    script = parametros.cargar(doc_id)["script"]
+    if not script:
+        return None
+    if "ruta" in script:
+        origen = _validar_ruta_permitida(script["ruta"])
+        try:
+            return origen.read_text()
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
+    return script["codigo"]
+
+
+def _clasificar_cotas(doc_id: str, fuente: Any, descriptores: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+    """Drawn dimensions classified for editing. A script document goes by its PARAMETROS
+    (F23a, ADR-0023). An imported document (no script) goes by the feature that produces
+    each dimension (F23b, ADR-0025): a hole group, two parallel faces or an overall size.
+    Returns ``(cotas, aviso)``; `aviso` says why some features could not be recognised."""
+    malla = _es_malla(doc_id)
+    codigo = _codigo_del_script(doc_id)
+    if codigo is not None:
+        leidas = cotas.claves_leidas(codigo)
+        return cotas.clasificar(descriptores, parametros.cargar(doc_id)["parametros"], malla=malla, leidas=leidas), None
+    extras, aviso = ([], None) if malla else cotas_geometria.parallel_face_descriptors(fuente)
+    multisolido = not malla and len(fuente.solids()) != 1
+    listado = cotas.classify_imported(descriptores + extras, malla=malla, multisolido=multisolido)
+    cotas_geometria.attach_anchors(fuente, listado, malla)
+    return listado, aviso
+
+
+def _listar_cotas_de_fuente(
+    doc_id: str, fuente: Any, piezas: list[str], parametros_plano: dict[str, tuple[float, str]],
+    revision: str | None, nombre: str,
+) -> dict[str, Any]:
+    """Cotas vivas (ADR-0023, ADR-0025): the drawn dimensions of the sheet (default
+    views, all of them drawn) classified for editing. Pure read: no lock here.
+    Cached per (doc, revision) when a revision is given: the revision covers the
+    geometry, the rest of the inputs go into the key."""
+    esquema = parametros.cargar(doc_id)["parametros"]
+    codigo = _codigo_del_script(doc_id)
+    leidas = cotas.claves_leidas(codigo) if codigo is not None else None
+    malla = _es_malla(doc_id)
+    clave = None
+    if revision is not None:
+        clave = (doc_id, revision, json.dumps(
+            [parametros_plano, esquema, sorted(leidas or ()), nombre, piezas, malla],
+            sort_keys=True, default=str,
+        ))
+        if clave in _CACHE_COTAS:
+            return _CACHE_COTAS[clave]
+    try:
+        plano = planos.construir(
+            fuente, nombre=nombre, piezas=piezas, revision=revision,
+            parametros=parametros_plano, opciones=planos.validar("svg"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    listado, aviso = _clasificar_cotas(doc_id, fuente, plano.cotas)
+    resultado: dict[str, Any] = {"revision": revision, "cotas": listado}
+    if aviso:
+        resultado["aviso"] = aviso
+    if clave is not None:
+        if len(_CACHE_COTAS) >= _CACHE_COTAS_MAX:
+            _CACHE_COTAS.pop(next(iter(_CACHE_COTAS)))
+        _CACHE_COTAS[clave] = resultado
+    return resultado
+
+
+@router.get("/documentos/{doc_id}/cotas")
+def obtener_cotas(doc_id: str) -> dict[str, Any]:
+    """Cotas vivas (F23a, ADR-0023): the plan's drawn dimensions, each with
+    `operacion: "parametro"` (editable: `POST .../cotas/aplicar` or the MCP
+    `parametros` tool with `cotas`) or `solo_lectura: true` and `razon`.
+    `revision` is the revision the listing belongs to; token-free read."""
+    fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano(doc_id)
+    return _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
+
+
+def _archivos_estado(doc_id: str, ruta: Path) -> dict[str, bytes]:
+    """Bytes of the document's state for a snapshot: the file, notes, named solids, parametros, ensamble."""
+    archivos = {ruta.name: ruta.read_bytes()}
+    for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)), ("solidos.json", solids.ruta_solidos(doc_id))):
+        if camino.exists():
+            archivos[nombre] = camino.read_bytes()
+    return _con_ensamble_snapshot(_con_parametros_snapshot(archivos, doc_id), doc_id)
+
+
+def _contenido_step(forma: Any) -> bytes:
+    with tempfile.TemporaryDirectory(prefix="cotas-step-") as carpeta:
+        destino = Path(carpeta) / "pieza.step"
+        b123d_kernel.export_to_step(forma, destino)
+        return destino.read_bytes()
+
+
+def _contenido_stl(doc_id: str, ruta: Path, escala: tuple[str, float, float]) -> tuple[bytes, bytes | None]:
+    """Scaled STL bytes, and the parts sidecar when the document has one (multi-part meshes,
+    as `incorporar` rebuilds them). The scale is applied to each part with the same origin."""
+    eje, factor, origen = escala
+    actual = mesh.load_stl(ruta)
+    entradas = mesh_parts.load(doc_id)
+    escaladas = [
+        (nombre, cotas_geometria.scale_mesh(parte, eje, factor, origen))
+        for nombre, parte in mesh_parts.objects(actual, entradas, Path(_registry[doc_id]["nombre"]).stem)
+    ]
+    combinada, nuevas = mesh_parts.combine(escaladas)
+    return mesh.to_stl_bytes(combinada), (json.dumps(nuevas).encode() if entradas is not None else None)
+
+
+def _aplicar_cotas_importadas(
+    doc_id: str, cambios: dict[str, Any], listado: list[dict[str, Any]], fuente: Any, malla: bool,
+) -> Any:
+    """F23b (ADR-0025): one live dimension of an imported document. Refusals answer 422
+    `{error, mensaje}` (and `razon` for a wall); nothing is written before the edit is verified."""
+    design_state.require_unprotected_legacy_edit(doc_id)
+    try:
+        cota, valor = cotas.resolve_geometric(listado, cambios)
+    except cotas.CotaNoEncontrada as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except cotas.CotaInvalida as exc:
+        return JSONResponse(status_code=422, content={"error": True, "mensaje": str(exc)})
+    try:
+        edicion = cotas_geometria.apply_edit(fuente, cota, valor, malla=malla)
+    except cotas_geometria.EditRejected as exc:
+        contenido = {"error": True, "mensaje": str(exc)}
+        if exc.razon:
+            contenido["razon"] = exc.razon
+        return JSONResponse(status_code=422, content=contenido)
+    respuesta = _escribir_geometria_importada(
+        doc_id, edicion, f"editar cota a {valor:g} mm ({cota['operacion']})"
+    )
+    return {**respuesta, "editadas": [edicion.editada]}
+
+
+def _escribir_geometria_importada(doc_id: str, edicion: Any, mensaje: str) -> dict[str, Any]:
+    """Commit a verified geometric edit (F23b): the new file and its sidecar are built
+    and re-analysed as temporary files first; only then the previous state is snapshotted
+    and the files are renamed into place. A failure before the snapshot leaves no trace."""
+    ruta = _files[doc_id]
+    if ruta is None or not ruta.exists():
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+    extension = ruta.suffix.lower()
+    es_step = extension in _STEP_EXTS
+    previos = _archivos_estado(doc_id, ruta)
+    notas_previas = notes.ruta_notas(doc_id).read_bytes() if notes.ruta_notas(doc_id).exists() else None
+    sidecar_previo = solids.cargar(doc_id)
+    tmp_geometria = ruta.with_name(f".{ruta.stem}.cotas{extension}")
+    tmp_sidecar = solids.ruta_solidos(doc_id).with_name(f".{doc_id}.cotas.solidos.json")
+    try:
+        if es_step:
+            contenido = _contenido_step(edicion.forma)
+            sidecar: bytes | None = json.dumps(solids.entradas_tras_edicion(sidecar_previo, edicion.forma)).encode()
+        else:
+            contenido, sidecar = _contenido_stl(doc_id, ruta, edicion.escala)
+        tmp_geometria.write_bytes(contenido)
+        analisis = _analyze(tmp_geometria, extension)
+        if sidecar is not None:
+            tmp_sidecar.write_bytes(sidecar)
+    except Exception as exc:  # noqa: BLE001 - nothing committed yet: report and clean up
+        tmp_geometria.unlink(missing_ok=True)
+        tmp_sidecar.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=f"la geometría editada no se pudo verificar: {exc}") from exc
+    cabeza_previa = git_store.cabeza(doc_id)
+    snapshot = versioning.crear_snapshot(doc_id, mensaje, previos)
+    cabeza_snapshot = git_store.cabeza(doc_id)
+    try:
+        os.replace(tmp_geometria, ruta)
+        if sidecar is not None:
+            os.replace(tmp_sidecar, solids.ruta_solidos(doc_id))
+    except OSError as exc:  # noqa: BLE001 - rollback: history first, then the files' bytes
+        tmp_geometria.unlink(missing_ok=True)
+        tmp_sidecar.unlink(missing_ok=True)
+        try:
+            git_store.deshacer_commit(doc_id, cabeza_snapshot, cabeza_previa)
+        except git_store.GitError as exc_git:
+            raise HTTPException(
+                status_code=500,
+                detail=f"la edición falló y el historial no se pudo revertir: {exc_git}",
+            ) from exc_git
+        ruta.write_bytes(previos[ruta.name])
+        if "solidos.json" in previos:
+            solids.ruta_solidos(doc_id).write_bytes(previos["solidos.json"])
+        raise HTTPException(status_code=422, detail=f"no se pudo guardar la edición; se restauró el documento: {exc}") from exc
+    if es_step and notas_previas is not None:
+        _reresolver_notas(doc_id, edicion.forma, notas_previas)
+    _registry[doc_id] = {"id": doc_id, "nombre": _registry[doc_id]["nombre"], **analisis}
+    _borrar_cache_malla(doc_id)
+    import ramas  # noqa: PLC0415 - ramas imports documents; its branch cache is per geometry revision
+
+    ramas.borrar_cache(doc_id)
+    confirmar_revision(doc_id)
+    return {**_registry[doc_id], "revision": _revisiones.get(doc_id), "snapshot_previo": snapshot, "mensaje": mensaje}
+
+
+class _CotasBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: str
+    cotas: dict[str, Any]
+    confirmar_script: bool = False
+
+
+@router.post("/documentos/{doc_id}/cotas/aplicar", dependencies=[Depends(auth.requiere_token)])
+def aplicar_cotas(doc_id: str, body: _CotasBody) -> dict[str, Any]:
+    """Edit live dimensions (F23a, ADR-0023): `{revision, cotas: {id_cota: valor}}`.
+    The revision must be the one the ids were read at (409 otherwise). Each
+    dimension is translated to its PARAMETROS key and applied through the same
+    path as `POST .../parametros`, but verified first: the staged build is
+    measured before anything is written, and a dimension that does not follow
+    its parameter answers 422 `{error: true, mensaje}` with nothing committed
+    (no revision, no snapshot, files and history unchanged). Under the document
+    lock from the revision check to the write. Replies with the usual summary
+    plus `editadas`: value before/after and the re-measured error."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    with parametros.bloqueo(doc_id):
         if doc_id not in _registry:
             raise HTTPException(status_code=404, detail="documento no encontrado")
-        datos = parametros.cargar(doc_id)
-        script = datos["script"]
-        if not script:
+        if body.revision != _revisiones.get(doc_id):
             raise HTTPException(
-                status_code=400, detail="documento sin script parametrico (crearlo con ejecutar_script)"
+                status_code=409, detail="revision obsoleta: el documento cambio; vuelve a leer las cotas"
             )
-        if "ruta" in script:
-            aviso = aviso_script_divergente(doc_id, script)
-            if aviso and not body.confirmar_script:
-                raise HTTPException(
-                    status_code=409,
-                    detail="no se regenera: " + aviso.split(": ", 1)[1],
-                )
-            origen = _validar_ruta_permitida(script["ruta"])
-            try:
-                codigo = origen.read_text()
-            except OSError as exc:
-                raise HTTPException(status_code=400, detail=f"no se pudo leer la ruta: {exc}") from exc
-        else:
-            codigo = script["codigo"]
-        editada = aviso_geometria_editada(doc_id)
-        if editada and not body.confirmar_script:
-            raise HTTPException(status_code=409, detail="no se regenera: " + editada.split(": ", 1)[1])
+        fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano_bloqueado(doc_id)
+        antes = _listar_cotas_de_fuente(doc_id, fuente, piezas, parametros_plano, revision, nombre)
+        if _codigo_del_script(doc_id) is None:  # F23b: an imported document, edited by feature
+            return _aplicar_cotas_importadas(doc_id, body.cotas, antes["cotas"], fuente, _es_malla(doc_id))
         try:
-            esquema = parametros.esquema_desde_codigo(codigo)
-            valores = parametros.aplicar_valores(esquema, datos["valores"], body.valores)
-            declarados = materiales.desde_codigo(codigo)
-        except (parametros.ParametrosInvalidos, materiales.MaterialesInvalidos) as exc:
+            nuevos = cotas.resolver_edicion(antes["cotas"], body.cotas)
+        except cotas.CotaNoEncontrada as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except cotas.CotaInvalida as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        inicio = time.perf_counter()
-        with _construyendo(doc_id):
-            registro = _actualizar_documento_desde_script(
-                doc_id,
-                codigo,
-                datos["timeout"] or scripts_runner.DEFAULT_TIMEOUT,
-                parametros.variables_efectivas(datos["variables"], valores),
-                mensaje_snapshot=parametros.resumen_valores(valores),
+        informe: list[dict[str, Any]] = []
+
+        def verificar(valores: dict[str, Any], forma: Any, nombres: list[str]) -> None:
+            """Staged build, nothing written: the dimensions as the edit would leave them."""
+            entradas = solids.construir_entradas(forma, nombres)
+            despues_staged = _listar_cotas_de_fuente(
+                doc_id, forma, _nombres_piezas_plano(entradas), _parametros_para_plano(doc_id, valores), None, nombre,
             )
-            ms = round((time.perf_counter() - inicio) * 1000)
-            parametros.guardar_valores(doc_id, esquema, valores)
-            materiales.aplicar_declaracion(doc_id, declarados, _nombres_piezas(doc_id))
-            if "ruta" in script:  # confirmed (or matching) file: mark resolved
-                git_store.fijar_script_divergente(doc_id, None, None)
-            parametros.quitar_geometria_editada(doc_id)  # G4: script rebuilt everything
-            confirmar_revision(doc_id)
-    return {**registro, "revision": _revisiones.get(doc_id), "valores": valores, "ms": ms}
+            informe.extend(cotas.tras_aplicar(antes["cotas"], despues_staged["cotas"], body.cotas))
+            cotas.exigir_seguimiento(informe)
+
+        try:
+            respuesta = _aplicar_parametros_bloqueado(doc_id, nuevos, body.confirmar_script, verificar=verificar)
+        except cotas.CotaNoSigue as exc:
+            return JSONResponse(status_code=422, content={"error": True, "mensaje": str(exc)})
+    return {**respuesta, "editadas": informe}
+
 
 
 @router.get("/documentos/{doc_id}/materiales")
@@ -958,9 +1366,12 @@ def verificar_fdm_documento(
     if ruta is None or not ruta.exists():
         raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
     if ruta.suffix.lower() not in _STEP_EXTS:
-        raise HTTPException(
-            status_code=400, detail="check_fdm solo esta disponible para documentos STEP/script (no malla STL)"
-        )
+        import design_analysis, design_geometry
+        with parametros.bloqueo(doc_id):
+            state = design_state.load(doc_id)
+            parts = {n: m for n, m in design_geometry.objects(doc_id).items()
+                     if state.parts.get(n, design_state.PartRole()).role == "design"}
+            return design_analysis.print_check(parts, boquilla, dims_cama, angulo_max, state.print_rotations)
     entradas = solids.cargar(doc_id)
     if not entradas:
         raise HTTPException(
@@ -976,13 +1387,21 @@ def verificar_fdm_documento(
 
 
 @router.get("/documentos")
-def listar_documentos() -> list[dict[str, Any]]:
+def listar_documentos(borradores: bool = False) -> list[dict[str, Any]]:
     """Compact picker/gallery listing, newest geometry first.
 
     Geometry mtime survives restarts and changes on rebuild/restore, unlike
     registry insertion order or metadata timestamps (which notes may change).
     Format comes from the stored file, not its user-facing display name.
+
+    Drafts (fase 2) are hidden unless ``borradores=true``; the listing first
+    sends expired drafts to the papelera (lazy sweep). A draft entry carries
+    ``borrador: true`` and ``expira``; every other entry is unchanged.
     """
+    # Local import: papelera_routes imports this module.
+    from papelera_routes import barrer_borradores
+
+    barrer_borradores()
     entries = []
     for registro in list(_registry.values()):
         path = _files.get(registro["id"])
@@ -993,7 +1412,11 @@ def listar_documentos() -> list[dict[str, Any]]:
         except FileNotFoundError:
             # A concurrent deletion must not break the entire gallery.
             continue
-        entries.append({
+        estado = _estado_de_listado(registro["id"])
+        es_borrador = papelera.es_borrador(estado)
+        if es_borrador and not borradores:
+            continue
+        entry = {
             "id": registro["id"],
             "nombre": registro["nombre"],
             "volumen": registro["volumen"],
@@ -1001,7 +1424,11 @@ def listar_documentos() -> list[dict[str, Any]]:
             "formato": "step" if path.suffix.lower() in _STEP_EXTS else "stl",
             "actualizado": datetime.fromtimestamp(modified, timezone.utc).isoformat(),
             "revision": _revisiones.get(registro["id"]),
-        })
+        }
+        if es_borrador:
+            entry["borrador"] = True
+            entry["expira"] = papelera.expiracion(modified, estado).isoformat()
+        entries.append(entry)
     return sorted(entries, key=lambda entry: (
         -datetime.fromisoformat(entry["actualizado"]).timestamp(), entry["id"]
     ))
@@ -1036,7 +1463,7 @@ def obtener_documento(
 # Viewer meshes cached on disk per document revision: re-opening an unchanged
 # document reads a file instead of re-importing the STEP and re-tessellating.
 # Bump _VERSION_MALLA whenever the tessellation/serialisation output changes.
-_VERSION_MALLA = "1"
+_VERSION_MALLA = "2"  # 2: LOD de vista para modelos grandes
 _CACHE_MALLAS = DOCUMENTOS_DIR / ".cache" / "mallas"
 
 
@@ -1116,14 +1543,21 @@ def _calcular_malla(doc_id: str, components: bool) -> bytes:
                     metadata_available=entries is not None,
                     bbox=registro["bbox"],
                     volume=registro["volumen"],
+                    allow_invalid_preview=not registro["valido"],
                 )
                 return content
-            tri_mesh = mesh.tessellate_to_trimesh(shape)
+            if registro["valido"]:
+                tri_mesh, _indices = mesh.tessellate_to_trimesh_con_caras(shape, vista=True)
+            else:
+                # Invalid STEP (e.g. community reconstructions): skip faces
+                # OCC cannot mesh instead of failing the whole preview.
+                tri_mesh, _indices, _omitidas = mesh.tessellate_to_trimesh_con_caras_tolerante(shape, vista=True)
         elif ext in _STL_EXTS:
             tri_mesh = mesh.load_stl(ruta)
             if components:
                 content = piece_mesh.from_stl(
-                    tri_mesh, bbox=registro["bbox"], volume=registro["volumen"]
+                    tri_mesh, bbox=registro["bbox"], volume=registro["volumen"],
+                    entries=mesh_parts.load(doc_id)
                 )
                 return content
         else:
@@ -1136,8 +1570,20 @@ def _calcular_malla(doc_id: str, components: bool) -> bytes:
 # `orcaslicer://open?file=<url>` downloader: it names the saved file after the
 # text following the LAST "/" of the decoded URL (query string included), so
 # the path must end in `name.stl|name.3mf`. The client-supplied stem is ignored.
-_RE_ARCHIVO_DESCARGA = re.compile(r"[A-Za-z0-9_-]{1,64}\.(stl|3mf)")
-_TIPOS_DESCARGA = {"stl": "model/stl", "3mf": "model/3mf"}
+_RE_ARCHIVO_DESCARGA = re.compile(r"[A-Za-z0-9_-]{1,64}\.(stl|3mf|svg|pdf|dxf)")
+_TIPOS_DESCARGA = {
+    "stl": "model/stl",
+    "3mf": "model/3mf",
+    "svg": "image/svg+xml",
+    "pdf": "application/pdf",
+    "dxf": "image/vnd.dxf",
+}
+# Drawing files (F22) can carry script-like text (SVG is XML): never sniffed,
+# never allowed to load or run anything when a browser opens them.
+_CABECERAS_PLANO = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+}
 # Same charset as named solids (letters/digits/_/- incl. accents and ñ).
 _RE_PIEZA_DESCARGA = re.compile(r"[\w-]{1,64}")
 # Upper bound on triangles a download builds in memory (checked after
@@ -1167,6 +1613,76 @@ def _slug_descarga(nombre: str) -> str:
     base = Path(str(nombre)).stem
     ascii_ = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[^A-Za-z0-9_-]+", "_", ascii_).strip("_")[:64].strip("_") or "modelo"
+
+
+def _descarga_plano(doc_id: str, formato: str) -> Response:
+    """Drawing sheet download (F22). The document is read under its lock; the
+    projection runs after the lock is released, so a slow sheet never holds up
+    edits of the same document. Only the loaded shape is used afterwards."""
+    with parametros.bloqueo(doc_id):
+        registro = _registry.get(doc_id)
+        if registro is None:
+            raise HTTPException(status_code=404, detail="documento no encontrado")
+        ruta = _files.get(doc_id)
+        if ruta is None or not ruta.exists():
+            raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+        nombre = registro["nombre"]
+        ext_origen = ruta.suffix.lower()
+        try:
+            if ext_origen in _STEP_EXTS:
+                shape = b123d_kernel.import_from_step(ruta)
+                entradas = solids.cargar(doc_id)
+            elif ext_origen in _STL_EXTS:
+                shape = mesh.load_stl(ruta)
+                entradas = mesh_parts.load(doc_id)
+            else:
+                raise HTTPException(status_code=400, detail="formato de documento no soportado")
+            if _geometria_vacia(shape):
+                raise HTTPException(
+                    status_code=400, detail="el documento no tiene geometria (archivo vacio o danado)"
+                )
+            piezas = _nombres_piezas_plano(entradas)
+            parametros_plano = _parametros_para_plano(doc_id)
+            revision = _revisiones.get(doc_id)
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (OSError, KeyError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"no se pudo generar la descarga: el documento no se puede leer ({type(exc).__name__})",
+            ) from exc
+        except Exception:  # noqa: BLE001 - a defect: leave a trace, answer 500
+            logger.exception("descarga %s: fallo inesperado al cargar el plano %s", doc_id, formato)
+            raise HTTPException(status_code=500, detail="error interno al generar la descarga") from None
+    # Lock released: from here on only the loaded shape and copies of the metadata are used.
+    try:
+        contenido = planos.escribir(
+            planos.construir(
+                shape,
+                nombre=nombre,
+                piezas=piezas,
+                revision=revision,
+                parametros=parametros_plano,
+                opciones=planos.validar(formato),
+            ),
+            formato,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:  # noqa: BLE001 - a defect: leave a trace, answer 500
+        logger.exception("descarga %s: fallo inesperado al generar %s", doc_id, formato)
+        raise HTTPException(status_code=500, detail="error interno al generar la descarga") from None
+    return Response(
+        content=contenido,
+        media_type=_TIPOS_DESCARGA[formato],
+        headers={
+            "Content-Disposition": f'attachment; filename="{_slug_descarga(nombre)}.{formato}"',
+            "Cache-Control": "no-store",
+            **_CABECERAS_PLANO,
+        },
+    )
 
 
 @router.api_route("/documentos/{doc_id}/descarga/{archivo:path}", methods=["GET", "HEAD"])
@@ -1199,9 +1715,13 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
     if coincidencia is None or not request.scope["path"].endswith(sufijo):
         raise HTTPException(status_code=404, detail="archivo no encontrado")
     formato = coincidencia.group(1)
+    if formato in planos.FORMATOS_PLANO and pieza:
+        raise HTTPException(status_code=400, detail="los planos son del documento completo, no de una pieza")
     # Clamp the id (characters AND UTF-8 bytes) before any lookup.
     if not notes._doc_id_valido(doc_id) or doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
+    if formato in planos.FORMATOS_PLANO:
+        return _descarga_plano(doc_id, formato)
     with parametros.bloqueo(doc_id):
         # Re-check inside the lock: a delete may have won the race.
         registro = _registry.get(doc_id)
@@ -1234,7 +1754,7 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                 entradas = solids.cargar(doc_id) if (formato == "3mf" or pieza) else None
             elif ext_origen in _STL_EXTS:
                 shape = mesh.load_stl(ruta)
-                entradas = None
+                entradas = mesh_parts.load(doc_id)
             else:
                 raise HTTPException(status_code=400, detail="formato de documento no soportado")
 
@@ -1260,7 +1780,7 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
                     else export_solidos.bytes_3mf(objetos, materiales.cargar(doc_id))
                 )
             elif formato == "stl":
-                tri_mesh = shape if ext_origen in _STL_EXTS else mesh.tessellate_to_trimesh(shape)
+                tri_mesh = shape if ext_origen in _STL_EXTS else mesh.tessellate_para_exportar(shape)
                 if len(tri_mesh.faces) > MAX_TRIANGULOS_DESCARGA:
                     raise too_big
                 contenido = mesh.to_stl_bytes(tri_mesh)
@@ -1301,9 +1821,104 @@ def descargar_documento(request: Request, doc_id: str, archivo: str) -> Response
     )
 
 
+def _parametros_para_plano(doc_id: str, valores: dict[str, Any] | None = None) -> dict[str, tuple[float, str]]:
+    """PARAMETROS of a script document as ``{clave: (valor, unidad)}`` (the
+    values in force, or ``valores`` when given: the staged ones of an edit).
+    Pure read of the sidecar: callers may hold the lock."""
+    meta = parametros.cargar(doc_id)
+    valores = meta["valores"] if valores is None else valores
+    resultado: dict[str, tuple[float, str]] = {}
+    for clave, entrada in meta["parametros"].items():
+        valor = valores.get(clave, entrada["valor"])
+        resultado[clave] = (float(valor), str(entrada.get("unidad") or ""))
+    return resultado
+
+
+def _nombres_piezas_plano(entradas: list[dict[str, Any]] | None) -> list[str]:
+    """Solid names of a document's breakdown (mesh part sidecars without a
+    name contribute nothing)."""
+    return list(dict.fromkeys(str(e["nombre"]) for e in (entradas or []) if isinstance(e, dict) and "nombre" in e))
+
+
+def _cargar_fuente_plano(doc_id: str) -> tuple[Any, list[str], dict[str, tuple[float, str]], str | None, str]:
+    """Shape or mesh of a document for a drawing, read under the document lock
+    (the lock is released before the projection runs, ADR-0021)."""
+    with parametros.bloqueo(doc_id):
+        return _cargar_fuente_plano_bloqueado(doc_id)
+
+
+def _cargar_fuente_plano_bloqueado(doc_id: str) -> tuple[Any, list[str], dict[str, tuple[float, str]], str | None, str]:
+    """Body of `_cargar_fuente_plano`: the caller holds `parametros.bloqueo(doc_id)` (F23a)."""
+    registro = _registry.get(doc_id)
+    if registro is None:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    ruta = _files.get(doc_id)
+    if ruta is None or not ruta.exists():
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+    ext_origen = ruta.suffix.lower()
+    if ext_origen in _STEP_EXTS:
+        fuente = b123d_kernel.import_from_step(ruta)
+        entradas = solids.cargar(doc_id)
+    elif ext_origen in _STL_EXTS:
+        fuente = mesh.load_stl(ruta)
+        entradas = None
+    else:
+        raise HTTPException(status_code=400, detail="formato de documento no soportado")
+    if _geometria_vacia(fuente):
+        raise HTTPException(status_code=400, detail="el documento no tiene geometria (archivo vacio o danado)")
+    parametros_plano = _parametros_para_plano(doc_id)
+    revision = _revisiones.get(doc_id)
+    return fuente, _nombres_piezas_plano(entradas), parametros_plano, revision, registro["nombre"]
+
+
+def _exportar_plano(
+    doc_id: str,
+    formato: str,
+    vistas: str | None,
+    escala: str | None,
+    papel: str,
+    proyeccion: str,
+    detalle: bool,
+) -> dict[str, Any]:
+    """Drawing sheet (ADR-0021): read-only, no history entry, no snapshot; the
+    file is a derived artifact under `exportados` named after the document id."""
+    try:
+        opciones = planos.validar(
+            formato, vistas=vistas, escala=escala, papel=papel, proyeccion=proyeccion, detalle=detalle
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    fuente, piezas, parametros_plano, revision, nombre = _cargar_fuente_plano(doc_id)
+    EXPORTADOS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        resultado = export_solidos.exportar_plano_documento(
+            fuente,
+            EXPORTADOS_DIR / f"{doc_id}.{formato}",
+            opciones,
+            formato=formato,
+            nombre=nombre,
+            piezas=piezas,
+            revision=revision,
+            parametros=parametros_plano,
+        )
+        if "cotas_detalle" in resultado:  # F23a/F23b: each dimension says how it is edited
+            resultado["cotas_detalle"], _aviso = _clasificar_cotas(doc_id, fuente, resultado["cotas_detalle"])
+            resultado["revision"] = revision
+        return resultado
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/documentos/{doc_id}/exportar")
 def exportar_documento(
-    doc_id: str, formato: str = Query(...), por_solido: bool = Query(default=False)
+    doc_id: str,
+    formato: str = Query(...),
+    por_solido: bool = Query(default=False),
+    vistas: str | None = Query(default=None),
+    escala: str | None = Query(default=None),
+    papel: str = Query(default="A4"),
+    proyeccion: str = Query(default="tercer_angulo"),
+    detalle: bool = Query(default=False),
 ) -> dict[str, Any]:
     """Materialize a document under `DOCUMENTOS_DIR/exportados` and return its
     path + size (never the file bytes) — or, with `por_solido=true`, one file
@@ -1318,14 +1933,24 @@ def exportar_documento(
     with one named object per named solid, for both `por_solido` values —
     a multi-object 3MF is what a slicer wants.
 
-    `por_solido=true` requires a STEP document with a named-solid breakdown
+    `por_solido=true` supports named STL regions for STL export and STEP
+    documents with a named-solid breakdown
     (`solidos.json`, see `app/solids.py`): geometrically-identical named
     pieces (e.g. 4 chairs from the same script function) collapse into ONE
     file, and the response maps each written filename to every solid name it
     represents (`app/export.py`).
     """
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    if formato in planos.FORMATOS_PLANO:
+        return _exportar_plano(doc_id, formato, vistas, escala, papel, proyeccion, detalle)
+    with parametros.bloqueo(doc_id):
+        return _export_document_locked(doc_id, formato, por_solido)
+
+
+def _export_document_locked(doc_id: str, formato: str, por_solido: bool) -> dict[str, Any]:
     if formato not in export_solidos.FORMATOS_SOPORTADOS:
-        raise HTTPException(status_code=400, detail="formato no soportado (usar stl, step o 3mf)")
+        raise HTTPException(status_code=400, detail="formato no soportado (usar stl, step, 3mf, svg, pdf o dxf)")
 
     registro = _registry.get(doc_id)
     if registro is None:
@@ -1345,7 +1970,7 @@ def exportar_documento(
             entradas_3mf = solids.cargar(doc_id)
         else:
             shape = mesh.load_stl(ruta)
-            entradas_3mf = None
+            entradas_3mf = mesh_parts.load(doc_id)
         try:
             resultado_3mf = export_solidos.exportar_3mf_documento(
                 shape, entradas_3mf, destino, nombre_por_defecto=nombre_objeto,
@@ -1358,6 +1983,27 @@ def exportar_documento(
                 f"/documentos/{doc_id}/descarga/{_slug_descarga(registro['nombre'])}.3mf"
             )
         return resultado_3mf
+
+    if por_solido and ext_origen in _STL_EXTS and formato == "stl":
+        entries = mesh_parts.load(doc_id)
+        if entries is None:
+            raise HTTPException(status_code=400, detail="Este STL no tiene piezas identificadas; incorpora documentos para conservar sus nombres.")
+        try:
+            objects, _ = export_solidos.objetos_3mf(mesh.load_stl(ruta), entries)
+            directory = EXPORTADOS_DIR / doc_id
+            directory.mkdir(parents=True, exist_ok=True)
+            files = {}
+            for name, part in objects:
+                filename = export_solidos._nombre_archivo_seguro(name, "stl", directory)
+                (directory / filename).write_bytes(mesh.to_stl_bytes(part))
+                files[filename] = [name]
+            result = {"directorio": str(directory), "archivos": files}
+            open_parts = mesh.mallas_abiertas(objects)
+            if open_parts:
+                result["advertencia_malla_abierta"] = export_solidos.advertencia_malla_abierta(open_parts)
+            return result
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if por_solido:
         if ext_origen not in _STEP_EXTS:
@@ -1373,8 +2019,9 @@ def exportar_documento(
             )
         shape = b123d_kernel.import_from_step(ruta)
         directorio = EXPORTADOS_DIR / doc_id
+        abiertas: list[str] = []
         mapa, nombres_inciertos = export_solidos.exportar_por_solido(
-            shape, entradas, formato, directorio
+            shape, entradas, formato, directorio, abiertas=abiertas
         )
         respuesta: dict[str, Any] = {"directorio": str(directorio), "archivos": mapa}
         if nombres_inciertos:
@@ -1383,17 +2030,24 @@ def exportar_documento(
             # this reimport's geometry) — the filenames above ARE those
             # `solido_N` names, never a silently mislabeled piece.
             respuesta["nombres_inciertos"] = True
+        if abiertas:
+            # ADR-0016: an open mesh is reported, never repaired or refused.
+            respuesta["advertencia_malla_abierta"] = export_solidos.advertencia_malla_abierta(abiertas)
         return respuesta
 
     destino = EXPORTADOS_DIR / f"{doc_id}.{formato}"
 
+    abiertas: list[str] = []
     if formato == "stl":
         if ext_origen in _STEP_EXTS:
             shape = b123d_kernel.import_from_step(ruta)
-            tri_mesh = mesh.tessellate_to_trimesh(shape)
+            tri_mesh = mesh.tessellate_para_exportar(shape)
             destino.write_bytes(mesh.to_stl_bytes(tri_mesh))
         else:
+            # Mesh-only document: copied as-is (ADR-0016), only checked for openness.
+            tri_mesh = mesh.load_stl(ruta)
             shutil.copyfile(ruta, destino)
+        abiertas = mesh.mallas_abiertas([(Path(registro["nombre"]).stem or "pieza", tri_mesh)])
     elif formato == "step":
         if ext_origen not in _STEP_EXTS:
             raise HTTPException(
@@ -1407,6 +2061,8 @@ def exportar_documento(
         resultado["descarga"] = (
             f"/documentos/{doc_id}/descarga/{_slug_descarga(registro['nombre'])}.stl"
         )
+    if abiertas:
+        resultado["advertencia_malla_abierta"] = export_solidos.advertencia_malla_abierta(abiertas)
     return resultado
 
 
@@ -1524,6 +2180,62 @@ def percibir_documento(
     return salida
 
 
+@router.get("/documentos/{doc_id}/medidas")
+def medidas_documento(
+    doc_id: str,
+    response: Response,
+    top: int = Query(default=medidas.TOP_PARES, ge=1, le=medidas.TOP_MAX),
+) -> dict[str, Any]:
+    """Live measures (Phase 21): the closest named-solid pairs of the
+    document as ``{revision, solidos, pares, total_pares, ocultos, completo,
+    calculos, tope_calculos, choques, errores, nombres_inciertos,
+    parametros}``. Each pair is ``{a, b, estado, distancia_mm}`` with `estado`
+    in ``choque`` / ``contacto`` / ``holgura`` (a choque adds ``volumen_mm3``).
+    Read-only and token-free like `/percibir`; backs the viewer's "Medidas"
+    panel. See `app/medidas.py` for the bounds and the revision contract.
+
+    Only STEP/script documents with a named-solid breakdown; a mesh (STL)
+    document gets a 400. The one input is `top` (1 to `medidas.TOP_MAX`).
+    The reply carries the same revision as the `X-Forja-Revision` header;
+    a document changed mid-computation answers 409.
+    """
+    if not notes._doc_id_valido(doc_id) or doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    ruta = _files.get(doc_id)
+    if ruta is None or not ruta.exists():
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+    if ruta.suffix.lower() not in _STEP_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail="medidas solo esta disponible para documentos STEP/script (no malla STL)",
+        )
+    # Same per-document lock as parametros/notes writers: a parameter rebuild
+    # cannot interleave with this read of the same STEP and sidecar files.
+    with parametros.bloqueo(doc_id):
+        revision = _revisiones.get(doc_id)
+        entradas = solids.cargar(doc_id)
+        if not entradas:
+            raise HTTPException(
+                status_code=400,
+                detail="este documento no tiene desglose de solidos (solidos.json ausente)",
+            )
+        try:
+            datos, desde_cache = medidas.obtener(
+                doc_id,
+                revision,
+                lambda: (b123d_kernel.import_from_step(ruta), entradas),
+                lambda: _revisiones.get(doc_id),
+            )
+        except medidas.RevisionCambiada as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        valores = parametros.cargar(doc_id)["valores"]
+
+    response.headers["X-Forja-Revision"] = revision or ""
+    response.headers["X-Forja-Cache"] = "hit" if desde_cache else "miss"
+    response.headers["Cache-Control"] = "no-store"
+    return {**medidas.presentar(datos, top), "revision": revision, "parametros": valores}
+
+
 _CAPTURA_LADO_MIN = 100
 _CAPTURA_LADO_MAX = 2000
 
@@ -1537,6 +2249,9 @@ def capturar_documento(
     alto: int = Query(default=512, ge=_CAPTURA_LADO_MIN, le=_CAPTURA_LADO_MAX),
     colores_por_solido: bool = Query(default=True),
     solidos: list[str] | None = Query(default=None),
+    explosion: float = Query(default=0.0),
+    foco: str | None = Query(default=None, max_length=120),
+    radio: float | None = Query(default=None),
 ) -> Response:
     """Headless PNG render of a document (Phase 5B, feedback item 1) — see
     `app/render.py` for the full rendering recipe. Backs the MCP `captura`
@@ -1547,7 +2262,20 @@ def capturar_documento(
     the house shell's name to look inside it). The one-line caption is
     echoed back in the `X-Forja-Captura` response header (ASCII-only) so an
     HTTP caller gets it without parsing PNG bytes.
+
+    `explosion` (F19, ADR-0027): 0 a 1, vista explosionada de display. Solo
+    documentos STEP con piezas con nombre; no toca la geometría guardada.
+    `explosion=0` no cambia nada del render.
+
+    `foco=x,y,z` y `radio` (F20, ADR-0028): encuadre centrado en ese punto, con
+    radio en mm (entre 0,5 y 5 veces la diagonal). Van juntos; sin ellos el
+    render es el de siempre.
     """
+    try:
+        factor_explosion = vista_explosionada.validar_factor(explosion)
+        foco_xyz = render.parsear_foco(foco) if foco is not None else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     registro = _registry.get(doc_id)
     if registro is None:
         raise HTTPException(status_code=404, detail="documento no encontrado")
@@ -1556,6 +2284,11 @@ def capturar_documento(
         raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
 
     ext = ruta.suffix.lower()
+    if factor_explosion > 0 and ext not in _STEP_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail="la vista explosionada requiere un documento STEP con piezas con nombre",
+        )
     entradas = solids.cargar(doc_id) if ext in _STEP_EXTS else None
     if ext in _STEP_EXTS and not entradas:
         raise HTTPException(
@@ -1563,10 +2296,17 @@ def capturar_documento(
             detail="este documento no tiene desglose de solidos (solidos.json ausente)",
         )
 
+    desplazamientos = None
     try:
         if ext in _STEP_EXTS:
             shape = b123d_kernel.import_from_step(ruta)
             grupos, colores, nombres_inciertos = render.grupos_desde_shape(shape, entradas, solidos)
+            if factor_explosion > 0:
+                if nombres_inciertos:
+                    raise ValueError("no se pudo identificar cada pieza; la vista explosionada no se aplica")
+                articulaciones = (assemblies.load(doc_id) or {}).get("articulaciones")
+                desplazamientos = vista_explosionada.desplazamientos(
+                    vista_explosionada.cajas_desde_entradas(entradas), articulaciones, factor_explosion)
         else:
             malla = mesh.load_stl(ruta)
             grupos, colores, nombres_inciertos = render.grupo_desde_malla(malla, solidos)
@@ -1578,6 +2318,9 @@ def capturar_documento(
             ancho=ancho,
             alto=alto,
             colores_por_solido=colores_por_solido,
+            desplazamientos=desplazamientos,
+            foco=foco_xyz,
+            radio=radio,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1588,6 +2331,8 @@ def capturar_documento(
         # this reimport's geometry) — the legend above is that fallback,
         # never a silently mislabeled piece.
         caption += " (nombres inciertos)"
+    if factor_explosion > 0:
+        caption += f" - explosion {round(factor_explosion * 100)} %"
 
     return Response(content=png_bytes, media_type="image/png", headers={"X-Forja-Captura": caption})
 
@@ -1613,6 +2358,9 @@ def obtener_caras(doc_id: str) -> list[dict[str, Any]]:
     ]
 
 
+_cache_caras_triangulos: dict[str, tuple[tuple[str, int], bytes]] = {}
+
+
 @router.get("/documentos/{doc_id}/caras_triangulos")
 def obtener_caras_triangulos(doc_id: str) -> Response:
     """Binary little-endian ``uint32`` array, one entry per triangle of
@@ -1621,9 +2369,19 @@ def obtener_caras_triangulos(doc_id: str) -> Response:
     raycast triangle hit into a stable face id without shipping any raw
     geometry over JSON."""
     ruta = _ruta_step_o_404(doc_id)
+    # Tessellating a big assembly takes ~30 s; the viewer asks again on every
+    # note click, so cache per document revision (the STEP is immutable per
+    # revision) and keep only the latest one per document.
+    clave = (_revisiones.get(doc_id, ""), ruta.stat().st_mtime_ns)
+    guardado = _cache_caras_triangulos.get(doc_id)
+    if guardado is not None and guardado[0] == clave:
+        return Response(content=guardado[1], media_type="application/octet-stream")
     shape = b123d_kernel.import_from_step(ruta)
-    _tri_mesh, indices = mesh.tessellate_to_trimesh_con_caras(shape)
-    return Response(content=indices.tobytes(), media_type="application/octet-stream")
+    # Tolerant so it stays aligned with /malla for invalid STEP previews.
+    _tri_mesh, indices, _omitidas = mesh.tessellate_to_trimesh_con_caras_tolerante(shape, vista=True)
+    datos = indices.tobytes()
+    _cache_caras_triangulos[doc_id] = (clave, datos)
+    return Response(content=datos, media_type="application/octet-stream")
 
 
 @router.get("/documentos/{doc_id}/historial")
@@ -1638,6 +2396,75 @@ def obtener_historial(doc_id: str) -> list[dict[str, Any]]:
 
 class _RestaurarBody(BaseModel):
     snapshot: str
+
+
+class _EsperadoBody(BaseModel):
+    """Cabeza del historial que el cliente vio (`GET .../deshacer`, ADR-0022)."""
+    model_config = ConfigDict(extra="forbid")
+    esperado: str
+
+
+MENSAJE_HISTORIAL_CAMBIADO = ("El historial cambió desde que se leyó (otra edición o un deshacer "
+                              "en paralelo). Se recarga antes de volver a intentarlo.")
+MENSAJE_SIN_PASO = {
+    "deshacer": "No hay ninguna revisión anterior a la que volver.",
+    "rehacer": "No hay nada que rehacer: una edición nueva borra el rehacer.",
+}
+
+
+def _estado_deshacer(doc_id: str) -> dict[str, Any]:
+    """Cursor calculado desde la cabeza leída una sola vez: el historial
+    que se devuelve es exactamente el que tiene esa cabeza."""
+    cabeza = git_store.cabeza(doc_id)
+    entradas = git_store.log(doc_id, cabeza) if cabeza else []
+    return deshacer.estado(entradas, cabeza)
+
+
+@router.get("/documentos/{doc_id}/deshacer")
+def estado_deshacer(doc_id: str) -> dict[str, Any]:
+    """Cursor de deshacer y rehacer: ``{puede_deshacer, puede_rehacer,
+    cabeza, destino_deshacer, destino_rehacer}``. Solo lee el historial;
+    ``destino_*`` es el id del paso que restaurará la acción."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    return _estado_deshacer(doc_id)
+
+
+@router.post("/documentos/{doc_id}/deshacer", dependencies=[Depends(auth.requiere_token)])
+def deshacer_documento(doc_id: str, body: _EsperadoBody) -> dict[str, Any]:
+    return _mover_historia(doc_id, body.esperado, "deshacer")
+
+
+@router.post("/documentos/{doc_id}/rehacer", dependencies=[Depends(auth.requiere_token)])
+def rehacer_documento(doc_id: str, body: _EsperadoBody) -> dict[str, Any]:
+    return _mover_historia(doc_id, body.esperado, "rehacer")
+
+
+def _mover_historia(doc_id: str, esperado: str, accion: str) -> dict[str, Any]:
+    """Deshacer o rehacer: una restauración nueva (nunca reescribe el
+    historial), con la misma cerradura y auth que `restaurar`. La cabeza
+    se compara bajo la cerradura: dos peticiones con la misma cabeza no
+    pueden aplicarse las dos."""
+    if doc_id not in _registry:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    ruta = _files.get(doc_id)
+    if ruta is None:
+        raise HTTPException(status_code=404, detail="archivo del documento no encontrado")
+
+    with parametros.bloqueo(doc_id):
+        if doc_id not in _registry:
+            raise HTTPException(status_code=404, detail="documento no encontrado")
+        estado = _estado_deshacer(doc_id)
+        if esperado != estado["cabeza"]:
+            raise HTTPException(status_code=409, detail=MENSAJE_HISTORIAL_CAMBIADO)
+        destino = estado["destino_deshacer"] if accion == "deshacer" else estado["destino_rehacer"]
+        if destino is None:
+            raise HTTPException(status_code=409, detail=MENSAJE_SIN_PASO[accion])
+        try:
+            registro = _restaurar_documento_bloqueado(doc_id, ruta, destino, accion=accion)
+        except assemblies.EstadoIncompatible as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {**registro, "accion": accion, "destino": destino, "cursor": _estado_deshacer(doc_id)}
 
 
 @router.post("/documentos/{doc_id}/restaurar", dependencies=[Depends(auth.requiere_token)])
@@ -1668,7 +2495,8 @@ def restaurar_documento(doc_id: str, body: _RestaurarBody) -> dict[str, Any]:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> dict[str, Any]:
+def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str,
+                                   accion: str = "restaurar") -> dict[str, Any]:
     try:
         archivos = versioning.leer_snapshot(doc_id, snapshot)
     except FileNotFoundError as exc:
@@ -1680,6 +2508,10 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
     # check existed this route answered 200 while planting state the very
     # next read could not parse.
     assemblies.validate_snapshot(archivos)
+    try:
+        mallas.validar_snapshot(archivos)
+    except mallas.MallaInvalida as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     actuales: dict[str, bytes] = {}
     if ruta.exists():
@@ -1691,8 +2523,13 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
     if ruta_solidos_doc.exists():
         actuales["solidos.json"] = ruta_solidos_doc.read_bytes()
     actuales = _con_parametros_snapshot(actuales, doc_id)
+    # Trailers (ADR-0022): el cursor de deshacer distingue estos commits de
+    # una edición normal. Los restaurar sin trailer son anteriores y cuentan
+    # como edición.
+    mensaje = f"antes de restaurar {snapshot}" if accion == "restaurar" else f"antes de {accion} {snapshot}"
     versioning.crear_snapshot(
-        doc_id, f"antes de restaurar {snapshot}", _con_ensamble_snapshot(actuales, doc_id)
+        doc_id, mensaje, _con_ensamble_snapshot(actuales, doc_id),
+        extra={"Accion": accion, "Destino": snapshot},
     )
 
     for nombre, contenido in archivos.items():
@@ -1700,7 +2537,7 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
             ruta_notas_doc.write_bytes(contenido)
         elif nombre == "solidos.json":
             ruta_solidos_doc.write_bytes(contenido)
-        elif nombre in (parametros.NOMBRE_SNAPSHOT, materiales.NOMBRE_SNAPSHOT):
+        elif nombre in (parametros.NOMBRE_SNAPSHOT, materiales.NOMBRE_SNAPSHOT, design_state.KEY):
             continue  # applied below with the geometry, never written as-is
         elif nombre in (assemblies.STATE_KEY, assemblies.BASE_KEY):
             # Applied through `assemblies.restore_files` below: written here
@@ -1709,8 +2546,11 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
             # at startup and would register a phantom `ensamble_base`
             # document (Phase 6.0 finding 7 / contract C5).
             continue
+        elif mallas.es_clave_snapshot(nombre):
+            continue  # cuerpos de malla (fase 3a): se aplican tras el bucle
         else:
             (DOCUMENTOS_DIR / nombre).write_bytes(contenido)
+    mallas.restaurar_snapshot(DOCUMENTOS_DIR, doc_id, archivos)
     if "notas.json" not in archivos:
         # Ese snapshot es anterior a que existieran notas: restaurarlo debe
         # reflejar fielmente ese estado (sin notas), no dejar las de hoy.
@@ -1721,6 +2561,7 @@ def _restaurar_documento_bloqueado(doc_id: str, ruta: Path, snapshot: str) -> di
     # annotation, not the current geometry/script or named-solid metadata.
     restaura_geometria = ruta.name in archivos
     if restaura_geometria:
+        design_state.restore(doc_id, archivos.get(design_state.KEY))
         parametros.restaurar_estado(doc_id, archivos.get(parametros.NOMBRE_SNAPSHOT))
         materiales.restaurar_estado(doc_id, archivos.get(materiales.NOMBRE_SNAPSHOT))
         # The assembly belongs to the geometry: a geometry snapshot carries
@@ -1797,15 +2638,29 @@ def _borrar_directorio_exportado(doc_id: str) -> None:
 def _eliminar_documento_bloqueado(doc_id: str) -> dict[str, Any]:
     if doc_id not in _registry:
         raise HTTPException(status_code=404, detail="documento no encontrado")
+    return _purgar_archivos(doc_id)
 
+
+def _purgar_archivos(doc_id: str) -> dict[str, Any]:
+    """Delete everything stored for ``doc_id`` from disk and the registries.
+    Caller holds ``parametros.bloqueo(doc_id)``. Works for a live document
+    and for one in the papelera (its file is no longer in ``_files``, so it
+    is looked up on disk by id)."""
     ruta = _files.pop(doc_id, None)
+    if ruta is None:
+        ruta = papelera.ruta_archivo(DOCUMENTOS_DIR, doc_id)
     if ruta is not None:
         ruta.unlink(missing_ok=True)
     _ruta_meta(doc_id).unlink(missing_ok=True)
     _borrar_cache_malla(doc_id)
     notes.ruta_notas(doc_id).unlink(missing_ok=True)
+    papelera.borrar_estado(DOCUMENTOS_DIR, doc_id)
     solids.borrar(doc_id)
     materiales.borrar(doc_id)
+    design_state.path(doc_id).unlink(missing_ok=True)
+    shutil.rmtree(DOCUMENTOS_DIR / ".design-assets" / doc_id, ignore_errors=True)
+    shutil.rmtree(DOCUMENTOS_DIR / ".design-candidates" / doc_id, ignore_errors=True)
+    mallas.quitar(DOCUMENTOS_DIR, doc_id)  # cuerpos de malla (fase 3a): la purga no deja nada
     # The assembly is part of the document (Phase 6, ADR-0003/0006: deleting
     # a document must leave nothing of it behind, not even state a restore
     # could not reach); `clear` also removes `.ensambles/<id>/` itself.
@@ -1817,5 +2672,6 @@ def _eliminar_documento_bloqueado(doc_id: str) -> dict[str, Any]:
     versioning.borrar_historial(doc_id)
     _registry.pop(doc_id, None)
     _revisiones.pop(doc_id, None)
+    medidas.olvidar(doc_id)
     eventos.publicar("documento_eliminado", doc_id)
     return {"ok": True}

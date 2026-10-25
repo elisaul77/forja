@@ -73,6 +73,11 @@ def _headers_con_token() -> dict[str, str]:
     return {"X-Forja-Token": auth.obtener_token()}
 
 
+def _finito(valor: Any) -> bool:
+    """Número real y finito (un `bool` no cuenta como número aquí)."""
+    return isinstance(valor, (int, float)) and not isinstance(valor, bool) and math.isfinite(valor)
+
+
 def _detalle(resp: httpx.Response) -> str:
     try:
         return str(resp.json().get("detail", resp.text))
@@ -91,23 +96,37 @@ def estado() -> dict[str, Any]:
     }
 
 
-def listar_documentos() -> list[dict[str, Any]]:
+def listar_documentos(incluir_borradores: bool = False) -> list[dict[str, Any]]:
+    params = {"borradores": "true"} if incluir_borradores else None
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
-        resp = c.get("/documentos")
+        resp = c.get("/documentos", params=params)
     resp.raise_for_status()
     return resp.json()
 
 
 @_heavy_operation
-def abrir_archivo(ruta: str) -> dict[str, Any]:
+def abrir_archivo(
+    ruta: str, documento_id: str | None = None, nombre_solido: str | None = None
+) -> dict[str, Any]:
+    # nombre_solido nombra el solido o cuerpo de malla dentro de un documento
+    # existente: sin documento_id no tiene sentido, se rechaza antes de pedir nada.
+    if nombre_solido is not None and documento_id is None:
+        return {"error": True, "mensaje": "nombre_solido requiere documento_id: el archivo se importa dentro de ese documento"}
+    cuerpo: dict[str, Any] = {"ruta": ruta}
+    if documento_id is not None:
+        cuerpo["documento_id"] = documento_id
+    if nombre_solido is not None:
+        cuerpo["nombre_solido"] = nombre_solido
     # Importing a large STEP (30 MB+) easily exceeds the light 30 s budget.
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.post(
-            "/documentos/desde_ruta", json={"ruta": ruta}, headers=_headers_con_token()
+            "/documentos/desde_ruta", json=cuerpo, headers=_headers_con_token()
         )
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
     data = resp.json()
+    if documento_id is not None:
+        return data  # importado dentro de un documento existente: {id, anadidos, ...}
     return {"id": data["id"], "nombre": data["nombre"]}
 
 
@@ -133,12 +152,27 @@ def _detalle_estructurado(resp: httpx.Response) -> dict[str, Any]:
     `linea`/`codigo_linea` alongside `mensaje` when the failure could be
     attributed to a specific line in the user's script."""
     try:
-        detalle = resp.json().get("detail", resp.text)
+        cuerpo = resp.json()
     except ValueError:
         return {"mensaje": resp.text}
+    if isinstance(cuerpo, dict) and isinstance(cuerpo.get("mensaje"), str):
+        # F23a (ADR-0023): `{error: true, mensaje}` answers (cota que no sigue al parámetro).
+        return {"mensaje": cuerpo["mensaje"]}
+    detalle = cuerpo.get("detail", resp.text) if isinstance(cuerpo, dict) else resp.text
     if isinstance(detalle, dict):
         return detalle
     return {"mensaje": str(detalle)}
+
+
+def _nombre_comparable(nombre: str) -> str:
+    """Nombre para comparar nombres de documento: sin `.step`/`.stp` y sin
+    mayusculas. El servidor guarda `nombre + ".step"`, asi que comparar el
+    nombre crudo nunca casaba (fase 2, bug de reutilizacion)."""
+    base = nombre.strip().casefold()
+    for extension in (".step", ".stp"):
+        if base.endswith(extension):
+            return base[: -len(extension)]
+    return base
 
 
 def ejecutar_script(
@@ -149,20 +183,27 @@ def ejecutar_script(
     variables: dict[str, Any] | None = None,
     documento_id: str | None = None,
     actualizar_si_existe: bool = True,
+    permanente: bool = False,
 ) -> dict[str, Any]:
     reutilizado = False
-    if documento_id is None and nombre and actualizar_si_existe:
-        # Editing should keep one document (history + live view), not spawn
-        # copies: reuse the single existing document with the same name.
+    if documento_id is None and nombre and actualizar_si_existe and not permanente:
+        # Editing keeps one document (history + live view), not spawn copies:
+        # reuse the newest document with the same name, drafts included. The
+        # listing is newest-first, so with 2+ matches the first one wins.
         try:
             with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
-                docs = c.get("/documentos").json()
-            iguales = [d["id"] for d in docs if d.get("nombre") == nombre]
-            if len(iguales) == 1:
-                documento_id, reutilizado = iguales[0], True
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            pass
+                resp = c.get("/documentos", params={"borradores": "true"})
+            resp.raise_for_status()
+            docs = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"error": True, "mensaje": f"no se pudo consultar la galeria para reutilizar '{nombre}': {exc}"}
+        clave = _nombre_comparable(nombre)
+        iguales = [d["id"] for d in docs if _nombre_comparable(d.get("nombre") or "") == clave]
+        if iguales:
+            documento_id, reutilizado = iguales[0], True
     payload: dict[str, Any] = {"timeout": timeout}
+    if permanente:
+        payload["permanente"] = True
     if codigo is not None:
         payload["codigo"] = codigo
     if ruta is not None:
@@ -182,6 +223,15 @@ def ejecutar_script(
     if reutilizado and isinstance(data, dict):
         data["actualizado_por_nombre"] = True
     return data
+
+
+def conservar_documento(doc_id: str) -> dict[str, Any]:
+    """Promote a draft to a permanent document (token-protected)."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        resp = c.post(f"/documentos/{urllib.parse.quote(doc_id, safe='')}/conservar", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
 
 
 PUBLIC_URL_DEFAULT = "http://localhost:8710"
@@ -240,13 +290,29 @@ def _enlace_orca(descarga: Any) -> dict[str, str]:
     }
 
 
+_FORMATOS_PLANO_MCP = ("svg", "pdf", "dxf")
+
+
 @_heavy_operation
-def exportar(doc_id: str, formato: str, por_solido: bool = False) -> dict[str, Any]:
+def exportar(
+    doc_id: str,
+    formato: str,
+    por_solido: bool = False,
+    vistas: str | None = None,
+    escala: str | None = None,
+    papel: str | None = None,
+    proyeccion: str | None = None,
+    detalle: bool = False,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"formato": formato, "por_solido": str(por_solido).lower()}
+    if formato in _FORMATOS_PLANO_MCP:
+        # F22 (ADR-0021): drawing options only travel for plano formats.
+        params["detalle"] = str(detalle).lower()
+        for nombre, valor in (("vistas", vistas), ("escala", escala), ("papel", papel), ("proyeccion", proyeccion)):
+            if valor is not None:
+                params[nombre] = valor
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
-        resp = c.get(
-            f"/documentos/{doc_id}/exportar",
-            params={"formato": formato, "por_solido": str(por_solido).lower()},
-        )
+        resp = c.get(f"/documentos/{doc_id}/exportar", params=params)
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
     resultado = resp.json()
@@ -316,12 +382,17 @@ def percibir(
 
 def parametros(
     doc_id: str, valores: dict[str, Any] | None = None, materiales: dict[str, Any] | None = None,
-    confirmar_script: bool = False,
+    confirmar_script: bool = False, cotas: dict[str, Any] | None = None, revision: str | None = None,
 ) -> dict[str, Any]:
     """`None` -> read the schema + current values (token-free GET); a dict
     -> apply them (token-protected POST, re-runs the stored script).
     `materiales` (fdm-D) -> POST /materiales first (no re-run); the answer
-    then carries `materiales` (and, alone, also the read of the schema)."""
+    then carries `materiales` (and, alone, also the read of the schema).
+    `cotas` (F23a, ADR-0023) -> live dimensions `{id_cota: valor}` applied
+    through POST /cotas/aplicar; `revision` is the one the ids were read at
+    (default: the current one). Exclusive with `valores`."""
+    if cotas is not None and valores is not None:
+        return {"error": True, "mensaje": "usa `valores` o `cotas`, no ambos"}
     resultado_materiales: dict[str, Any] | None = None
     if materiales is not None:
         with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
@@ -333,7 +404,10 @@ def parametros(
         if resp.status_code >= 400:
             return {"error": True, **_detalle_estructurado(resp)}
         resultado_materiales = resp.json()["materiales"]
-    respuesta = _parametros(doc_id, valores, confirmar_script)
+    if cotas is not None:
+        respuesta = _aplicar_cotas(doc_id, cotas, revision, confirmar_script)
+    else:
+        respuesta = _parametros(doc_id, valores, confirmar_script)
     if resultado_materiales is not None and not respuesta.get("error"):
         respuesta["materiales"] = resultado_materiales
     return respuesta
@@ -352,6 +426,26 @@ def _parametros(doc_id: str, valores: dict[str, Any] | None = None,
                 json={"valores": valores, **({"confirmar_script": True} if confirmar_script else {})},
                 headers=_headers_con_token(),
             )
+    if resp.status_code >= 400:
+        return {"error": True, **_detalle_estructurado(resp)}
+    return resp.json()
+
+
+def _aplicar_cotas(doc_id: str, cotas: dict[str, Any], revision: str | None,
+                   confirmar_script: bool) -> dict[str, Any]:
+    """F23a: POST /cotas/aplicar. Without `revision` the current one is read
+    first (GET /cotas), so the call applies to what the server holds now."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT + _SCRIPT_TIMEOUT_MARGIN) as c:
+        if revision is None:
+            leido = c.get(f"/documentos/{doc_id}/cotas")
+            if leido.status_code >= 400:
+                return {"error": True, **_detalle_estructurado(leido)}
+            revision = leido.json()["revision"]
+        resp = c.post(
+            f"/documentos/{doc_id}/cotas/aplicar",
+            json={"revision": revision, "cotas": cotas, **({"confirmar_script": True} if confirmar_script else {})},
+            headers=_headers_con_token(),
+        )
     if resp.status_code >= 400:
         return {"error": True, **_detalle_estructurado(resp)}
     return resp.json()
@@ -380,10 +474,15 @@ def captura(
     alto: int = 512,
     colores_por_solido: bool = True,
     solidos: list[str] | None = None,
+    explosion: float = 0.0,
+    foco: list[float] | None = None,
+    radio: float | None = None,
 ) -> dict[str, Any]:
     """Fetch the rendered PNG bytes + the `X-Forja-Captura` caption header;
     the caller (`mcp_server.tools.captura`) wraps the bytes as an MCP
-    `Image` content block."""
+    `Image` content block. `explosion` (F19) se envía solo si es distinto de
+    0, así la petición por defecto no cambia. `foco` + `radio` (F20) encuadran
+    un punto en mm; van juntos y se validan aquí antes de la petición."""
     params: dict[str, Any] = {
         "azimut": azimut,
         "elevacion": elevacion,
@@ -393,6 +492,17 @@ def captura(
     }
     if solidos:
         params["solidos"] = solidos
+    if explosion:
+        params["explosion"] = explosion
+    if foco is not None or radio is not None:
+        if foco is None or radio is None:
+            return {"error": True, "mensaje": "foco y radio van juntos: radio solo aplica con foco y foco pide radio"}
+        if not isinstance(foco, (list, tuple)) or len(foco) != 3 or not all(_finito(v) for v in foco):
+            return {"error": True, "mensaje": "foco debe ser una lista de tres números x,y,z finitos (mm)"}
+        if not _finito(radio):
+            return {"error": True, "mensaje": "radio debe ser un número finito en mm"}
+        params["foco"] = ",".join(repr(float(v)) for v in foco)
+        params["radio"] = float(radio)
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
         resp = c.get(f"/documentos/{doc_id}/captura", params=params)
     if resp.status_code >= 400:
@@ -470,10 +580,10 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
 
     if accion not in _ACCIONES_RAMA:
         return {"error": True, "mensaje": f"accion desconocida: {accion!r} (usa {'|'.join(_ACCIONES_RAMA)})"}
-    base = f"/documentos/{quote(doc_id, safe='')}/ramas"
+    base = f"/documentos/{urllib.parse.quote(doc_id, safe='')}/ramas"
     q = (lambda v: quote(v or "", safe=""))
     timeout = _heavy_timeout() if accion in ("cambiar", "comparar", "fusionar", "traer_pieza", "restaurar_pieza", "incorporar") else _TIMEOUT
-    doc_base = f"/documentos/{quote(doc_id, safe='')}"
+    doc_base = f"/documentos/{urllib.parse.quote(doc_id, safe='')}"
     with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=timeout) as c:
         if accion == "listar":
             resp = c.get(base)
@@ -518,7 +628,7 @@ def rama(doc_id: str, accion: str, nombre: str | None = None, desde: str | None 
                 if actual.status_code >= 400:
                     return {"error": True, "mensaje": _detalle(actual)}
                 destino = actual.json().get("activa", "main")
-            resp = c.get(f"/documentos/{quote(doc_id, safe='')}/comparar", params={"a": desde, "b": destino})
+            resp = c.get(f"/documentos/{urllib.parse.quote(doc_id, safe='')}/comparar", params={"a": desde, "b": destino})
         elif not nombre:
             return {"error": True, "mensaje": f"{accion} necesita nombre"}
         elif accion == "crear":
@@ -552,6 +662,50 @@ def eliminar_documento(doc_id: str) -> dict[str, Any]:
     return resp.json()
 
 
+# ---------------------------------------------------------------- galeria:
+# papelera (fase 1). Mover a la papelera es reversible; el borrado definitivo
+# no es herramienta MCP (solo REST, con el boton de la galeria y los tests).
+
+_ACCIONES_PAPELERA = ("listar", "restaurar")
+
+
+def borrar_documento(doc_id: str) -> dict[str, Any]:
+    """Send a document to the papelera (reversible: nothing is deleted)."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        resp = c.post(f"/documentos/{urllib.parse.quote(doc_id, safe='')}/papelera", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
+
+
+def papelera(accion: str, doc_id: str | None = None) -> Any:
+    """`listar` the documents in the papelera, or `restaurar` one by id."""
+    if accion not in _ACCIONES_PAPELERA:
+        return {"error": True, "mensaje": "accion desconocida: usa 'listar' o 'restaurar'"}
+    if accion == "listar" and doc_id is not None:
+        return {"error": True, "mensaje": "'listar' no lleva id"}
+    if accion == "restaurar" and not doc_id:
+        return {"error": True, "mensaje": "'restaurar' necesita el id del documento"}
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        if accion == "listar":
+            resp = c.get("/papelera", headers=_headers_con_token())
+        else:
+            resp = c.post(f"/papelera/{urllib.parse.quote(doc_id, safe='')}/restaurar", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
+
+
+def purgar_papelera(doc_id: str) -> dict[str, Any]:
+    """Permanent delete of a document already in the papelera. REST only, not
+    an MCP tool: used by the live tests' cleanup (`tests/test_papelera.py`)."""
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        resp = c.delete(f"/papelera/{urllib.parse.quote(doc_id, safe='')}", headers=_headers_con_token())
+    if resp.status_code >= 400:
+        return {"error": True, "mensaje": _detalle(resp)}
+    return resp.json()
+
+
 # ---------------------------------------------------------------- Phase 6:
 # assemblies ("ensamble") and the read-only local-service bridges
 # ("puentes") — thin wrappers over `app/assembly_routes.py` and
@@ -574,14 +728,21 @@ def ensamble(
     articulaciones: list[dict[str, Any]] | None = None,
     valores: dict[str, float] | None = None,
     quitar: bool = False,
+    barrido: str | list[str] | None = None,
+    detalle: bool = False,
+    captura_en_choque: bool = False,
 ) -> dict[str, Any]:
-    """Read (`None`), define (`articulaciones`), pose (`valores`) or clear
-    (`quitar=True`) a document's assembly, one mode at a time. The GET is
-    token-free; the three mutations carry `X-Forja-Token`."""
+    """Read (`None`), define (`articulaciones`), pose (`valores`), clear
+    (`quitar=True`) or sweep (`barrido`, read-only) a document's assembly,
+    one mode at a time. The GET and the sweep are token-free; the three
+    mutations carry `X-Forja-Token`. `captura_en_choque` (F20) pide, tras el
+    barrido, UNA imagen de la pose del primer choque (`imagenes` 0|1) en
+    `png`; el tool la devuelve como imagen."""
     modos = [nombre for nombre, activo in (
         ("articulaciones", articulaciones is not None),
         ("valores", valores is not None),
         ("quitar", bool(quitar)),
+        ("barrido", barrido is not None),
     ) if activo]
     if len(modos) > 1:
         return {"error": True, "mensaje": "un solo modo a la vez: " + " y ".join(modos)}
@@ -593,8 +754,16 @@ def ensamble(
         return {"error": True, "mensaje": "valores debe ser un objeto {articulacion: numero}"}
     if valores is not None and not valores:
         return {"error": True, "mensaje": "valores esta vacio; indica al menos una articulacion"}
+    if barrido is not None and barrido != "todas" and (
+            not isinstance(barrido, list) or not barrido or not all(isinstance(j, str) for j in barrido)):
+        return {"error": True, "mensaje": 'barrido debe ser "todas" o una lista de identificadores de articulacion'}
+    if detalle and barrido is None:
+        return {"error": True, "mensaje": "detalle solo aplica con barrido"}
+    if captura_en_choque and barrido is None:
+        return {"error": True, "mensaje": "captura_en_choque solo aplica con barrido"}
 
     ruta = f"/documentos/{doc_id}/ensamble"
+    extra: dict[str, Any] = {}
     try:
         # The pose rebuilds the document through the kernel (de/hacia STEP +
         # reimport), so it gets the heavy budget like `percibir`/`exportar`.
@@ -605,6 +774,13 @@ def ensamble(
                 resp = c.post(f"{ruta}/pose", json={"valores": valores}, headers=_headers_con_token())
             elif quitar:
                 resp = c.delete(ruta, headers=_headers_con_token())
+            elif barrido is not None:
+                cuerpo: dict[str, Any] = {"detalle": bool(detalle)}
+                if barrido != "todas":
+                    cuerpo["articulaciones"] = list(barrido)
+                resp = c.post(f"{ruta}/barrido", json=cuerpo)
+                if captura_en_choque and resp.status_code < 400:
+                    extra = _captura_del_primer_choque(c, ruta, resp.json())
             else:
                 resp = c.get(ruta)
     except httpx.HTTPError as exc:
@@ -614,7 +790,28 @@ def ensamble(
         # 409 format refusal (`assemblies.MENSAJE_FORMATO`) travels as its
         # own Spanish sentence, verbatim.
         return {"error": True, **_detalle_estructurado(resp)}
-    return resp.json()
+    return {**resp.json(), **extra}
+
+
+def _captura_del_primer_choque(c: httpx.Client, ruta: str, barrido: dict[str, Any]) -> dict[str, Any]:
+    """Una sola imagen: la pose del primer choque del barrido (por orden de
+    articulaciones), solo el par. Sin choque, `imagenes: 0` con el motivo. Un
+    fallo de la captura queda en `captura_error`: el veredicto del barrido se
+    conserva, nunca se pierde en silencio."""
+    for articulacion, resultado in barrido.get("barrido", {}).items():
+        choque = resultado.get("primer_choque")
+        if choque is None:
+            continue
+        a, b = choque["par"]
+        datos = {"articulacion": articulacion, "valor": choque["valor"], "par": [a, b], "tipo": choque["tipo"]}
+        resp = c.get(f"{ruta}/captura-choque",
+                     params={"articulacion": articulacion, "valor": choque["valor"], "a": a, "b": b})
+        if resp.status_code >= 400:
+            return {"imagenes": 0, "captura_error": _detalle(resp), **datos}
+        return {"imagenes": 1, "png": resp.content,
+                "caption": resp.headers.get("x-forja-captura", ""), **datos}
+    return {"imagenes": 0,
+            "motivo": "sin choque confirmado en el barrido: no hay pose de choque que mostrar"}
 
 
 _MENSAJE_POSE = "respuesta inesperada del puente de suspension (/pose)"
@@ -806,3 +1003,33 @@ def puentes() -> dict[str, Any]:
     if resp.status_code >= 400:
         return {"error": True, "mensaje": _detalle(resp)}
     return resp.json()
+
+
+@_heavy_operation
+def design_request(method: str, path: str, payload: dict | None = None) -> dict:
+    """Internal fixed-route adapter; no arbitrary URL is exposed as a tool."""
+    try:
+        with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_heavy_timeout()) as c:
+            response = c.request(method, path, json=payload,
+                                 headers=_headers_con_token() if method != 'GET' else {})
+        if response.status_code >= 400:
+            return {'error': True, 'status': response.status_code, 'message': _detalle(response)}
+        return response.json()
+    except httpx.HTTPError as exc:
+        return _error_red('design', exc)
+
+
+@_heavy_operation
+def responder_indicacion(doc_id: str, indicacion_id: str, payload: dict[str, Any]) -> dict:
+    """Agent route (token): interpretation/question/message of one intent."""
+    path = (f"/documentos/{urllib.parse.quote(doc_id, safe='')}/design/intents/"
+            f"{urllib.parse.quote(indicacion_id, safe='')}/agent")
+    return design_request('POST', path, payload)
+
+
+@_heavy_operation
+def design_image(doc_id: str, image_id: str):
+    with httpx.Client(base_url=BASE_URL, headers=_ORIGEN, timeout=_TIMEOUT) as c:
+        response=c.get(f'/documentos/{urllib.parse.quote(doc_id,safe="")}/design/images/{urllib.parse.quote(image_id,safe="")}')
+    response.raise_for_status()
+    return response.content

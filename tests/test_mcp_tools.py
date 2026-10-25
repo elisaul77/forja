@@ -44,20 +44,16 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(autouse=True)
-def _limpiar_documentos_creados(token_vivo):
-    """These tests hit the live `uvicorn` process (a separate OS process, so
-    it never sees `tests/conftest.py`'s `FORJA_DATA_DIR` tmp-dir override) —
-    any document a test creates would otherwise permanently pile up in the
-    real `documentos_data/` (Phase 4 fix-review: test isolation). Diffing
-    the document list before/after each test and deleting whatever appeared
-    catches every creation path (`ejecutar_script`, `abrir_archivo`, the
-    raw `POST /documentos` calls a couple of tests make directly) without
-    having to thread cleanup through each test individually."""
-    antes = {d["id"] for d in tools.listar_documentos()}
+def _limpiar_documentos_creados(docs_propios):
+    """Deletes only the documents this test created, by the ids its own
+    creation responses returned (`conftest.docs_propios`). The old listing
+    diff also hard-deleted any document that merely appeared during the test,
+    which could be a user's. The backend here is the hermetic one (conftest
+    guard), so the permanent delete cannot reach real data."""
     yield
-    despues = {d["id"] for d in tools.listar_documentos()}
-    for doc_id in despues - antes:
-        client.eliminar_documento(doc_id)
+    for doc_id in docs_propios:
+        borrado = client.eliminar_documento(doc_id)
+        assert not borrado.get("error"), borrado
 
 
 def test_tool_names_match_skill_table():
@@ -82,8 +78,13 @@ def test_tool_names_match_skill_table():
         "ensamble",
         "suspension",
         "puentes",
+        "borrar_documento", "papelera",  # galeria: papelera reversible (fase 1)
+        "conservar_documento",  # galeria fase 2: borradores que caducan
         "cupon",  # fdm-B
-        "rama",  # G2
+        "rama",
+        "capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
+        "responder_indicacion",  # unified intents (ADR-0019)
+        "preparar_candidato", "candidato_diseno", "trabajo_diseno", "exportar_diseno", "referencia_visual",  # G2
     }
     registradas = {tool.name for tool in mcp_instance._tool_manager.list_tools()}  # noqa: SLF001
     assert registradas == esperadas
@@ -178,6 +179,22 @@ def test_exportar_stl_y_step_desde_documento_script():
     exportado_step = tools.exportar(creado["id"], "step")
     assert exportado_step["tamano_bytes"] > 0
     assert exportado_step["ruta"].endswith(".step")
+
+
+def test_exportar_plano_svg_via_mcp():
+    """F22 (ADR-0021): `exportar` takes plano formats and drawing options; no new tool."""
+    creado = tools.ejecutar_script(_CAJA_SCRIPT, nombre="cubo_plano")
+    assert "error" not in creado, creado
+
+    plano = tools.exportar(creado["id"], "svg", vistas="frontal,superior", detalle=True)
+    assert "error" not in plano, plano
+    assert plano["ruta"].endswith(".svg")
+    assert plano["vistas"] == ["frontal", "superior"]
+    assert plano["cotas"] >= 3
+    assert len(plano["cotas_detalle"]) == plano["cotas"]
+
+    rechazado = tools.exportar(creado["id"], "svg", escala="3:1")
+    assert rechazado.get("error") is True
 
 
 def test_exportar_step_rechazado_para_documento_stl():
@@ -295,6 +312,32 @@ def test_captura_devuelve_imagen_y_caption_via_mcp():
     assert "1 solido" in caption
 
 
+def test_captura_explosionada_via_mcp_devuelve_imagen_y_caption():
+    """F19: `captura(..., explosion=1.0)` pide la vista explosionada al backend."""
+    creado = tools.ejecutar_script(
+        "from build123d import Box, Pos\n"
+        "resultado = {'izq': Box(10, 10, 10), 'der': Pos(30, 0, 0) * Box(10, 10, 10)}\n",
+        nombre="cubo_explosion_mcp",
+    )
+    assert "error" not in creado, creado
+
+    resultado = tools.captura(creado["id"], ancho=200, alto=200, explosion=1.0)
+    assert isinstance(resultado, list) and len(resultado) == 2, resultado
+    imagen, caption = resultado
+    assert imagen._mime_type == "image/png"  # noqa: SLF001 - Image has no public accessor
+    assert "2 solido" in caption and "explosion 100 %" in caption
+
+
+def test_captura_explosion_fuera_de_rango_devuelve_error_via_mcp():
+    creado = tools.ejecutar_script(
+        "from build123d import Box\nresultado = {'caja': Box(10, 10, 10)}\n",
+        nombre="cubo_explosion_fuera",
+    )
+    resultado = tools.captura(creado["id"], explosion=2.0)
+    assert resultado["error"] is True
+    assert "entre 0 y 1" in resultado["mensaje"]
+
+
 def test_captura_documento_inexistente_devuelve_error_via_mcp():
     resultado = tools.captura("no-existe")
     assert resultado["error"] is True
@@ -399,6 +442,32 @@ def test_ensamble_rechaza_modos_mezclados_sin_tocar_el_documento():
     assert tools.ensamble("no-existe", articulaciones=[])["error"] is True
     assert tools.ensamble("no-existe", valores={})["error"] is True
     assert "no encontrado" in tools.ensamble("no-existe")["mensaje"]  # el id si se consulta al leer
+
+
+def test_ensamble_barrido_via_mcp_es_solo_lectura_y_exclusivo():
+    """Phase 18: `barrido` is a mode of `ensamble` (no new tool). It is read-only,
+    compact, and refuses to share a call with a write mode."""
+    creado = tools.ejecutar_script(_ENSAMBLE_SCRIPT, nombre="barrido_mcp")
+    assert "error" not in creado, creado
+    doc_id = creado["id"]
+    assert tools.ensamble(doc_id, articulaciones=[dict(_ENSAMBLE_ARTICULACION)])["articulaciones"]
+    antes = tools.resumen_documento(doc_id)
+    historial = len(tools.leer_historial(doc_id))
+
+    barrido = tools.ensamble(doc_id, barrido="todas")
+    assert "error" not in barrido, barrido
+    assert set(barrido["barrido"]) == {"bisagra"}
+    assert barrido["garantia"] in {"continua", "muestreada"}
+    assert isinstance(barrido["ok"], bool)
+    assert tools.ensamble(doc_id, barrido=["bisagra"], detalle=True)["barrido"]["bisagra"]["unidad"] == "grados"
+    assert tools.resumen_documento(doc_id)["bbox"] == antes["bbox"]
+    assert len(tools.leer_historial(doc_id)) == historial
+
+    mezcla = tools.ensamble(doc_id, barrido="todas", valores={"bisagra": 10})
+    assert mezcla["error"] is True and "un solo modo" in mezcla["mensaje"]
+    assert tools.ensamble(doc_id, barrido=[])["error"] is True
+    assert tools.ensamble(doc_id, detalle=True)["error"] is True
+    tools.ensamble(doc_id, quitar=True)
 
 
 def test_ensamble_surface_el_409_del_formato_verbatim(monkeypatch):

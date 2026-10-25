@@ -1,5 +1,5 @@
 import { parseLiveEvent } from "./live-core.js?v=11";
-import { listarDocumentos } from "./api.js?v=11";
+import { listarDocumentos } from "./api.js?v=17";
 
 /** Owns the one SSE connection for this page and reconciles after every hello. */
 export function startLive({ tabs, onLibraryChanged = () => {} }) {
@@ -23,9 +23,11 @@ export function startLive({ tabs, onLibraryChanged = () => {} }) {
       tabs.reanudarPendientes();
       show("Vista en vivo conectada", "ok", 2000);
     } else if (name === "resincronizar") {
-      void listarDocumentos().then(docs => tabs.reconciliar(docs)).catch(() => {});
+      // Con borradores: una pestaña abierta sobre un borrador no es un documento eliminado.
+      void listarDocumentos({ borradores: true }).then(docs => tabs.reconciliar(docs)).catch(() => {});
     } else if (name === "construyendo") {
       show("Construyendo modelo…");
+      tabs.medidasConstruyendo(data.id);
     } else if (name === "construccion_fallida") {
       show("El último cambio falló", "error", 5000);
     } else if (name === "construccion_terminada") {

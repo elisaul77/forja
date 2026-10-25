@@ -1,19 +1,23 @@
+import { renderDesign, designHit, disposeDesign, refreshDesign, panelSectionFor } from "./design.js?v=12";
 // Forja — gestor de pestañas: cada pestaña posee su propio contenedor de
 // visor y su propia instancia de ForjaViewer (cámara/selección independientes
 // por pestaña, ver ADR-0002 / plan Fase 2).
-import { ForjaViewer } from "./viewer.js?v=14";
-import { ForjaNotasControlador, renderizarPanelNotas } from "./notes.js?v=15";
-import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=2";
-import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=4";
-import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=11";
-import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=11";
-import { crearBotonCupon } from "./cupon.js?v=2";
-import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js";
-import { renderPiecesPanel } from "./pieces.js?v=9";
-import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=1";
-import { construirAnclas } from "./orca.js?v=3";
+import { ForjaViewer } from "./viewer.js?v=design1-23";
+import { ForjaNotasControlador } from "./notes.js?v=31";
+import { claseModo } from "./dibujo-indicacion.js?v=3";
+import { ForjaHistorialControlador, renderizarPanelHistorial } from "./historial.js?v=5";
+import { ForjaHistorial2Controlador, renderizarHistorial2 } from "./historial2.js?v=6";
+import { ForjaParametrosControlador, renderizarPanelParametros } from "./parametros.js?v=16";
+import { obtenerDocumento, obtenerMallaConRevision, obtenerTokenSesion } from "./api.js?v=17";
+import { crearBotonCupon } from "./cupon.js?v=4";
+import { ForjaEnsambleControlador, renderizarPanelEnsamble } from "./ensamble.js?v=4";
+import { AnimationView } from "./animation.js?v=7";
+import { renderPiecesPanel } from "./pieces.js?v=10";
+import { coloresDePiezas, guardarMateriales, obtenerMateriales } from "./materiales.js?v=3";
+import { construirAnclas } from "./orca.js?v=4";
 import { createRefreshScheduler } from "./live-core.js?v=11";
-import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=3";
+import { ForjaRamasControlador, renderizarPanelRamas, textoResumen } from "./ramas.js?v=5";
+import { ForjaMedidasControlador } from "./medidas.js?v=1";
 
 function formatoVolumen(mm3) {
   return `${mm3.toFixed(2)} mm³`;
@@ -36,17 +40,23 @@ export class TabManager {
     this.activeId = null;
     // Lo asigna app.js: abre (o activa) la pestaña de un documento por id.
     this.abrirDocumento = null;
+    // Barra de herramientas (24a): avisa cuando cambian pestaña activa o selección.
+    this.onEstadoCambio = null;
+    // Cursor de deshacer (24a2): avisa cuando el historial de un documento cambió.
+    this.onHistorialCambio = null;
 
     // Panel lateral (Fase 4), compartido entre pestañas: muestra siempre
     // los datos de la pestaña activa.
     this.panel = document.getElementById("fj-panel-lateral");
-    this.panelSeccionNotas = document.getElementById("fj-panel-notas");
     this.panelSeccionHistorial = document.getElementById("fj-panel-historial");
     this.panelSeccionRamas = document.getElementById("fj-panel-ramas");
     this.panelSeccionParametros = document.getElementById("fj-panel-parametros");
     this.panelSeccionEnsamble = document.getElementById("fj-panel-ensamble");
     this.panelSeccionPiezas = document.getElementById("fj-panel-piezas");
-    this.panelActivo = "notas";
+    this.panelSeccionMedidas = document.getElementById("fj-panel-medidas");
+    this.panelSeccionDesign = document.getElementById("fj-panel-design");
+    // Indicaciones (antes «Diseño») es la lista única: notas, trazos y propuestas.
+    this.panelActivo = "design";
     document.getElementById("fj-panel-lateral-cerrar").addEventListener("click", () => {
       this.panel.hidden = true;
       this.panelReturnFocus?.focus();
@@ -68,12 +78,13 @@ export class TabManager {
 
   _mostrarSeccionPanel(seccion) {
     this.panelActivo = seccion;
-    this.panelSeccionNotas.hidden = seccion !== "notas";
+    this.panelSeccionDesign.hidden = seccion !== "design";
     this.panelSeccionHistorial.hidden = seccion !== "historial";
     // Historial 2.0: «Ramas» vive en el cajón de la vista Historial.
     this.panel.classList.toggle("fj-panel-lateral--historial", seccion === "historial");
     this.panelSeccionParametros.hidden = seccion !== "parametros";
     this.panelSeccionEnsamble.hidden = seccion !== "ensamble";
+    this.panelSeccionMedidas.hidden = seccion !== "medidas";
     this.panelSeccionPiezas.hidden = seccion !== "piezas";
     for (const boton of document.querySelectorAll(".fj-panel-lateral__tab")) {
       boton.classList.toggle("is-active", boton.dataset.panel === seccion);
@@ -83,7 +94,7 @@ export class TabManager {
 
   abrirPanel(seccion) {
     if (!this.activeId) return;
-    if (seccion === "ramas") seccion = "historial";
+    seccion = panelSectionFor(seccion);
     if (this.panel.hidden) this.panelReturnFocus = document.activeElement;
     this.panel.hidden = false;
     this._mostrarSeccionPanel(seccion);
@@ -94,7 +105,7 @@ export class TabManager {
   _renderizarPanelPestanaActiva() {
     const entrada = this.tabs.get(this.activeId);
     if (!entrada) return;
-    renderizarPanelNotas(entrada.notas);
+    if (this.panelActivo === "design") renderDesign(entrada, this.panelSeccionDesign);
     renderizarPanelHistorial(entrada.historial);
     if (this.panelActivo === "historial") {
       renderizarHistorial2(entrada.h2);
@@ -103,6 +114,7 @@ export class TabManager {
     renderizarPanelParametros(entrada.parametros);
     if (this.panelActivo === "ensamble") renderizarPanelEnsamble(entrada.ensamble);
     if (this.panelActivo === "piezas") renderPiecesPanel(entrada.viewer, entrada.ficha.nombre, entrada.materiales);
+    if (this.panelActivo === "medidas") entrada.medidas.mostrar(entrada.revision);
   }
 
   /** Abre (o reactiva si ya existe) una pestaña para el documento dado. */
@@ -150,9 +162,11 @@ export class TabManager {
 
     const viewer = new ForjaViewer(contenedor);
     viewer.cargarMallaSTL(mallaArrayBuffer);
+    viewer.onDesignHit = hit => { if(this.activeId === ficha.id && this.panelActivo === "design") designHit(this.tabs.get(ficha.id), hit); };
 
     const notas = new ForjaNotasControlador(viewer, ficha.id);
-    viewer.canSelectPiece = () => !notas.modo;
+    notas.alCambiarMarcas = () => this._refrescarIndicaciones(ficha.id);
+    viewer.canSelectPiece = () => !notas.modo && animation.mode === "cad";
     viewer.onPieceSelection = () => {
       if (this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "piezas") {
         const actual = this.tabs.get(ficha.id);
@@ -177,8 +191,13 @@ export class TabManager {
     const parametros = new ForjaParametrosControlador(ficha.id, async (registroActualizado) => {
       await this._alCambiarParametros(ficha.id, registroActualizado);
     });
+    // F23b (ADR-0025): the editable dimensions of the document are labels on the 3D model.
+    parametros.alListarCotas = (etiquetas) => viewer.mostrarEtiquetasCotas(etiquetas);
     const ensamble = new ForjaEnsambleControlador(ficha.id, async (registroActualizado) => {
       await this._alCambiarParametros(ficha.id, registroActualizado);
+    }, () => {
+      const current = this.tabs.get(ficha.id);
+      if (current) current.animation.setAssembly(ensamble.data, ensamble.revision, current.revision);
     });
 
     const toolbar = document.createElement("div");
@@ -202,11 +221,17 @@ export class TabManager {
       const activo = await notas.activarModoPizarra();
       btnPizarra.classList.toggle("is-active", activo);
     });
+    // Cualquier cambio de modo (salir con Terminar/Esc/Cancelar, o la animación) marca los botones.
+    notas.alCambiarModo = (modo) => {
+      const activos = claseModo(modo);
+      btnNota.classList.toggle("is-active", activos.nota);
+      btnPizarra.classList.toggle("is-active", activos.pizarra);
+    };
     const btnPanel = document.createElement("button");
     btnPanel.type = "button";
     btnPanel.className = "fj-btn";
-    btnPanel.textContent = "Notas e historial";
-    btnPanel.addEventListener("click", () => this.abrirPanel("notas"));
+    btnPanel.textContent = "Indicaciones";
+    btnPanel.addEventListener("click", () => this.abrirPanel("design"));
     const btnParametros = document.createElement("button");
     btnParametros.type = "button";
     btnParametros.className = "fj-btn";
@@ -254,8 +279,22 @@ export class TabManager {
       },
     });
     toolbar.append(btnCupon);
-    viewer.onSeleccion = () => anclasOrca.refrescar?.();
+    viewer.onSeleccion = () => { anclasOrca.refrescar?.(); this.onEstadoCambio?.(); };
     contenedor.appendChild(toolbar);
+    const animation = new AnimationView(contenedor, viewer, toolbar, () => {
+      if (notas.ocupado()) {
+        const feedback = document.getElementById("fj-feedback");
+        feedback.hidden = false;
+        feedback.textContent = "Termina la nota o el trazo antes de abrir la animación.";
+        return false;
+      }
+      this._salirComparacion(ficha.id);
+      notas.modo = null;
+      btnNota.classList.remove("is-active");
+      btnPizarra.classList.remove("is-active");
+      viewer.ocultarPlanoPizarra();
+      return true;
+    }, ficha.id);
 
     const viewControls = document.createElement("div");
     viewControls.className = "fj-view-controls";
@@ -292,6 +331,36 @@ export class TabManager {
       });
       viewControls.append(toggle);
     }
+    // F19 (ADR-0027): vista explosionada de display. Solo STEP (piezas con nombre).
+    // El deslizador (0-100 %) aparece al activar el botón. No llama a la API.
+    const explosion = document.createElement("button");
+    explosion.type = "button"; explosion.className = "fj-btn"; rotular(explosion, "Explosionar", "Expl");
+    explosion.setAttribute("aria-pressed", "false");
+    explosion.hidden = ficha.formato !== "step";
+    const separacion = document.createElement("input");
+    separacion.type = "range"; separacion.min = "0"; separacion.max = "100"; separacion.step = "1"; separacion.value = "50";
+    separacion.className = "fj-explosion__rango"; separacion.hidden = true;
+    separacion.setAttribute("aria-label", "Separación de la vista explosionada");
+    const porcentaje = document.createElement("output");
+    porcentaje.className = "fj-explosion__valor"; porcentaje.hidden = true; porcentaje.textContent = "50 %";
+    const articulacionesVigentes = () => this.tabs.get(ficha.id)?.ensamble?.data?.articulaciones ?? [];
+    explosion.addEventListener("click", () => {
+      if (animation.mode !== "cad") {
+        const feedback = document.getElementById("fj-feedback");
+        feedback.hidden = false;
+        feedback.textContent = "Sal del modo animación para explosionar las piezas.";
+        return;
+      }
+      const activa = explosion.getAttribute("aria-pressed") !== "true";
+      explosion.setAttribute("aria-pressed", String(activa));
+      separacion.hidden = porcentaje.hidden = !activa;
+      viewer.setExplosion(activa ? Number(separacion.value) / 100 : 0, articulacionesVigentes);
+    });
+    separacion.addEventListener("input", () => {
+      porcentaje.textContent = `${separacion.value} %`;
+      if (explosion.getAttribute("aria-pressed") === "true") viewer.setExplosion(Number(separacion.value) / 100, articulacionesVigentes);
+    });
+    viewControls.append(explosion, separacion, porcentaje);
     contenedor.append(viewControls);
     const help = document.createElement("div");
     help.className = "fj-view-help";
@@ -340,8 +409,30 @@ export class TabManager {
     });
     contenedor.append(divisor);
 
-    const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, btnParametros,
-      revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
+    const medidas = new ForjaMedidasControlador({
+      docId: ficha.id,
+      contenedor: this.panelSeccionMedidas,
+      visible: () => this.activeId === ficha.id && !this.panel.hidden && this.panelActivo === "medidas",
+    });
+    const entry = { boton, contenedor, viewer, ficha, notas, historial, ramas, h2, divisor, banda, parametros, ensamble, animation, btnParametros,
+      medidas, revision, pendingPanels: new Set(), panelLoading: false, localRefresh: false, notice };
+    // Controles que la barra de herramientas reutiliza (no se duplican).
+    entry.acciones = { nota: btnNota, pizarra: btnPizarra, cupon: btnCupon, explosion };
+    // Acciones del panel Indicaciones: mismos modos que los botones del visor.
+    entry.designActions = {
+      pointMode: () => { if (notas.modo !== "nota") btnNota.click(); },
+      drawMode: () => btnPizarra.click(),
+    };
+    // Tras deshacer una propuesta (restaurar), recarga la pestaña entera.
+    entry.alRestaurar = registro => this._alRestaurar(ficha.id, registro);
+    // Indicaciones: «Ver propuesta» usa la misma vista antes/después que el historial.
+    entry.compararPropuesta = async (mallaPropuesta, estados, { lineas, alSalir } = {}) => {
+      const mallaActual = (await obtenerMallaConRevision(ficha.id)).buffer;
+      this._mostrarComparacion(ficha.id, { piezas: estados }, mallaActual, mallaPropuesta, {
+        modo: "dividida", etiquetas: ["Ahora", "Propuesta"], titulo: "Ahora → Propuesta", lineas, alSalir,
+      });
+    };
+    entry.salirComparacion = () => this._salirComparacion(ficha.id);
     entry.materiales = {
       materiales: {},
       guardar: async cambios => {
@@ -382,6 +473,7 @@ export class TabManager {
       throw error;
     }
     btnParametros.hidden = !parametros.tieneParametros();
+    animation.setAssembly(ensamble.data, ensamble.revision, entry.revision);
     this.activar(ficha.id);
     viewer.ajustarVista();
   }
@@ -389,6 +481,7 @@ export class TabManager {
   activar(docId) {
     const entrada = this.tabs.get(docId);
     if (!entrada) return;
+    if (this.activeId !== docId) this.tabs.get(this.activeId)?.animation.pause();
 
     for (const [id, t] of this.tabs) {
       const activa = id === docId;
@@ -405,6 +498,7 @@ export class TabManager {
     this._actualizarStatusBar(entrada.ficha);
     if (!this.panel.hidden) this._renderizarPanelPestanaActiva();
     entrada.scheduler.flush(true);
+    this.onEstadoCambio?.();
   }
 
   /** Callback del panel de historial tras un `restaurar` exitoso: recarga
@@ -419,11 +513,14 @@ export class TabManager {
       if (this.tabs.get(docId) !== entrada) return;
       entrada.ficha = registroActualizado;
       entrada.boton.querySelector(".fj-tab__nombre").textContent = registroActualizado.nombre;
+      entrada.animation.pause();
+      entrada.animation.resetPose();
       entrada.viewer.cargarMallaSTL(malla.buffer);
       this._setRevision(entrada, malla.revision);
       entrada.notas.invalidarCaras();
       await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.parametros.cargarInicial(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
       entrada.btnParametros.hidden = !entrada.parametros.tieneParametros();
+      entrada.animation.setAssembly(entrada.ensamble.data, entrada.ensamble.revision, entrada.revision);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         this._renderizarPanelPestanaActiva();
@@ -431,7 +528,21 @@ export class TabManager {
     } finally {
       entrada.localRefresh = false;
       entrada.scheduler.flush(true);
+      this.onHistorialCambio?.(docId);
     }
+  }
+
+  /** Recarga la pestaña tras deshacer o rehacer desde la barra (24a2): `registro` es la
+   * respuesta del servidor, con el mismo significado que en `restaurar`. */
+  recargarTrasRevision(docId, registro) {
+    return this._alRestaurar(docId, registro);
+  }
+
+  /** Tras crear o cambiar una marca: refresca Indicaciones si está a la vista. */
+  _refrescarIndicaciones(docId) {
+    const entry = this.tabs.get(docId);
+    if (!entry || this.activeId !== docId || this.panel.hidden || this.panelActivo !== "design") return;
+    refreshDesign(entry);
   }
 
   /** Callback del panel de parámetros tras un re-cálculo exitoso: nueva
@@ -446,12 +557,15 @@ export class TabManager {
       await entrada.scheduler.cancelAndWait();
       const malla = await obtenerMallaConRevision(docId);
       if (this.tabs.get(docId) !== entrada) return 0;
+      entrada.animation.pause();
+      entrada.animation.resetPose();
       entrada.viewer.cargarMallaSTL(malla.buffer, { conservarVista: true });
       this._setRevision(entrada, malla.revision);
       entrada.notas.invalidarCaras();
       const msMalla = performance.now() - inicio;
       entrada.ficha = registroActualizado;
       await Promise.all([entrada.notas.recargar(), entrada.historial.cargarInicial(), entrada.ramas.cargarInicial().catch(() => {}), entrada.h2.invalidar(), entrada.ensamble.cargarInicial(), this._cargarMateriales(entrada)]);
+      entrada.animation.setAssembly(entrada.ensamble.data, entrada.ensamble.revision, entrada.revision);
       if (docId === this.activeId) {
         this._actualizarStatusBar(entrada.ficha);
         if (!this.panel.hidden && this.panelActivo !== "parametros") this._renderizarPanelPestanaActiva();
@@ -467,8 +581,10 @@ export class TabManager {
   _mostrarComparacion(docId, resumen, mallaA, mallaB, opciones = {}) {
     const entry = this.tabs.get(docId);
     if (!entry) return;
+    entry.animation.setMode("cad");
     const dividida = opciones.modo === "dividida";
     const [etqA, etqB] = opciones.etiquetas ?? [resumen.a.sha_corto.slice(0, 7), resumen.b.sha_corto.slice(0, 7)];
+    entry.alSalirComparacion = opciones.alSalir ?? null;
     if (dividida) {
       entry.viewer.mostrarComparacionDividida(mallaA, mallaB, resumen.piezas);
       entry.divisor.querySelector(".fj-divisor__etq--a").textContent = `◀ ${etqA}`;
@@ -482,7 +598,7 @@ export class TabManager {
     entry.banda.textContent = "";
     entry.banda.classList.toggle("is-dividida", dividida);
     const titulo = document.createElement("strong");
-    titulo.textContent = `Comparar ${resumen.a.sha_corto.slice(0, 7)} → ${resumen.b.sha_corto.slice(0, 7)}`;
+    titulo.textContent = opciones.titulo ?? `Comparar ${resumen.a.sha_corto.slice(0, 7)} → ${resumen.b.sha_corto.slice(0, 7)}`;
     const modos = document.createElement("div");
     modos.className = "fj-comparar__modos";
     modos.setAttribute("role", "group");
@@ -498,7 +614,7 @@ export class TabManager {
     leyenda.className = "fj-comparar__leyenda";
     leyenda.textContent = dividida ? "Arrastra el divisor · verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual" : "verde: añadida · rojo: quitada · ámbar: cambiada · gris: igual";
     const lista = document.createElement("ul");
-    for (const linea of textoResumen(resumen)) {
+    for (const linea of opciones.lineas ?? textoResumen(resumen)) {
       const li = document.createElement("li"); li.textContent = linea; lista.appendChild(li);
     }
     const volver = document.createElement("button");
@@ -515,6 +631,9 @@ export class TabManager {
     entry.banda.hidden = true;
     entry.divisor.hidden = true;
     entry.ramas.comparando = null;
+    const alSalir = entry.alSalirComparacion;
+    entry.alSalirComparacion = null;
+    alSalir?.();
   }
 
   /** fdm-D: materiales por pieza (colores en el visor + panel Piezas).
@@ -545,11 +664,14 @@ export class TabManager {
     const entry = this.tabs.get(docId);
     if (!entry) return;
     this._salirComparacion(docId);
+    entry.animation.pause();
+    entry.animation.resetPose();
     entry.viewer.cargarMallaSTL(mesh.buffer, { conservarVista: true });
     entry.notas.invalidarCaras();
     entry.ficha = ficha;
     this._setRevision(entry, mesh.revision);
     await Promise.all([entry.notas.recargar(), entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar(), entry.ensamble.cargarInicial(), this._cargarMateriales(entry)]);
+    entry.animation.setAssembly(entry.ensamble.data, entry.ensamble.revision, entry.revision);
     if (!entry.parametros.ocupado()) await entry.parametros.cargarInicial();
     if (this.tabs.get(docId) !== entry) return;
     entry.btnParametros.hidden = !entry.parametros.tieneParametros();
@@ -559,13 +681,20 @@ export class TabManager {
     }
   }
 
+  /** Un script de `docId` se está construyendo: el panel Medidas muestra sus cifras en gris. */
+  medidasConstruyendo(docId) {
+    this.tabs.get(docId)?.medidas.marcarConstruyendo();
+  }
+
   aplicarCambioExterno(docId, cambios = [], revision = null) {
     const entry = this.tabs.get(docId);
     if (!entry) return;
+    entry.medidas.nuevaRevision(revision);
     if (cambios.includes("geometria") && (!revision || revision !== entry.revision)) {
       entry.scheduler.notify(revision);
     }
     for (const tag of cambios) if (tag !== "geometria") entry.pendingPanels.add(tag);
+    if (cambios.includes("historial") || cambios.includes("geometria")) this.onHistorialCambio?.(docId);
     void this._actualizarPaneles(docId);
   }
 
@@ -578,9 +707,12 @@ export class TabManager {
       entry.pendingPanels.delete(tag);
       if (tag === "notas") tasks.push(entry.notas.recargar());
       if (tag === "historial") tasks.push(entry.historial.cargarInicial(), entry.ramas.cargarInicial().catch(() => {}), entry.h2.invalidar());
-      if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial());
+      if (tag === "ensamble") tasks.push(entry.ensamble.cargarInicial().then(() => {
+        if (this.tabs.get(docId) === entry) entry.animation.setAssembly(entry.ensamble.data, entry.ensamble.revision, entry.revision);
+      }));
       if (tag === "ramas") tasks.push(entry.ramas.cargarInicial(), entry.h2.invalidar());
       if (tag === "parametros") tasks.push(entry.parametros.cargarInicial());
+      if (tag === "design" && this.activeId === docId && this.panelActivo === "design") renderDesign(entry, this.panelSeccionDesign);
       if (tag === "materiales") tasks.push(this._cargarMateriales(entry));
     }
     if (!tasks.length) return;
@@ -588,8 +720,7 @@ export class TabManager {
     await Promise.allSettled(tasks);
     entry.panelLoading = false;
     if (this.activeId === docId && !this.panel.hidden && this.tabs.get(docId) === entry &&
-        !(this.panelActivo === "parametros" && entry.parametros.ocupado()) &&
-        !(this.panelActivo === "notas" && entry.notas.ocupado())) this._renderizarPanelPestanaActiva();
+        !(this.panelActivo === "parametros" && entry.parametros.ocupado())) this._renderizarPanelPestanaActiva();
     if (entry.pendingPanels.size) void this._actualizarPaneles(docId);
   }
 
@@ -635,10 +766,13 @@ export class TabManager {
 
     entrada.notas.destruir();
     entrada.parametros.destruir();
+    entrada.animation.dispose();
     entrada.viewer.dispose();
     entrada.contenedor.remove();
     entrada.boton.remove();
+    disposeDesign(docId);
     this.tabs.delete(docId);
+    this.onEstadoCambio?.();
     if (hadFocus && this.activeId !== docId) this.tabs.get(this.activeId)?.boton.focus();
 
     if (this.activeId === docId) {

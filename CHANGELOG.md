@@ -7,6 +7,324 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-24
+
+### Added (galería ordenada, fase 3a: cuerpos de malla dentro de un documento)
+
+- Un STL importado dentro de un documento STEP queda como cuerpo de malla en `{id}.mallas/` (`manifest.json` con `schema: "mallas-v1"` y un STL binario por cuerpo). No entra en `solidos.json` ni en el registro público, el STEP no cambia y no aparece documento nuevo. Módulo nuevo `app/mallas.py`.
+- `abrir_archivo(ruta, documento_id, nombre_solido)` (MCP) y `POST /documentos/desde_ruta` aceptan `documento_id`: un STEP aporta sus sólidos con nombre y un STL un cuerpo de malla. `nombre_solido` sin `documento_id` responde 400. Nueva ruta `POST /documentos/{id}/incorporar_archivo` (exige token).
+- `POST /documentos/{id}/incorporar` con un STL de origen en un documento STEP añade el cuerpo de malla; antes respondía 400. STL en STL sigue fusionando regiones igual que antes.
+- Validación de la malla: vacía, con NaN/infinitos o con más de 500 000 triángulos → 400 sin escribir nada; malla abierta → se acepta con aviso (`estanca: false`, no sirve para booleanas). El tope de tamaño de archivo es `FORJA_MAX_UPLOAD_MB`.
+- La revisión, los snapshots, `restaurar`, el cambio de rama y la purga incluyen el almacen de mallas; la papelera lo conserva.
+
+### Fixed (galería ordenada, fase 2: caché del visor y ajustes de borradores)
+
+- `api.js` sube a `?v=16` en todos sus importadores y en `tests/web/library.test.mjs`: el cambio de `conservarDocumento` no llegaba a navegadores con `?v=15` cacheado. `library.js` a `?v=15`, `live.js` a `?v=16` en `app.js`; `app.js` a `?v=64` en `index.html`.
+- `FORJA_BORRADOR_HORAS` y `FORJA_BARRIDO_MIN` inválidos ya no rompen el listado: caen al valor por defecto y dejan un aviso en el log.
+
+### Added (galería ordenada, fase 2: borradores)
+
+- `ejecutar_script` sin `documento_id` crea un borrador: queda oculto en `GET /documentos` y se ve con `?borradores=true`. `permanente=true` evita el borrador. Caduca 24 h después de la última modificación (`FORJA_BORRADOR_HORAS`) y el barrido lo lleva a la papelera con motivo `borrador_expirado`; nunca se borra. Sin sidecar el documento es permanente, así que no hay migración. El barrido corre al arrancar, en cada listado y cada 15 min (`FORJA_BARRIDO_MIN`).
+- Herramienta MCP `conservar_documento` y `POST /documentos/{id}/conservar` (exige token): quita el borrador. `guardar_diseno` también promueve un borrador.
+- Reutilización por nombre: compara sin `.step`/`.stp` y sin distinguir mayúsculas, busca también entre borradores y, con dos o más coincidencias, actualiza la más nueva.
+- Visor: casilla «Mostrar borradores», insignia con las horas que faltan y botón «Conservar». La sincronización en vivo pide borradores para no cerrar pestañas abiertas.
+
+### Fixed (infra de tests)
+
+- La suite ya no corre contra el backend vivo: `scripts/test.sh` levanta el servicio `test` (perfil `test`, sin `documentos_data` ni secretos) con su backend de prueba. `tests/conftest.py` rechaza los tests en vivo fuera de ese runner.
+- La limpieza de `tests/test_mcp_tools.py` borra solo los documentos cuyo id devolvió una respuesta de creación del propio test (`docs_propios`), nunca lo que apareciera en el listado.
+### Added (ejemplos al abrir)
+
+- Galería de ejemplos: carpeta `ejemplos/` con seis scripts build123d paramétricos (caja con tapa a presión, soporte de teléfono, tornillo y tuerca, bisagra de pasador, par de engranajes rectos y mesa auxiliar con piezas nombradas) e `ejemplos/index.json` con título, descripción y técnicas. Sin miniaturas: el índice no tiene ninguna.
+- `GET /ejemplos` (público) lista el índice sin código. `POST /ejemplos/{id}/abrir` (token) ejecuta el script por la ruta de `POST /documentos/script` y crea un documento nuevo «Ejemplo — <título>». El id se valida contra el índice; nunca llega una ruta desde la petición. Módulo `app/galeria_ejemplos.py`.
+- Visor: sin documento abierto, la bienvenida muestra tarjetas de ejemplo; la biblioteca tiene el botón «Ejemplos» para el mismo listado. Módulo nuevo `app/web/static/js/ejemplos.js`; `library.js` `?v=15`, `index.html` `app.js?v=64` y `forja-base.css?v=29`.
+- `Dockerfile` copia `ejemplos/` a `/app/ejemplos/`; `docker-compose.yml` lo monta en solo lectura en el servicio `forja`.
+- Sin herramienta MCP nueva; las instrucciones del servidor MCP mencionan los ejemplos.
+
+### Added (galería ordenada, fase 1: papelera)
+
+- Papelera reversible: `POST /documentos/{id}/papelera` saca un documento de la galería sin borrar ningún archivo; `GET /papelera`, `POST /papelera/{id}/restaurar` y `DELETE /papelera/{id}` (borrado definitivo, solo de documentos ya en papelera). Todas exigen el token. Estado en `{id}.estado.json` (sin sidecar = documento normal, sin migración); módulos nuevos `app/papelera.py` y `app/papelera_routes.py`.
+- Arranque: no carga los documentos en papelera. `DELETE /documentos/{id}` sigue igual.
+- Herramientas MCP `borrar_documento(id)` y `papelera(accion="listar"|"restaurar", id=None)`; sin borrado definitivo por MCP.
+- Visor: «Mover a la papelera» reemplaza al «Eliminar» de la galería; vista «Papelera» con restaurar y eliminar para siempre. `api.js` sube a `?v=15` en todos sus importadores; `library.js` a `?v=15`, `app.js` a `?v=14`, `index.html` a `app.js?v=63`.
+
+### Fixed (dibujo de indicaciones)
+
+- «Dibujar indicación» admite varios trazos por indicación: cada trazo se añade y el modo sigue activo hasta «Terminar indicación» (Enter), «Deshacer trazo» (Ctrl+Z) o «Cancelar» (Esc, sin guardar nada). Lógica en `app/web/static/js/dibujo-indicacion.js` (nuevo); `notes.js` `?v=28`, `tabs.js` `?v=55`, `app.js` `?v=58`. El backend no cambia: la indicación ya admitía varias marcas.
+
+### Added (rasgos de modificación, fase 24d)
+
+- Rasgos de modificación como candidatos (ADR 0029): filete, chaflán, vaciado, desfase de cara, matriz lineal o circular, simetría, dividir por plano y reparación de malla. Son `kind` nuevas de `Operation` (`fillet`, `chamfer`, `shell`, `push_pull`, `pattern`, `mirror`, `split`, `mesh_repair`); no hay herramienta MCP nueva.
+- `GET /documentos/{id}/design/referencias?pieza=&tipo=arista|cara`: aristas o caras de una pieza B-rep con su huella, solo lectura y acotado a 400 elementos.
+- Referencias por huella geométrica (`naming.py`), resueltas contra la geometría actual. Una huella que ya no existe o es ambigua es 422 y no crea candidato.
+- Validación estricta del contrato: `Huella` nueva, `extra=forbid`, números finitos y topes (64 referencias, 32 copias, ángulo ≤ 360, ±1 000 mm).
+- Módulo `app/design_features.py` (lógica) y envoltorios en `app/kernel/b123d_kernel.py`.
+- Visor web: la cinta (Sólido) gana Filete, Chaflán, Vaciar, Desfasar cara, Dividir por plano, Reparar malla, Simetría y Matriz. Cada una abre un formulario en `app/web/static/js/features.js` que crea un candidato revisable en «Indicaciones».
+- Iconos nuevos en el sprite: chamfer, draft, heal, pattern, pushpull, repair, shell.
+
+### Changed (rasgos de modificación, 24d)
+
+- `design_operations.edit_shape` y `edit_mesh` delegan los `kind` de rasgo en `design_features`.
+- `api.js` sube a `?v=14` en todos sus importadores; `toolbar-actions.js` a `?v=9`; `toolbar-ui.js` a `?v=10`; el sprite a `?v=3`; `forja-toolbar.css` a `?v=6`.
+
+### Pending (24d)
+
+- No construidos (siguen «Próximamente · 24d»): combinar / separar cuerpos, malla a sólido, ángulo de desmoldeo, borrar cara y sanar.
+- Reparación de malla sin relleno de huecos: `trimesh.repair.fill_holes` necesita `networkx`, que no está en la imagen.
+- Selección de aristas por lista, no por clic en el visor.
+
+### Added (captura enfocada y primer choque, F20)
+
+- Captura enfocada (ADR 0028): `captura(id, foco=[x,y,z], radio=mm)` (MCP) y `GET /documentos/{id}/captura?foco=x,y,z&radio=` encuadran un cuadrado de lado `2 × radio` centrado en el punto, recortando la misma proyección de la cámara. `foco` y `radio` van juntos; radio entre 0,5 mm y 5 veces la diagonal de lo dibujado; coordenadas finitas y acotadas (|v| ≤ 1 000 000 mm). Un foco que no ve ninguna pieza da el encuadre general con la nota «foco fuera de la geometria» (nunca una imagen vacía).
+- Captura del primer choque: vista elegida para que se vean las dos piezas (si no hay ninguna, la 45/25 con aviso de pieza tapada). `ensamble(id, barrido=..., captura_en_choque=True)` añade UNA imagen de la pose del primer choque confirmado, solo el par, encuadrada en su punto de contacto. La respuesta trae `imagenes` (0 o 1), `par`, `articulacion`, `valor`, `tipo`; sin choque, `imagenes: 0` y `motivo`. La imagen viene por `GET /documentos/{id}/ensamble/captura-choque`, de solo lectura, con `Cache-Control: no-store`.
+- Funciones nuevas en `app/render.py`: `parsear_foco`, `validar_foco`, `validar_radio`, `radio_por_defecto`, `grupos_desde_formas` (teselado de formas posadas, colores sobre el orden completo).
+- Sin `foco`, `captura` y el render son byte a byte los de antes (regresión por hash en `tests/test_captura_foco.py`). No se añade herramienta MCP.
+
+### Changed (captura enfocada, F20)
+
+- `render.renderizar_png` acepta `foco` y `radio`. El cálculo de la ventana general es el mismo; la extracción de `_rasterizar_en` no cambia ninguna operación del camino por defecto.
+- `render.grupos_desde_shape` usa el tope de triángulos compartido `_teselar_con_tope` (mismo reintento y mismo error).
+- Pendiente: la acción «Captura enfocada» de la cinta sigue `proximamente` (fase F20). Activarla requiere elegir un punto en el visor, que no está en el alcance de esta fase.
+
+### Fixed (escala de cuerpos curvos, revisión de 24b)
+
+- Un cilindro escalado en no uniforme dejaba caras BSPLINE y su `.volume` de OCC salía ~0,86 % alto. El volumen que reporta el diseño sigue siendo el B-rep (registro, vista previa, ramas y `solids.json`, igual que antes): así no aparece un cambio de volumen falso al recargar o cambiar de rama. La comprobación de «Escalar eje» en cotas usa ahora `kernel/b123d_kernel.volumen_preciso` (integración adaptativa de OCC, `BRepGProp`, sin teselar) con `eps` = 1e-3, aprobado: error ~0,004 % del valor analítico en el cilindro y ~0,4 s en un loft de 240 secciones. Sustituye a `kernel/mesh.volumen_malla`, que se elimina. Antes, la cota rechazaba ediciones correctas de cilindros.
+- Pruebas: `test_escala_no_uniforme_de_cilindro_volumen_preciso` (`tests/test_design_ops_transform.py`); `test_escalar_eje_acepta_cilindro_y_verifica_volumen_preciso`, `test_escalar_eje_loft_pesado_termina_muy_por_debajo_del_presupuesto`, `test_escalar_eje_mide_una_vez_por_cuerpo` y `test_escalar_eje_cobra_la_medida_al_presupuesto` (`tests/test_cotas_importadas.py`); y `test_apply_conserva_el_volumen_brep_y_sobrevive_a_la_recarga` y `test_comparar_tras_apply_no_marca_cambio_de_volumen` (`tests/test_design_workspace.py`).
+
+### Added (barra de herramientas, fase 24b)
+
+- Sólido > Transformar: **Mover / Rotar**, **Escalar** (por eje, en torno al centro de la pieza), **Alinear** (centros, caras mínimas o máximas por eje, o apilar sobre otra pieza) y **Apoyar sobre cama** (la cara elegida mira a la cama y la base queda en Z = 0). Cada una abre «Preparar una alternativa manual» en Indicaciones ya ajustada; el resultado es un candidato que se compara antes de aplicar.
+- Sólido > Crear: **Caja**, **Cilindro**, **Esfera**, **Cono**, **Toro**, **Cuña** y **Tubo**, como apoyo (unión) a la pieza seleccionada.
+- Sólido > Booleanas: **Unir**, **Restar** e **Intersectar** con una primitiva o con **otra pieza del documento**. La otra pieza no cambia; el candidato lo indica.
+- Claude > **Pedir cambio con lo seleccionado**: abre Indicaciones con la pieza seleccionada como referencia.
+- Backend (ADR-0026): `scale`, `align` y `drop_to_bed` en el pipeline de candidatos; `other`, `factor`, `mode`, `axes` y `normal`; primitivas `sphere`, `cone`, `torus`, `wedge` y `tube`. Validación estricta: `extra=forbid`, números finitos, factor 0.01–100, dimensiones ≤ 2000 mm, pieza auxiliar existente y distinta. `GET /design/capabilities` lista `primitives`. Sin herramienta MCP nueva.
+- Kernel: `escalar` (BRepBuilderAPI_GTransform) y `forma_primitiva` en `app/kernel/b123d_kernel.py`. `Shape.scale` de build123d se descartó: su escala se pierde al exportar a STEP.
+- Iconos propios para las acciones nuevas en `forja-icons.svg` (8 símbolos).
+
+### Changed (barra de herramientas, fase 24b)
+
+- Registro: 105 acciones (71 listas, 34 «Próximamente»; antes 97 con 56 y 41). Hoja de atajos (`?`): 23 filas, sin cambios (24b no añade atajos).
+- Pruebas: `tests/test_design_ops_transform.py` (47); suite Python completa: 901 pasan, 53 omitidas y 1 fallo ambiental conocido (`test_ruta_dentro_de_fuentes_permitida`); `node --test tests/web/*.test.mjs`: 152 de 152 (incluye `tests/web/transformar.test.mjs`, 13).
+
+### Added (vista explosionada, F19)
+
+- Vista explosionada de solo visualización (ADR-0027): `captura(id, ..., explosion=0..1)` en MCP y `GET /documentos/{id}/captura?explosion=` separan las piezas con nombre para ver las ocultas. Documentos STEP; `explosion=0` (por defecto) es byte a byte igual que antes (mismo PNG y mismo `X-Forja-Captura`).
+- Visor: botón «Explosionar» con deslizador «Separación» (0 a 100 %) en la barra de vista 3D. La acción «Vista explosionada» de la cinta (grupo Vista) delega en él y pasa a `listo`, con habilitación «documento B-rep».
+- Dirección: una pieza hija de `giro` o `deslizamiento` se aleja de su padre a lo largo del eje; las demás, del centro del conjunto (una pieza en el centro va a +Z). Distancia: separación de meta por suma de semiextensiones, con tope de medio diagonal × factor. La separación es de display, no una garantía de no interpenetración.
+- Funciones puras `app/explosion.py` y `app/web/static/js/explosion.js` con la misma tabla de paridad (`tests/fixtures/explosion_offsets.json`).
+- La explosión no persiste ni llama a la API. Con la animación en marcha la pose de la animación manda; el botón solo se activa en modo «cad».
+- Validación: factor finito entre 0 y 1 (400 en español), STL con `explosion > 0` → 400, máximo 500 piezas, cajas finitas y no invertidas.
+
+### Changed (vista explosionada, F19)
+
+- `render.renderizar_png` acepta `desplazamientos` (copias trasladadas; las mallas cacheadas no cambian).
+- Cambios de caché: `explosion.js?v=1` (en `viewer.js`), `viewer.js?v=design1-22` (en `tabs.js`), `tabs.js?v=52` (en `app.js`), `toolbar-actions.js?v=8` (en `toolbar-ui.js`), `toolbar-ui.js?v=9` (en `app.js`), `app.js?v=55` (en `index.html`).
+- No se añade herramienta MCP: el conjunto de herramientas sigue igual.
+
+### Added (cotas vivas importadas, F23b)
+
+- Un STEP o una malla STL importados editan sus cotas reconocidas (ADR 0025). Cada cota del listado trae `operacion`: `rellenar_y_taladrar` (un grupo de agujeros: rellena el diámetro viejo y retaladra el nuevo, mismo eje y profundidad; `afectadas: n`), `mover_cara` (dos caras planas paralelas: estira o comprime por biseccion hasta ±0,01 mm) o `escalar_eje` (medida total: escala ese eje solo; también en mallas). Lo que no es una característica reconocida sale `solo_lectura` con `razon`.
+- El listado añade un tipo `distancia` (descriptor `distancia:{eje}:{valor}:{lo}`) por cada par de caras paralelas reconocido. El plano no lo dibuja.
+- Cada edición se verifica en memoria antes de escribir: válido, mismo número de sólidos, volumen según el análisis (±1 %), bbox solo en el eje editado y la medida vuelta a medir (±0,01 mm). Un fallo es 422 `{error, mensaje}` (y `razon` para «el agujero rompe la pared») y no se escribe nada. Un acierto crea una revisión nueva (snapshot del estado anterior, `restaurar` lo devuelve).
+- Límites: 5 000 caras B-rep, 1 000 000 de triángulos en malla, 40 agujeros por edición, valor entre 0,1× y 10× la medida actual, y un presupuesto de 200 operaciones / 30 s (`Presupuesto` de `checks/barrido.py`).
+- Visor: una etiqueta por cota editable sobre el modelo; pulsarla enfoca su campo numérico en el panel «Parámetros». El panel muestra qué hará cada edición.
+- Los nombres de sólidos y las notas con referencia sobreviven a la edición (`_reresolver_notas` se extrae de la ruta de script).
+
+### Changed (cotas vivas importadas, F23b)
+
+- Supera la regla de F23a «documento importado = solo lectura»: sus dos tests (`test_documento_sin_script_es_todo_solo_lectura`, `test_stl_es_malla_solo_lectura`) pasan a fijar el nuevo comportamiento.
+- Cambios de caché: `cotas.js?v=3` (en `parametros.js`), `parametros.js?v=15` y `historial.js?v=3`/`ensamble.js?v=3` (en `tabs.js`), `tabs.js?v=50` (en `app.js`), `app.js?v=53` (en `index.html`). `historial.js` y `ensamble.js` importan `api.js?v=13` (antes sin `?v`).
+- `planos._agujeros` usa el reconocimiento de agujeros del núcleo (`kernel/b123d_kernel.global_axis_holes`), compartido con F23b. Salida de F22 sin cambios.
+
+### Fixed (cotas vivas importadas, revisión de F23b)
+
+- Si el renombrado de los archivos falla después del snapshot, la rama vuelve a su punta anterior (`git_store.deshacer_commit`): el historial queda igual que los archivos (ADR-0025).
+- Las etiquetas de distancia X, Y y Z de una placa centrada ya no se apilan: la que cae sobre un ancla ocupada se desplaza 8 mm a lo largo de su eje (`etiquetasFlotantes` en `cotas.js`).
+- Cambio de caché: `cotas.js?v=4` (en `parametros.js`).
+
+### Added (medidas vivas, fase 21)
+
+- Panel **Medidas** en el visor (Inspeccionar > Medir, atajo M): los pares de sólidos con nombre más cercanos, con estado `choque` / `contacto` / `holgura`, distancia en mm (3 decimales) y volumen de choque. Se actualiza al cambiar la revisión (agente, parámetros), muestra «Construyendo…» en gris mientras se reconstruye y el valor de cada parámetro en solo lectura.
+- `GET /documentos/{id}/medidas?top=20` (token-free, como `/percibir`): `{revision, solidos, pares, total_pares, ocultos, completo, calculos, tope_calculos, choques, errores, nombres_inciertos, parametros}`. `top` admite de 1 a 100. Documentos STL: 400.
+- Mismas cifras que `percibir` y `check_colisiones`: el pase de pares de `app/percepcion.py` se parte en `_pares_cercanos_con_tope` (con tope opcional de cálculos exactos); la salida de `percibir` no cambia.
+- Límites: 500 cálculos exactos por medición (`completo: false` si se agotan) y una sola entrada de caché por documento, por revisión. Una respuesta de una revisión anterior se descarta en el cliente; una edición durante el cálculo responde 409.
+- `app/medidas.py`, `app/web/static/js/medidas.js`, `tests/test_medidas.py` (12 funciones, 14 casos con la parametrización) y `tests/web/medidas.test.mjs` (8).
+- Decisión numerada como ADR-0024.
+- Sin herramienta MCP nueva: el conjunto de herramientas queda igual.
+
+### Changed (medidas vivas, fase 21)
+
+- Inspeccionar > Medir pasa de «Próximamente · F21» a habilitado (requiere documento).
+- Cambios de caché: `toolbar-actions.js?v=5` (importado solo por `toolbar-ui.js`), `tabs.js?v=48` y `live.js?v=12` (en `app.js`), `app.js?v=50` y `forja-base.css?v=28` (en `index.html`). `medidas.js?v=1` lo importa solo `tabs.js`.
+- `tests/web/toolbar.test.mjs`: la prueba de Medir pasa a comprobar que está habilitado con documento y deshabilitado sin él.
+- Fusión con F23a y F23b (cotas vivas importadas): las versiones de caché finales son `app.js?v=54` (en `index.html`), `tabs.js?v=51`, `toolbar-ui.js?v=8` y `live.js?v=13` (en `app.js`), `toolbar-actions.js?v=7` (en `toolbar-ui.js`), `viewer.js?v=design1-21` (en `tabs.js`), `parametros.js?v=15`, `historial.js?v=3` y `ensamble.js?v=3` (en `tabs.js`), `cotas.js?v=4` (en `parametros.js`), `ramas.js?v=4`, `api.js?v=13` y `forja-base.css?v=28`. `live.js`, `toolbar-ui.js` y `viewer.js` cambian de contenido sin subir versión en su rama de origen; se suben aquí. `?panel=medidas` queda en la lista de paneles de `app.js`. Las cifras de versión de las secciones F21, F23a y F23b son el estado de cada rama antes de fusionar.
+
+### Added (cotas vivas, F23a)
+
+- Cada cota del plano que sale de un `PARAMETROS` de un script es editable: `GET /documentos/{id}/cotas` lista `{revision, cotas}` con `operacion: "parametro"` (y `min`/`max`) o `solo_lectura` con `razon`; `POST /documentos/{id}/cotas/aplicar` con `{revision, cotas: {id_cota: valor}}` la aplica por el camino de `parametros` (una revisión nueva, restaurable con `restaurar`). Decisión en `docs/decisions/0023-cotas-vivas.md`.
+- MCP: `parametros(id, cotas={id: valor}, revision=None)` (sin herramienta nueva; excluyente con `valores`). `exportar(id, "svg", detalle=true)` añade `revision` y `operacion`/`solo_lectura`/`razon` a cada cota.
+- Visor: «Cotas del plano» dentro del panel «Parámetros»; un 409 recarga el listado. La acción «Cotas» de la barra abre ese panel y lleva el foco a la sección (sin PARAMETROS, lo dice en la franja de estado). Clic sobre la cota en el plano o en el overlay 3D: pendiente para una sub-fase posterior.
+- Los documentos importados y las mallas no son editables todavía (F23b).
+
+### Changed (cotas vivas, F23a revisión 1)
+
+- **Verificar antes de escribir.** La edición se ejecuta en staging y la geometría resultante se mide antes de cualquier escritura. Si una cota editada no vuelve a su valor (±0,01 mm), la respuesta es 422 `{error: true, mensaje}` en español y nada se guarda: sin revisión nueva, sin snapshot, sidecars, repositorio git ni cursor de deshacer cambiados. Sustituye al «sin revertir» de la primera versión.
+- `no_sigue_al_parametro` ya no aparece en una respuesta 200; `editadas` añade `pedido_mm`.
+- Fallo del script en el camino de cotas: igual que `parametros` (422 y snapshot preventivo, ADR 0003). Solo el rechazo por no seguir no deja rastro.
+- Vínculo por valor: una cota ligada a una clave que el script nunca lee (`PARAMS["clave"]`) sale de solo lectura con `razon: "ligada por valor: ..."`. Comprobación estática, sin ejecutar el script (ver límites en la decisión).
+- Caché del listado por (documento, revisión, entradas): un render del panel no vuelve a proyectar; máximo 32 entradas.
+- El cliente MCP muestra el `mensaje` de los 422 `{error, mensaje}` en lugar del JSON crudo.
+- Cambios de caché: `api.js?v=13` en todos sus importadores (antes convivían v=11, v=12 y v=13: dos instancias con el estado del token); `toolbar-actions.js?v=6`, `toolbar-ui.js?v=7`, `app.js?v=52` (en `index.html`), `tabs.js?v=49`, `parametros.js?v=14`, `cupon.js?v=4`, `cotas.js?v=2`, `notes.js?v=24`, `design.js?v=9`, `historial2.js?v=5`, `ramas.js?v=4`, `library.js?v=12`, `live.js?v=12`, `perfil.js?v=2`, `materiales.js?v=2`, `pieces.js?v=10`.
+- Pruebas: `tests/test_cotas_parametros.py` (no sigue: sin revisión, sidecars y repositorio idénticos; fallo de script con snapshot preventivo; caché; vínculo por valor; MCP con mensaje), `tests/web/toolbar.test.mjs` (acción «Cotas»).
+
+### Refactored
+
+- `aplicar_parametros` y `_cargar_fuente_plano` se parten en un envoltorio con lock y un cuerpo `_..._bloqueado` que el ramal de cotas reutiliza bajo el mismo lock. Comportamiento de `parametros` sin cambios.
+
+### Added (deshacer y rehacer, fase 24a2)
+
+- **Deshacer** (Ctrl+Z) y **Rehacer** (Ctrl+Shift+Z o Ctrl+Y) en Inspeccionar > Historia, con cursor en el servidor (ADR-0022). Cada paso crea una revisión nueva: el historial no se borra. Deshacer repetido retrocede más allá de lo ya revertido; una edición o una restauración invalida el rehacer.
+- `GET /documentos/{id}/deshacer` → `{puede_deshacer, puede_rehacer, cabeza, destino_deshacer, destino_rehacer}`, calculado solo desde el historial git (`app/deshacer.py`). `POST .../deshacer` y `POST .../rehacer` piden `{esperado: <cabeza>}`; un historial que cambió responde 409 con un mensaje en español. Mismas cerradura y auth que `restaurar`.
+- Los commits de deshacer, rehacer y restaurar llevan los trailers `Forja-Accion` y `Forja-Destino`. Los commits anteriores cuentan como edición.
+- Sin herramienta MCP nueva: el conjunto de herramientas queda igual.
+
+### Changed (deshacer y rehacer, fase 24a2)
+
+- Los botones Deshacer y Rehacer están habilitados según el cursor del servidor; su motivo deshabilitado sale de ahí. La hoja de atajos (?) los lista sola desde el registro.
+- `orca.js` se importa con una sola URL (`?v=4`) en toda la barra y en `tabs.js` y `cupon.js`: antes eran tres módulos distintos.
+- Cambios de caché: `api.js?v=12` (todos sus importadores), `toolbar-actions.js?v=4`, `toolbar.js?v=5`, `toolbar-ui.js?v=5` (en `app.js`), `tabs.js?v=47`, `cupon.js?v=3`, `app.js?v=49`.
+- Pruebas: `tests/test_deshacer.py` (17) y `tests/web/toolbar*.test.mjs` actualizados al comportamiento nuevo (deshacer y rehacer ya no son «Próximamente»).
+- Decisión numerada como ADR-0022. Si F23a la toma también al fusionar, renumerar.
+
+### Added (barra de herramientas, fase 24a)
+
+- Cinta de herramientas bajo las pestañas de documento: Vista, Croquis, Sólido, Ensamble, Inspeccionar, Planos e Imprimir, más un bloque **Claude** fijo a la derecha. Todas las acciones salen de un único registro (`app/web/static/js/toolbar-actions.js`); añadir una acción es añadir una entrada.
+- Las acciones de fases futuras aparecen deshabilitadas con «Próximamente · {fase}». Las que dependen del contexto explican el motivo (sin documento, sin pieza seleccionada, documento de malla en lugar de sólido B-rep).
+- Vistas estándar (1 a 6 y 0), proyección ortográfica o perspectiva, alambre, aristas vivas, rayos X, rejilla, ejes, plano de corte, aislar, mostrar u ocultar piezas, captura PNG, pantalla completa, mirar de frente a una cara, descarga 3MF y STL, abrir en OrcaSlicer y acceso a los paneles existentes (Indicaciones, Piezas, Historial, Ramas, Parámetros, Ensamble, Galería, Perfil y Cupón).
+- Paleta de comandos con Ctrl+K (búsqueda en español, sin tildes) y hoja de atajos con «?». Los atajos no actúan mientras se escribe en un campo ni con un diálogo abierto; las letras y dígitos sueltos solo actúan con el foco en el visor o en la cinta.
+- Deshacer y rehacer aparecen en Inspeccionar > Historia como «Próximamente · 24a2»: diferidos a la fase 24a2 (cursor de deshacer en el servidor). Ver «Changed (cierre de la barra, fase 24a)».
+- Ninguna acción de la barra cambia la geometría por sí sola: los cambios siguen el flujo existente de indicaciones y candidatos. No se añadieron herramientas MCP.
+- Límites conocidos: «Pasos de Claude» abre el Historial sin filtro por autor.
+
+### Fixed (barra de herramientas, revisión 1 de fase 24a)
+
+- Ortográfica: encuadrar, las vistas estándar, enfocar una pieza y recargar la malla ya no producen posiciones NaN; el encuadre se calcula según el tipo de cámara (`app/web/static/js/viewer-geometria.js`).
+- Ortográfica: redimensionar el visor conserva el zoom de la rueda; solo Ajustar y las vistas estándar lo reinician.
+- Ctrl+K no abre la paleta mientras se escribe en campos, zonas editables o con un diálogo abierto: las guardas se evalúan antes que el atajo.
+- Seleccionar y Cancelar salen del modo de nota y de pizarra, quitan sus indicadores y la selección, y desarman el picking de cara.
+- Las alternancias (ortográfica, alambre, aristas, rayos X, rejilla, ejes) actualizan `aria-pressed` y el estado activo al cambiar, sin perder el foco; los botones Cuadrícula y Malla de la barra del visor se sincronizan con el mismo estado.
+- El picking de cara se desarma al cambiar de pestaña o cerrar el documento; ya no queda escuchando sobre un visor ajeno.
+- Mallas, piezas y aristas se liberan con un único helper: al recargar, al quitar piezas o al cerrar el visor no quedan geometrías ni materiales de las aristas en memoria.
+- Deshacer (Ctrl+Z) vuelve a la revisión anterior y Rehacer (Ctrl+Shift+Z o Ctrl+Y) a la que dejó deshacer, usando la restauración del historial: cada paso crea una revisión nueva y el historial no se borra. Una edición nueva invalida el rehacer.
+- La pila de deshacer se reconstruye desde el historial del servidor: una restauración de documento cuenta como rebobinado a esa revisión y una de pieza como edición. «Rehacer» tiene su glifo propio en el sprite.
+- Cambios de caché: `forja-toolbar.css?v=2`, `app.js?v=45`, `toolbar-ui.js?v=2`, `tabs.js?v=44`, `viewer.js?v=design1-19`, `notes.js?v=23`, `viewer-geometria.js?v=1`, sprite `forja-icons.svg?v=2`.
+- «Vistas estándar» ya no queda cortado en pantallas de 1280 px: los grupos de la cinta se envuelven en lugar de desplazarse.
+- Pruebas: `tests/web/viewer-geometria.test.mjs` (9), `tests/web/toolbar-ui.test.mjs` (12), `tests/web/toolbar.test.mjs` (18).
+
+### Fixed (barra de herramientas, revisión 2 de fase 24a)
+
+- Ortográfica: el medio alto del encuadre es radio × margen / min(aspecto, 1), así que la esfera cabe también en vertical en visores más estrechos que cuadrados (`app/web/static/js/viewer-geometria.js`).
+- Ortográfica: redimensionar conserva la altura del último encuadre y el zoom; encuadrar y redimensionar al mismo tamaño dan el mismo marco (antes la altura salía de la distancia de la cámara).
+- Cinta de una sola fila: los grupos de la pestaña activa ya no envuelven en tres filas. Los que no caben pasan a un menú «Más», accesible con teclado (Flecha abajo abre, flechas recorren, Escape cierra y devuelve el foco). La cinta mide 95 px a 1280 y 900 px de ancho (antes ~410 px).
+- La cinta reparte los grupos con `repartirGrupos` (`app/web/static/js/toolbar.js`): nunca salta un grupo para meter uno más pequeño.
+- La línea Claude queda en la misma fila de pestañas también en pantallas de 1100 px o menos; sus botones muestran el icono junto al texto.
+- Pendiente: deshacer y rehacer siguen como en la revisión 1. Su rediseño depende de un cambio en el servidor (las restauraciones de deshacer no se distinguen de las demás en el historial).
+- Cambios de caché: `forja-toolbar.css?v=5`, `app.js?v=46`, `tabs.js?v=45`, `toolbar-ui.js?v=3`, `toolbar.js?v=3`, `viewer.js?v=design1-20`, `viewer-geometria.js?v=2`.
+- Pruebas: `tests/web/viewer-geometria.test.mjs` (12), `tests/web/toolbar-ui.test.mjs` (13), `tests/web/toolbar.test.mjs` (20).
+
+### Changed (cierre de la barra, fase 24a)
+
+- Deshacer y rehacer quedan **«Próximamente · 24a2»**: visibles y deshabilitados, sin atajo y sin ejecutar desde la paleta ni el clic. Se retiran Ctrl+Z, Ctrl+Shift+Z y Ctrl+Y, la pila de deshacer del cliente (`toolbar.js`, `toolbar-ui.js`) y sus pruebas. Lo de la revisión 1 sobre deshacer y rehacer ya no está activo. Motivo: restaurar un paso del historial no se distingue en el servidor de una restauración normal, así que deshacer no puede ser fiable hasta un cursor de deshacer en el servidor (fase 24a2).
+- Registro: 97 acciones (52 listas, 45 próximas). Hoja de atajos (`?`): 23 filas (antes 26).
+- Cambios de caché: `toolbar-actions.js?v=3`, `toolbar.js?v=4`, `toolbar-ui.js?v=4`, `app.js?v=47`.
+- Pruebas: `tests/web/toolbar.test.mjs` (15), `tests/web/toolbar-ui.test.mjs` (7); suite `tests/web/` completa: 115 aprobadas, 0 fallos.
+
+### Added (planos técnicos, F22)
+
+- `exportar` acepta `formato` `svg`, `pdf` o `dxf` y escribe **una hoja** bajo `exportados`: vistas frontal, superior, derecha e isométrica; líneas visibles y ocultas (capas `VISIBLES`, `OCULTAS` discontinuas, `COTAS`, `TEXTO`); cajetín con documento, piezas, revisión, fecha, escala, papel, unidad y proyección. Sin herramienta MCP nueva. Decisión en `docs/decisions/0021-planos-tecnicos.md`.
+- Cotas automáticas: tamaño total por eje, diámetro y posición de agujeros cuyo eje es paralelo a un eje global (los demás se cuentan en `omitidas`). Una cota se liga a `PARAMETROS` cuando su valor coincide con una única clave; `parametros_ligados` lo resume.
+- Parámetros nuevos de `exportar`, solo para planos: `vistas` (`frontal,superior,derecha,isometrica`), `escala` (`1:1`, `1:2`, `1:5`, `1:10`, `2:1`, `5:1`; por defecto la mayor que cabe), `papel` (`A4` o `A3`), `proyeccion` (`tercer_angulo` por defecto o `primer_angulo`) y `detalle` (lista las cotas con su `id` estable).
+- Las mallas STL también dan plano: contornos de silueta y de rasgo con cotas de bbox, avisado en la respuesta y en el cajetín. Sin líneas ocultas ni agujeros.
+- Visor: anclas «Plano» (PDF), «Plano SVG» y «Plano DXF» junto a las descargas; se construyen en memoria, sin escribir en disco.
+- Tope de 200 000 aristas y presupuesto de 20 s: sobre el tope la isométrica se entrega sin líneas ocultas y con `completo: false`.
+
+### Added (barrido continuo de articulaciones)
+
+- `ensamble(id, barrido="todas"|[ids], detalle=False)` y `POST /documentos/{id}/ensamble/barrido` recorren cada articulación sobre su `limites` con avance continuo conservador, no muestreado. Devuelven el primer contacto en grados o mm, el par de sólidos, el volumen máximo de penetración, la holgura mínima vista y `garantia: "continua"|"muestreada"`. Es solo lectura: no escribe STEP, historial ni revisión. Decisión y límites en `docs/decisions/0020-barrido-continuo.md`.
+- Un barrido que se agota (presupuesto compartido de 2000 evaluaciones o plazo de 25 s) o un error de OCC responde `ok: false`, `completo: false`, `garantia: "muestreada"` con `agotado` cuando aplica; nunca pasa en silencio.
+
+### Fixed (revisión de planos técnicos, F22)
+
+- Una pieza B-rep lejos del origen sale bien alineada: OCC devuelve la proyección relativa a `look_at`, y ahora se lleva al marco absoluto de cada vista. Las cotas y la marca de agujero caen sobre el contorno y sobre el agujero real (regresión con una pieza escalonada y un Ø6).
+- Un empalme cóncavo (R4) ya no es un agujero: solo cuentan cilindros cerrados de una vuelta completa, aunque OCC los parta en varias caras.
+- Las cotas de posición y de diámetro de los agujeros se dibujan (diámetro con `n x Ø` por grupo). El cajetín «Cotas: N» cuenta solo las cotas dibujadas, así coincide con la hoja y con el descriptor.
+- La descarga de planos libera el bloqueo del documento antes de proyectar. Las mallas de más de 100 000 triángulos se rechazan con un 400 claro. Las descargas de plano responden con `X-Content-Type-Options: nosniff` y `Content-Security-Policy` restrictiva.
+- Pruebas de regresión: pieza fuera del origen en las cuatro vistas, agujero real, empalme R4, cajetín frente a cotas dibujadas, tope de malla, bloqueo, cabeceras y nombre hostil en la descarga.
+
+### Fixed (revisión 1 del barrido continuo)
+
+- Un par que empieza en contacto (pasador, pieza apoyada) ya no deja la garantía en `"continua"`: se muestrea por volumen en pasos de hasta 0,2 mm de desplazamiento, así que una aleta de 0,2 mm a 41,25° se detecta, y la garantía queda en `"muestreada"`.
+- La banda de proximidad ya no cuenta como contacto. Una holgura constante de 0,055 mm paralela a una pared no da choque; un cierre lento se confirma con el hueco real (≤ 0,05 mm) y queda acotado a la tolerancia de la articulación.
+- Un presupuesto único por petición (evaluaciones y consultas OCC, con inicialización, bisección y comprobación de volumen) y un plazo de tiempo. El agotamiento da `muestreada`, `ok: false` y `agotado`/`agotado_en`. Las formas en reposo se cargan bajo el bloqueo del documento y el barrido corre fuera de él, porque esas formas no cambian una vez leídas.
+- `barrido="todas"` omite las articulaciones `fijo` (quedan en `omitidas`); un ensamble solo con fijas responde `ok` con explicación. Nombrar una fija sigue dando 422.
+- La frase de la respuesta mantiene los límites de cobertura cuando todo está limpio y distingue un choque confirmado de un resultado no concluyente.
+- `desde` y `hasta` admiten como máximo 60 claves. El error de OCC llega al cliente como mensaje genérico; el detalle queda en el registro del servidor.
+- Motor puro `app/checks/barrido.py`, reutilizando `pose_clearance` (cotas de caja y `moving_names`), `colisiones` (tolerancias) y `distancia.volumen_interseccion`. No hay herramienta MCP nueva.
+
+### Changed (indicaciones unificadas)
+
+- La pestaña Diseño pasa a ser **Indicaciones**: la única lista donde se explica lo que se quiere cambiar. Las notas y trazos del visor son las marcas de una indicación; se enlazan por id y no se copian ni migran. Las notas antiguas sin indicación aparecen como marcas sueltas con «Convertir en indicación». `notas.json` y `design.json` antiguos cargan sin cambios. Decisión en `docs/decisions/0019-unified-intents.md`.
+- Una indicación muestra un estado derivado en el servidor: pendiente, entendida, con pregunta, propuesta disponible, cambio aplicado, revertida, resuelta o descartada. Solo el usuario la marca como resuelta; ninguna operación lo hace.
+- Las propuestas quedan vinculadas a su indicación con un resumen humano. Una respuesta del usuario no invalida una propuesta preparada; sí lo hacen los cambios de geometría, roles, requisitos u objetivo. Aplicar guarda un snapshot previo y permite «Volver atrás».
+- Forja no envía mensajes a ninguna IA; el panel lo indica. Responder, adjuntar marcas o fotos y resolver no piden clave; preparar, aplicar, restaurar y cambiar geometría o piezas protegidas siguen pidiéndola.
+
+### Added (indicaciones por MCP)
+
+- Herramienta `responder_indicacion` para registrar la interpretación, una pregunta o un mensaje del agente en una indicación. Requiere clave; no cambia la geometría.
+- `preparar_candidato` acepta `indicacion` y `resumen` (máximo 500). `contexto_diseno` devuelve `intents_view`, `marks_detail`, `missing_marks`, `stale` y `loose_marks`.
+
+### Fixed (selección en Diseño)
+
+- La captura sobre un STL sin grupos resuelve la etiqueta visual «Malla completa» al nombre real de la única pieza. El selector no queda vacío y las regiones se guardan con una pieza válida. En documentos con varias piezas no se adivina una correspondencia desconocida. Verificación real del frontend documentada en `docs/FRONTEND-VERIFICATION.md`.
+
+### Added (piezas nombradas en mallas)
+
+- Incorporar documentos en un STL conserva cada pieza con su nombre; selección, aislamiento y descarga individual funcionan sin convertir la malla a STEP. Un grupo puede contener varios fragmentos desconectados.
+- Exportación STL por pieza y 3MF con objetos separados; geometría conservada sin reparación automática. Los nombres sobreviven a reinicios y restauraciones mediante el historial existente.
+- La correspondencia entre piezas y triángulos se valida con rangos exhaustivos y una huella de geometría. Metadatos dañados desactivan la selección y rechazan la exportación selectiva.
+
+### Fixed (exportación estanca)
+
+- Los STL y 3MF exportados (`exportar`, descargas e `incorporar`) se teselan como un solo sólido, así las caras comparten aristas y la malla queda cerrada. Antes, las uniones entre caras dejaban grietas (4680 aristas abiertas en la tuerca P5) que el laminador rellenaba. El volumen coincide con el B-rep. La vista 3D no cambia. Decisión en `docs/decisions/0016-exportacion-estanca.md`.
+- `exportar` añade `advertencia_malla_abierta` (piezas y mensaje) solo cuando alguna malla exportada sigue abierta, por ejemplo una malla STL importada con huecos. El aviso no bloquea la exportación.
+
+### Added (movimiento coordinado de varias piezas)
+
+- La vista Animación permite activar varias articulaciones de un ensamble y asignar a cada una posiciones de inicio y fin. La jerarquía existente propaga el movimiento a las piezas hijas sin modificar el STEP.
+- «Comprobar posición» evalúa choques y contactos exactos también entre dos grupos móviles. «Reproducir con contacto» comprueba 13 posiciones del recorrido y detiene la animación en la última posición muestreada antes de una penetración nueva. La interfaz aclara que el barrido es discreto y que no calcula fuerzas ni deformaciones.
+- El motor de ensamble reutiliza la geometría de reposo durante el muestreo; pruebas con un brazo de ejemplo cubren movimientos simultáneos y parada por colisión.
+
+### Fixed (vista de STEP importado con caras defectuosas)
+
+- La vista 3D puede omitir caras que OpenCascade no logra triangular en un STEP ya marcado como no válido. Muestra cuántas caras faltan y conserva intacto el CAD importado; los STEP válidos mantienen el comportamiento estricto.
+
+### Added (Comprobación física de una posición)
+
+- La vista Animación puede comprobar una posición del ensamble con distancias e intersecciones exactas de OpenCascade entre piezas móviles y fijas cercanas. El resultado identifica contactos, choques y comprobaciones incompletas; corresponde a una posición muestreada, no a todo el recorrido.
+- Un panel opcional calcula la fuerza estática de un resorte de compresión con rigidez, precarga y sentido introducidos por el usuario.
+
+### Added (Vista de animación de ensambles)
+
+- El visor ofrece modos **CAD** y **Animación** por documento. La animación usa las articulaciones existentes, sus ejes, centros, jerarquía y límites para transformar las mallas de piezas entre dos valores sin escribir el STEP ni crear pasos de historial.
+- Reproducción, pausa y avance manual con lectura de posición. Cada cuadro informa superposiciones de cajas envolventes como cribado preliminar; la interfaz aclara que todavía no calcula contactos exactos, fuerzas, rozamiento o deformación. La vista CAD restablece la posición guardada.
+- Pruebas de cinemática para giro sobre origen desplazado, deslizamiento bajo un ancestro giratorio y rechazo de ensambles incompletos.
+- El cribado de posibles cruces usa cajas transformadas y barrido espacial; durante reproducción se muestrea cada 100 ms. Una prueba de 500 cajas separadas no requiere comparaciones de pares. `GET /ensamble` entrega la revisión de geometría en la cabecera `X-Forja-Revision`, y el visor bloquea la previsualización si la malla y las articulaciones no coinciden. Definir o quitar articulaciones actualiza la vista de animación inmediatamente.
+
+### Fixed (phase 15 — large STEP import)
+
+- STEP upload and `abrir_archivo` now derive the document summary and per-solid metadata from a single OpenCascade import. The import is staged outside the startup document scan until validation succeeds, so a parse interrupted before validation cannot expose an unfinished document.
+- Regression tests cover both entry points, unchanged volume/solid metadata, one import per request, and cleanup after a failed path import.
+
 ### Added (Historial 2.0 — grafo, miniaturas por paso, historial por pieza)
 
 - `app/historial_grafo.py`: `GET /documentos/{id}/grafo` (todas las ramas, orden topológico, padres incl. fusiones de 2 padres, ramas que contienen cada paso, puntas, hitos, autor/fecha/mensaje/revisión, `fusion`, `desde` y resumen de cambios respecto al primer padre con la regla G0/G3; caché por sha en `.cache/grafo/`; `limite` ≤ 300, `truncado`). `?pieza=` filtra a los pasos que la tocaron y reescribe los padres (simplificación de historia).
@@ -1351,3 +1669,11 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 - ADR 0001 (geometry kernel), 0002 (frontend stack), 0003 (topological
   naming and versioning), 0004 (MCP process model).
 - Approved implementation plan and phase detail committed under `plans/`.
+
+## Shared agent workspace (2026-10-15)
+
+- Added typed human/agent design intent, protected roles, requirements and revision-bound selections.
+- Added geometric query batches, alignment fitting, FDM mesh analysis, cancellable jobs and revision cache.
+- Added idempotent prepared candidates, validation before publish, rollback and deterministic manufacturing export by role.
+- Added nine MCP tools and the Diseño collaboration panel, sharing one REST contract.
+- Intent now follows snapshots and branches; conflicting full merges surface design-state conflicts.

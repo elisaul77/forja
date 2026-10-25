@@ -494,7 +494,9 @@ class OrbitControls extends EventDispatcher {
 
 		function getZoomScale( delta ) {
 
-			const normalized_delta = Math.abs( delta ) / ( 100 * ( window.devicePixelRatio | 0 ) );
+			// Parche Forja (= three r161): `devicePixelRatio | 0` vale 0 con zoom de
+			// navegador < 100 % y deja la camara en NaN al usar la rueda.
+			const normalized_delta = Math.abs( delta * 0.01 );
 			return Math.pow( 0.95, scope.zoomSpeed * normalized_delta );
 
 		}

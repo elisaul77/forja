@@ -38,3 +38,10 @@ export function decodePieceBundle(buffer) {
   if (coverage.some(value => value !== 1)) throw new Error("Hay geometría sin pieza asignada");
   return { stl, manifest };
 }
+
+/** Nombre de pieza fiable para el visor (y para anotaciones/indicaciones). Solo un paquete
+ * con piezas identificadas aporta nombres: si las caras son compartidas el servidor muestra
+ * una pieza «Modelo completo» que no es un sólido real, y devuelve `null` en vez de ese nombre. */
+export function nombreIdentificado(manifest, nombre) {
+  return manifest?.identificadas === true && !manifest.nombres_inciertos ? nombre : null;
+}

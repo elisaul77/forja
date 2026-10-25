@@ -25,7 +25,9 @@
 - 👀 **Ver el diseño en vivo** — cuando el agente cambia un documento, el visor se actualiza solo, sin recargar y sin mover tu cámara.
 - 🧩 **Ensambles con piezas con nombre** — árbol de piezas, aislar, encuadrar; articulaciones `fijo` / `giro` / `deslizamiento` con poses por números.
 - ✏️ **Indicarle al agente qué cambiar** — notas y pizarra sobre la geometría: dibuja sobre lo que ves, sobre una cara o sobre un **plano XY/XZ/YZ movible con corte en vivo**.
+- 🧱 **Componer piezas desde la barra** — mover, escalar, alinear, apoyar sobre la cama, y unir o restar primitivas u otras piezas; cada cambio es un candidato que revisas antes de aplicar.
 - 🔍 **Verificar antes de imprimir** — colisiones y holguras, imprimibilidad FDM (voladizos, paredes finas, cama), percepción espacial en texto (`percibir`).
+- 📏 **Medidas en vivo** — el panel Medidas del visor lista los pares de sólidos más cercanos (contacto, choque, holgura) en mm y se actualiza solo cuando cambia el modelo o un parámetro; las cifras son las mismas que `percibir`.
 - 🖨️ **Abrir en OrcaSlicer con un clic** — como en Printables: 3MF en mm con un objeto por pieza; con una pieza seleccionada, solo esa pieza.
 - 🕓 **Historial y deshacer** — cada cambio aceptado es una versión restaurable, con grafo de ramas, miniatura por paso, historial por pieza y «restaurar solo esta pieza»; las notas siguen a sus caras entre reconstrucciones.
 - 🛡️ **Ejecución aislada** — los scripts corren en un contenedor sandbox sin red, sin secretos y sin acceso a tus documentos.
@@ -230,6 +232,22 @@ Orca); el 3MF no es idéntico byte a byte entre descargas (las marcas de tiempo
 del zip cambian, el contenido no); y `valido: true` **no detecta pérdida de
 geometría** (se probó un aviso de volumen y se descartó, ver ADR-0011).
 
+### Planos técnicos (F22)
+
+`exportar(id, "svg" | "pdf" | "dxf")` escribe una hoja con cuatro vistas (frontal, superior, derecha e isométrica), líneas visibles y ocultas (solo en STEP), cotas automáticas de tamaño y de agujeros, y cajetín. Opciones: `vistas`, `escala` (1:1 por defecto la mayor que cabe), `papel` (A4 o A3), `proyeccion` (tercer ángulo por defecto) y `detalle` (lista las cotas con su id). Las mallas STL se dibujan solo con contornos y cotas de bbox. Solo lectura; el visor tiene las anclas «Plano», «Plano SVG» y «Plano DXF». Decisión en `docs/decisions/0021-planos-tecnicos.md`.
+
+### Cotas vivas importadas (F23b)
+
+En un STEP o una malla STL importados, cada cota de su plano que sale de una característica reconocida es editable (decisión en `docs/decisions/0025-cotas-importadas.md`): un grupo de agujeros se rellena y se retaladra al diámetro nuevo (mismo eje y profundidad); dos caras planas paralelas se estiran o se comprimen por biseccion hasta la distancia pedida; una medida total escala su eje. El panel «Parámetros» dice qué hará cada edición, y cada cota editable es una etiqueta sobre el modelo: pulsarla enfoca su campo. Una edición se verifica antes de escribir (volumen, bbox, medida re-medida a ±0,01 mm): si algo no cuadra, 422 y nada se guarda. Un acierto crea una revisión restaurable con `restaurar`. Por MCP, `parametros(id, cotas={id: valor})` (una cota por petición en un documento importado). Lo que no es una característica reconocida sale como «Solo lectura» con su motivo.
+
+### Cotas vivas (F23a)
+
+En un documento creado por script, cada cota del plano que sale de un `PARAMETROS` se edita con su número: en el panel «Parámetros» del visor («Cotas del plano»; la acción «Cotas» de la barra lo abre) o por MCP con `parametros(id, cotas={id: valor})`. Los ids salen de `exportar(id, "svg", detalle=true)`. Cada edición es una revisión nueva (`restaurar` la deshace). Las cotas sin parámetro salen como «Solo lectura» con su motivo. Cada edición se verifica antes de escribir: si la cota no vuelve a su valor, 422 y nada se guarda. Clic en el overlay 3D: F23b (ADR 0025); clic en el plano: no aplica (el plano es una descarga). Decisión en `docs/decisions/0023-cotas-vivas.md`.
+
+### Transformar, primitivas y booleanas (barra · fase 24b)
+
+En Sólido > Transformar están **Mover / Rotar**, **Escalar** (por eje), **Alinear** (centros o caras por eje, o apilar sobre otra pieza) y **Apoyar sobre cama**. En Sólido > Crear están la caja, el cilindro, la esfera, el cono, el toro, la cuña y el tubo, que se añaden como apoyo. Sólido > Booleanas une, resta o intersecta con una primitiva o con **otra pieza del documento**, que no cambia. Cada acción abre «Preparar una alternativa manual» en Indicaciones: el resultado es un candidato que se compara antes de aplicar. «Pedir cambio con lo seleccionado» (Claude) deja la indicación ligada a la pieza. Decisión en `docs/decisions/0026-transformar-primitivas.md`.
+
 ### Ramas, pasos y comparar (Plan G · G2/G3)
 
 Cada documento tiene un repo git (`.repos/{id}.git`). `refs/heads/main` es el
@@ -263,6 +281,8 @@ Visor: cajón «Ramas y fusiones» de la pestaña Historial y modo «Comparar» 
 | `GET /documentos/{id}/pasos/{sha}/miniatura.png?pieza=` | PNG 256×192 renderizado en el servidor, cacheado por revisión en `.cache/miniaturas_pasos/` (sin token; `sha` = 7–40 hex) |
 | `POST /documentos/{id}/piezas/{pieza}/restaurar` 🔑 | `{desde, forzar?, simular?}` — devuelve UNA pieza a ese paso con el motor de «traer pieza» (verificación, todo o nada); `resultado` también `sin_cambios` |
 | `POST /documentos/{id}/pasos/{sha}/restaurar` 🔑 | todo el documento a ese paso como paso NUEVO de la rama activa (`restaurado`/`sin_cambios`) |
+| `GET /documentos/{id}/deshacer` | cursor de deshacer y rehacer: `puede_deshacer`, `puede_rehacer`, `cabeza`, `destino_deshacer`, `destino_rehacer` (calculado del historial, ADR-0022) |
+| `POST /documentos/{id}/deshacer` 🔑 · `POST /documentos/{id}/rehacer` 🔑 | `{esperado}` = `cabeza` leída; 409 si el historial cambió. Crea una revisión nueva; nunca reescribe el historial |
 
 MCP: acción `restaurar_pieza` en `rama` (`desde` + `piezas=[nombre]`).
 Visor: pestaña **Historial** = grafo SVG con carriles de color por rama (curvas de
@@ -316,6 +336,22 @@ Herramientas: `estado`, `listar_documentos`, `abrir_archivo`,
 headless real), `check_colisiones`, `percibir`, `parametros`, `check_fdm`,
 `leer_notas`, `crear_nota`, `borrar_nota`, `leer_historial`, `restaurar`,
 `ensamble`, `suspension`, `puentes` (19).
+
+### Barrido continuo de articulaciones (Fase 18)
+
+`ensamble(id, barrido="todas")` recorre cada articulación sobre su rango sin saltar entre muestras: avance conservador hasta el primer contacto real (hueco ≤ 0,05 mm o penetración), luego bisección a la tolerancia. Reporta el valor en grados o mm, el par, el volumen de penetración y `garantia: "continua"`. Un par que empieza en contacto (pasador, pieza apoyada) se muestrea por volumen en pasos de hasta 0,2 mm, se lista y deja la garantía en `"muestreada"`. Las articulaciones fijas se omiten en «todas» (`omitidas`). Un presupuesto compartido de 2000 evaluaciones o 25 s agotado da `ok: false`, nunca un choque. Solo lectura. Ver `docs/decisions/0020-barrido-continuo.md`.
+
+### Vista explosionada (F19)
+
+`captura(id, explosion=0.5)` (MCP) o `GET /documentos/{id}/captura?explosion=0.5` separa las piezas con nombre a lo largo de sus articulaciones o alejándolas del centro del conjunto, para ver las piezas ocultas. Es solo de visualización: no cambia la geometría ni el documento, y `explosion=0` (por defecto) es el render de siempre. Solo documentos STEP. En el visor, el botón «Explosionar» (también en la cinta, grupo Vista) abre un deslizador de separación de 0 a 100 %. La animación de un ensamblaje manda sobre la explosión mientras corre. Ver `docs/decisions/0027-vista-explosionada.md`.
+
+### Rasgos de modificación (fase 24d)
+
+En la pestaña Sólido de la cinta, los grupos Modificar y Patrón abren un formulario por rasgo: filete y chaflán sobre aristas, vaciado y desfase de cara sobre caras, dividir por plano, simetría, matriz lineal o circular, y reparar malla (STL). El formulario elige la pieza, las aristas o caras (por su medida y posición) y los valores, y crea un candidato: nada cambia hasta aplicarlo desde «Indicaciones». Por MCP y HTTP son `kind` del contrato (`fillet`, `chamfer`, `shell`, `push_pull`, `pattern`, `mirror`, `split`, `mesh_repair`); `GET /documentos/{id}/design/referencias?pieza=&tipo=arista` lista las referencias con su huella. Las referencias se resuelven contra la geometría actual: si ya no existen, 422. Decisión en `docs/decisions/0029-rasgos-modificacion.md`. Pendiente: combinar o separar cuerpos, malla a sólido, desmoldeo y sanar caras (siguen «Próximamente · 24d»).
+
+### Captura enfocada y primer choque (F20)
+
+`captura(id, foco=[x,y,z], radio=mm)` (MCP) o `GET /documentos/{id}/captura?foco=x,y,z&radio=` recorta la misma proyección alrededor de un punto: el encuadre es un cuadrado de `2 × radio` centrado en él (radio entre 0,5 mm y 5 veces la diagonal). Si el punto no ve ninguna pieza, sale el encuadre general con una nota. `ensamble(id, barrido="todas", captura_en_choque=True)` añade una sola imagen de la pose del primer choque, solo el par, encuadrada en su punto de contacto, desde la primera vista donde se ven las dos piezas; sin choque confirmado no hay imagen. Solo lectura, sin herramientas nuevas, y sin `foco` la captura es la de siempre. Ver `docs/decisions/0028-captura-enfocada.md`.
 
 ### Ensambles y puentes (Fase 6)
 
@@ -406,6 +442,17 @@ Los scripts del usuario no corren en `forja`: van al contenedor
 fuentes y sin secretos), comunicado solo por el volumen `staging`; Forja
 trata todo lo que devuelve como dato no confiable.
 
+### Tests
+
+`scripts/test.sh` es el único camino para correr la suite: levanta el servicio
+`test` (perfil `test` de `docker-compose.yml`), un contenedor sin
+`documentos_data` ni secretos montados, con su propio backend de prueba en
+`127.0.0.1:8001` y datos temporales. `scripts/test.sh web` corre los tests de
+la UI con `node --test` en `node:22-bookworm-slim`. Nunca `docker exec forja
+python -m pytest`: ese contenedor sirve los documentos reales, y la guarda de
+`tests/conftest.py` rechaza los tests en vivo si no corren en el backend de
+prueba.
+
 ### Estado
 
 Proyecto en construcción por fases (ver `plans/forja-plan.md` y
@@ -419,8 +466,8 @@ mostertruck quedó reproducido por la propia Forja — y destapó un fallo real
 de `check_colisiones` con pares que sí se intersecan (corregido y cubierto
 por tests). Fase 10 (abrir en OrcaSlicer desde el navegador) completada: ruta de
 descarga sin token, botones en el visor, enlace `enlace_orca` en `exportar`,
-`FORJA_PUBLIC_URL` y ADR-0011. `docker exec forja python -m pytest /tests -q` →
-459 passed; `node --test tests/web/*.test.mjs` → 21 passed.
+`FORJA_PUBLIC_URL` y ADR-0011. `scripts/test.sh` →
+977 passed, 59 skipped (fase 24d; la única falla conocida del entorno, `test_ruta_dentro_de_fuentes_permitida`, no se cuenta); `node --test tests/web/*.test.mjs` → 172 passed.
 
 ---
 

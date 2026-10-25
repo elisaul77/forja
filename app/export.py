@@ -25,11 +25,11 @@ from xml.sax.saxutils import quoteattr
 
 import trimesh
 
+import planos
 import solids
+import mesh_parts
 from kernel import b123d_kernel
 from kernel import mesh as kernel_mesh
-
-TOLERANCIA_TESSELLATION_MM = 0.1
 
 # Rounding used to build the placement-invariant dedup signature: volume and
 # surface area are exact geometric invariants; sorted bounding-box extents
@@ -187,22 +187,23 @@ def objetos_3mf(
     shape: Any,
     entradas: list[dict[str, Any]] | None,
     nombre_por_defecto: str = "pieza",
-    tolerancia: float = TOLERANCIA_TESSELLATION_MM,
+    tolerancia: float | None = None,
 ) -> tuple[list[tuple[str, trimesh.Trimesh]], bool]:
     """The named objects of a document's 3MF: ``([(nombre, malla)], nombres_inciertos)``.
     Shared by the file export and the in-memory download so both produce
-    the same object names and order."""
+    the same object names and order. Meshes are watertight per solid
+    (ADR-0016); a ready ``trimesh.Trimesh`` is passed through untouched."""
     nombres_inciertos = False
     if isinstance(shape, trimesh.Trimesh):
-        objetos = [(nombre_por_defecto, shape)]
+        objetos = mesh_parts.objects(shape, entradas, nombre_por_defecto)
     elif not entradas:
-        objetos = [(nombre_por_defecto, kernel_mesh.tessellate_to_trimesh(shape, tolerancia))]
+        objetos = [(nombre_por_defecto, kernel_mesh.tessellate_para_exportar(shape, tolerancia))]
     else:
         grupos, nombres_inciertos = solids.solidos_por_indice(shape, entradas)
         por_nombre: dict[str, list[trimesh.Trimesh]] = {}
         for nombre, _indice, solido, _bbox, _volumen in grupos:
             por_nombre.setdefault(nombre, []).append(
-                kernel_mesh.tessellate_to_trimesh(solido, tolerancia)
+                kernel_mesh.tessellate_para_exportar(solido, tolerancia)
             )
         objetos = [
             (nombre, mallas[0] if len(mallas) == 1 else trimesh.util.concatenate(mallas))
@@ -216,7 +217,7 @@ def exportar_3mf_documento(
     entradas: list[dict[str, Any]] | None,
     destino: Path,
     nombre_por_defecto: str = "pieza",
-    tolerancia: float = TOLERANCIA_TESSELLATION_MM,
+    tolerancia: float | None = None,
     materiales: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """ONE 3MF with one named object per named piece (a piece split into
@@ -227,7 +228,8 @@ def exportar_3mf_documento(
     STL/STEP where "per solid" means one file each. ``shape`` may also be a
     ready ``trimesh.Trimesh`` (STL documents) with ``entradas=None``.
 
-    Returns ``{ruta, tamano_bytes, objetos[, objetos_mas][, nombres_inciertos]}``.
+    Returns ``{ruta, tamano_bytes, objetos[, objetos_mas][, nombres_inciertos]
+    [, advertencia_malla_abierta]}``.
     """
     objetos, nombres_inciertos = objetos_3mf(shape, entradas, nombre_por_defecto, tolerancia)
     escribir_3mf(objetos, destino, materiales)
@@ -241,7 +243,23 @@ def exportar_3mf_documento(
         respuesta["objetos_mas"] = len(nombres) - _TOPE_OBJETOS_RESPUESTA
     if nombres_inciertos:
         respuesta["nombres_inciertos"] = True
+    abiertas = kernel_mesh.mallas_abiertas(objetos)
+    if abiertas:
+        respuesta["advertencia_malla_abierta"] = advertencia_malla_abierta(abiertas)
     return respuesta
+
+
+def advertencia_malla_abierta(piezas: list[str]) -> dict[str, Any]:
+    """Payload of ``advertencia_malla_abierta`` in export responses (ADR-0016).
+    Only built when at least one exported mesh is open."""
+    return {
+        "piezas": piezas,
+        "mensaje": (
+            f"La malla exportada de {', '.join(piezas)} tiene bordes abiertos (no es estanca); "
+            "el laminador puede 'repararla' y rellenar roscas o huecos finos. "
+            "Revisa el solido (check_fdm) o reexporta en STEP."
+        ),
+    }
 
 
 def _firma(bbox: list[float], volumen: float, area: float) -> tuple:
@@ -267,14 +285,19 @@ def _nombre_archivo_seguro(nombre: str, formato: str, directorio: Path) -> str:
     return archivo
 
 
-def _escribir(solido: Any, formato: str, destino: Path, tolerancia: float) -> None:
+def _escribir(solido: Any, formato: str, destino: Path, tolerancia: float | None) -> bool:
+    """Write one export file. Returns True when it is a mesh that is open (ADR-0016)."""
     if formato == "step":
         b123d_kernel.export_to_step(solido, destino)
-    elif formato == "stl":
-        tri_mesh = kernel_mesh.tessellate_to_trimesh(solido, tolerancia)
+        return False
+    if formato == "stl":
+        tri_mesh = kernel_mesh.tessellate_para_exportar(solido, tolerancia)
         destino.write_bytes(kernel_mesh.to_stl_bytes(tri_mesh))
-    elif formato == "3mf":
-        escribir_3mf([(destino.stem, kernel_mesh.tessellate_to_trimesh(solido, tolerancia))], destino)
+        return kernel_mesh.malla_abierta(tri_mesh)
+    if formato == "3mf":
+        tri_mesh = kernel_mesh.tessellate_para_exportar(solido, tolerancia)
+        escribir_3mf([(destino.stem, tri_mesh)], destino)
+        return kernel_mesh.malla_abierta(tri_mesh)
     else:
         raise ValueError(f"formato no soportado: {formato!r} (usar stl, step o 3mf)")
 
@@ -284,7 +307,8 @@ def exportar_por_solido(
     entradas: list[dict[str, Any]],
     formato: str,
     directorio: Path,
-    tolerancia: float = TOLERANCIA_TESSELLATION_MM,
+    tolerancia: float | None = None,
+    abiertas: list[str] | None = None,
 ) -> tuple[dict[str, list[str]], bool]:
     """Write one file per named piece into ``directorio`` (created if
     missing), deduplicating geometrically-identical pieces. Returns
@@ -299,6 +323,10 @@ def exportar_por_solido(
     `app/solids.py`'s "partidas"/astilla grouping) is exported as a single
     file: its fragments are unioned first, exactly like `resumen_documento`
     already treats them as one logical piece.
+
+    ``abiertas`` (ADR-0016, optional out-param, so the tuple above stays the
+    same): when given, the names of the pieces whose exported mesh is open
+    are appended to it.
     """
     if formato not in FORMATOS_SOPORTADOS:
         raise ValueError(f"formato no soportado: {formato!r} (usar stl, step o 3mf)")
@@ -316,6 +344,7 @@ def exportar_por_solido(
 
     firma_a_archivo: dict[tuple, str] = {}
     archivo_a_nombres: dict[str, list[str]] = {}
+    archivos_abiertos: set[str] = set()
 
     for nombre in orden:
         piezas = por_nombre[nombre]
@@ -339,7 +368,41 @@ def exportar_por_solido(
         else:
             archivo = _nombre_archivo_seguro(nombre, formato, directorio)
             firma_a_archivo[firma] = archivo
-            _escribir(combinado, formato, directorio / archivo, tolerancia)
+            if _escribir(combinado, formato, directorio / archivo, tolerancia):
+                archivos_abiertos.add(archivo)
         archivo_a_nombres.setdefault(archivo, []).append(nombre)
+        if abiertas is not None and archivo in archivos_abiertos:
+            abiertas.append(nombre)
 
     return archivo_a_nombres, nombres_inciertos
+
+
+def exportar_plano_documento(
+    fuente: Any,
+    destino: Path,
+    opciones: dict[str, Any],
+    *,
+    formato: str,
+    nombre: str,
+    piezas: list[str],
+    revision: str | None,
+    parametros: dict[str, Any],
+) -> dict[str, Any]:
+    """Write one drawing sheet (F22, ADR-0021) to ``destino`` and return the
+    compact reply: ``{ruta, tamano_bytes, vistas, escala, papel, proyeccion,
+    cotas, parametros_ligados, omitidas[, completo][, aviso][, cotas_detalle]}``.
+    Never the file bytes; the descriptors are inlined only with ``detalle``."""
+    plano = planos.construir(
+        fuente,
+        nombre=nombre,
+        piezas=piezas,
+        revision=revision,
+        parametros=parametros,
+        opciones=opciones,
+    )
+    destino.write_bytes(planos.escribir(plano, formato))
+    return {
+        "ruta": str(destino),
+        "tamano_bytes": destino.stat().st_size,
+        **plano.resumen(opciones["detalle"]),
+    }

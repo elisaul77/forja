@@ -20,6 +20,8 @@ services:
       - ./app:/app
       - ./mcp_server:/app/mcp_server
       - ./tests:/tests
+      # Galería de ejemplos (GET /ejemplos), editable sin reconstruir la imagen.
+      - ./ejemplos:/app/ejemplos:ro
       - ./documentos_data:/data/documentos
       - ${FORJA_FUENTES:-./fuentes}:/data/fuentes:ro
       # F0.2 (ADR-0013): job exchange with forja-sandbox, and the token as a
@@ -33,6 +35,30 @@ services:
       retries: 3
       start_period: 120s
     restart: unless-stopped
+
+  # Suite de tests (AGENTS.md: `scripts/test.sh`). Solo con el perfil `test`:
+  # `docker compose up` no lo arranca. Contenedor propio: NO monta
+  # documentos_data ni los secretos, y su backend de prueba (tests/hermetico.sh)
+  # escucha en su propio 127.0.0.1 con datos temporales. Comparte el sandbox
+  # vivo por el volumen staging.
+  test:
+    profiles: ["test"]
+    build:
+      context: .
+      network: host
+    image: forja-forja:latest
+    pull_policy: never
+    entrypoint: ["sh", "/tests/hermetico.sh"]
+    working_dir: /tests
+    volumes:
+      - ./app:/app
+      - ./mcp_server:/app/mcp_server
+      - ./tests:/tests
+      # Galería de ejemplos: el bind de ./app oculta /app/ejemplos de la imagen.
+      - ./ejemplos:/app/ejemplos:ro
+      - ${FORJA_FUENTES:-./fuentes}:/data/fuentes:ro
+      - staging:/staging
+    extra_hosts: ["host.docker.internal:host-gateway"]
 
   # Untrusted user scripts (F0.2, ADR-0013): same image, its own /app (the
   # image's, not the bind mount: rebuild after changing app/sandbox/), no

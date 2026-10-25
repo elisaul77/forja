@@ -21,7 +21,15 @@ from fastapi.testclient import TestClient
 import auth
 import documents
 import conftest
-from conftest import CENTINELA_DIR, TOKEN_PRUEBA, diferencias, instantanea, ruta_dentro_de
+from conftest import (
+    CENTINELA_DIR,
+    TOKEN_PRUEBA,
+    backend_de_prueba_motivo,
+    diferencias,
+    id_creado,
+    instantanea,
+    ruta_dentro_de,
+)
 from kernel import b123d_kernel, mesh
 from main import app
 
@@ -105,3 +113,46 @@ def test_token_vivo_enmascarado_en_fallos(pytester):
     assert "Captured stdout" in salida
     assert falso not in salida
     assert "***" in salida
+
+
+# ------------------------------------------------ suite hermetica por defecto (1c)
+
+def test_guarda_rechaza_suite_no_hermetica():
+    """Sin el runner (`scripts/test.sh`) los tests en vivo no pueden tocar un backend."""
+    motivo = backend_de_prueba_motivo({}, Path("/data/documentos"), "http://127.0.0.1:8001")
+    assert motivo is not None and "scripts/test.sh" in motivo
+
+
+def test_guarda_rechaza_backend_con_datos_reales():
+    env = {"FORJA_TEST_BACKEND": "hermetico", "FORJA_TEST_BACKEND_DATOS": "/data/documentos/sub"}
+    motivo = backend_de_prueba_motivo(env, Path("/data/documentos"), "http://127.0.0.1:8001")
+    assert motivo is not None and "documentos reales" in motivo
+
+
+def test_guarda_rechaza_backend_que_no_es_loopback():
+    env = {"FORJA_TEST_BACKEND": "hermetico", "FORJA_TEST_BACKEND_DATOS": "/work/datos-backend"}
+    assert backend_de_prueba_motivo(env, Path("/data/documentos"), "http://localhost:8000") is not None
+
+
+def test_guarda_acepta_el_backend_de_prueba():
+    env = {"FORJA_TEST_BACKEND": "hermetico", "FORJA_TEST_BACKEND_DATOS": "/work/datos-backend"}
+    assert backend_de_prueba_motivo(env, Path("/data/documentos"), "http://127.0.0.1:8001") is None
+
+
+def test_id_creado_solo_de_respuestas_de_creacion():
+    """Solo cuenta como propio el id que devuelve una creacion exitosa."""
+    assert id_creado("POST", "/documentos", 200, {"id": "a"}) == "a"
+    assert id_creado("POST", "/documentos/desde_ruta", 200, {"id": "b"}) == "b"
+    assert id_creado("POST", "/documentos/script", 200, {"id": "c", "nombre": "x"}) == "c"
+    assert id_creado("GET", "/documentos", 200, [{"id": "d"}]) is None
+    assert id_creado("POST", "/documentos/x/papelera", 200, {"id": "e"}) is None
+    assert id_creado("POST", "/documentos", 400, {"id": "f"}) is None
+    assert id_creado("POST", "/documentos", 200, {"sin": "id"}) is None
+
+
+def test_id_creado_ignora_la_actualizacion_de_un_documento_existente():
+    """Con `documento_id` en el pedido, `/documentos/script` actualiza un documento
+    que ya existia (u se reutiliza uno): no es de este test y no se borra."""
+    assert id_creado("POST", "/documentos/script", 200, {"id": "a"}, {"documento_id": "a"}) is None
+    assert id_creado("POST", "/documentos/script", 200, {"id": "a"}, {"documento_id": None}) == "a"
+    assert id_creado("POST", "/documentos/script", 200, {"id": "a"}, {"nombre": "x"}) == "a"

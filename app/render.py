@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import colorsys
 import io
+import math
 from typing import Any
 
 import numpy as np
@@ -84,6 +85,13 @@ TOLERANCIA_RENDER_MM = 0.6
 
 LIMITE_PNG_BYTES = 150_000
 TOPE_LEYENDA = 20
+
+# Encuadre por foco (F20, ADR-0028): radio en mm entre este mínimo y 5 veces la
+# diagonal de lo dibujado; coordenadas acotadas para que ningún número absurdo llegue al
+# proyector.
+RADIO_MINIMO_MM = 0.5
+FACTOR_RADIO_MAXIMO = 5.0
+LIMITE_COORDENADA_MM = 1_000_000.0
 
 # Triangle ceiling (Phase 5E, folded in from the 5B review): the rasterizer
 # below is plain numpy over each triangle's own screen-space bounding box --
@@ -236,6 +244,19 @@ def grupos_desde_shape(
             raise ValueError(f"nombres de solido inexistentes en este documento: {faltantes}")
         orden = [n for n in orden_completo if n in solidos_filtro]
 
+    resultado = _teselar_con_tope(
+        piezas_por_nombre, orden, tolerancia,
+        "probar con 'solidos=[...]' para renderizar solo un subconjunto",
+    )
+    return resultado, colores, nombres_inciertos
+
+
+def _teselar_con_tope(
+    piezas_por_nombre: dict[str, list[Any]], orden: list[str], tolerancia: float, sugerencia: str
+) -> dict[str, trimesh.Trimesh]:
+    """`_tesela_grupos` con el tope de `LIMITE_TRIANGULOS`: un reintento a
+    tesellación 3 veces más gruesa y, si aun así pasa, un error en español
+    (nunca una degradación en silencio)."""
     resultado, total_triangulos = _tesela_grupos(piezas_por_nombre, orden, tolerancia)
     if total_triangulos > LIMITE_TRIANGULOS:
         resultado, total_triangulos = _tesela_grupos(
@@ -245,9 +266,35 @@ def grupos_desde_shape(
             raise ValueError(
                 f"el documento tiene demasiados triangulos para renderizar "
                 f"({total_triangulos} > {LIMITE_TRIANGULOS}, incluso con una tesalacion "
-                "3 veces mas gruesa); probar con 'solidos=[...]' para renderizar solo un subconjunto"
+                f"3 veces mas gruesa); {sugerencia}"
             )
-    return resultado, colores, nombres_inciertos
+    return resultado
+
+
+def grupos_desde_formas(
+    formas: dict[str, Any],
+    solidos_filtro: list[str] | None = None,
+    tolerancia: float = TOLERANCIA_RENDER_MM,
+) -> tuple[dict[str, trimesh.Trimesh], dict[str, tuple[float, float, float]], bool]:
+    """Teselado de formas con nombre ya posadas (F20: la pareja de un choque
+    del barrido en su pose). Una pieza por nombre. Los colores se indexan
+    sobre TODAS las formas, en su orden, como `grupos_desde_shape`; con
+    `solidos_filtro` solo se tesela ese subconjunto. Devuelve la misma
+    terna que `grupos_desde_shape` (la tercera es siempre False: los
+    nombres vienen del ensamble, no de una reimportación)."""
+    orden_completo = list(formas)
+    colores = {nombre: _color_por_indice(i) for i, nombre in enumerate(orden_completo)}
+    orden = orden_completo
+    if solidos_filtro is not None:
+        faltantes = [n for n in solidos_filtro if n not in formas]
+        if faltantes:
+            raise ValueError(f"nombres de solido inexistentes en esta pose: {faltantes}")
+        orden = [n for n in orden_completo if n in solidos_filtro]
+    piezas_por_nombre = {nombre: [formas[nombre]] for nombre in orden}
+    resultado = _teselar_con_tope(
+        piezas_por_nombre, orden, tolerancia, "reduce el par de piezas a renderizar",
+    )
+    return resultado, colores, False
 
 
 def _tesela_grupos(
@@ -265,7 +312,7 @@ def _tesela_grupos(
         faces_totales: list[np.ndarray] = []
         offset = 0
         for pieza in piezas_por_nombre[nombre]:
-            tri_mesh = kernel_mesh.tessellate_to_trimesh(pieza, tolerancia)
+            tri_mesh, _i, _omitidas = kernel_mesh.tessellate_to_trimesh_con_caras_tolerante(pieza, tolerancia)
             if len(tri_mesh.faces) == 0:
                 continue
             vertices_totales.append(tri_mesh.vertices)
@@ -455,6 +502,112 @@ def _dibujar_leyenda(imagen: Any, leyenda: dict[str, tuple[float, float, float]]
     imagen.paste(compuesta)
 
 
+def _trasladar_copias(
+    grupos: dict[str, trimesh.Trimesh], desplazamientos: dict[str, list[float]]
+) -> dict[str, trimesh.Trimesh]:
+    """Copias trasladadas de ``grupos`` (F19). Las mallas nuevas reciben
+    vértices nuevos (suma), así que nunca se muta una malla de origen."""
+    resultado: dict[str, trimesh.Trimesh] = {}
+    for nombre, malla in grupos.items():
+        vector = desplazamientos.get(nombre)
+        if vector is None or len(malla.faces) == 0:
+            resultado[nombre] = malla
+            continue
+        resultado[nombre] = trimesh.Trimesh(
+            vertices=np.asarray(malla.vertices, dtype=np.float64) + np.asarray(vector, dtype=np.float64),
+            faces=malla.faces,
+            process=False,
+        )
+    return resultado
+
+
+def parsear_foco(texto: str) -> tuple[float, float, float]:
+    """`foco` de la query `x,y,z` (F20) -> tres floats finitos, o ValueError en
+    español. Sin lista vacía ni números sueltos: exactamente tres campos."""
+    partes = texto.split(",")
+    if len(partes) != 3:
+        raise ValueError("foco debe ser tres coordenadas x,y,z separadas por comas")
+    try:
+        valores = [float(parte) for parte in partes]
+    except ValueError as exc:
+        raise ValueError("foco debe ser tres números x,y,z") from exc
+    return validar_foco(valores)
+
+
+def validar_foco(foco: Any) -> tuple[float, float, float]:
+    """Tres coordenadas finitas y acotadas (|v| <= LIMITE_COORDENADA_MM)."""
+    if len(foco) != 3:
+        raise ValueError("foco debe tener tres coordenadas x,y,z")
+    for valor in foco:
+        if (isinstance(valor, bool) or not isinstance(valor, (int, float))
+                or not math.isfinite(valor) or abs(valor) > LIMITE_COORDENADA_MM):
+            raise ValueError(
+                f"foco debe ser tres números finitos, de como mucho {LIMITE_COORDENADA_MM:g} mm"
+            )
+    return (float(foco[0]), float(foco[1]), float(foco[2]))
+
+
+def validar_radio(radio: Any, diagonal: float) -> float:
+    """`radio` en mm: finito, entre RADIO_MINIMO_MM y FACTOR_RADIO_MAXIMO veces
+    la diagonal de lo dibujado. Fuera de ese rango, ValueError en español."""
+    if isinstance(radio, bool) or not isinstance(radio, (int, float)) or not math.isfinite(radio):
+        raise ValueError("radio debe ser un número finito en mm")
+    maximo = FACTOR_RADIO_MAXIMO * diagonal
+    if radio < RADIO_MINIMO_MM or radio > maximo:
+        raise ValueError(
+            f"radio fuera de rango: entre {RADIO_MINIMO_MM:g} y {maximo:.6g} mm "
+            f"({FACTOR_RADIO_MAXIMO:g} veces la diagonal de la escena)"
+        )
+    return float(radio)
+
+
+# Colores puros de marcador para `piezas_visibles` (un color por pieza del par).
+_MARCADORES_VISIBILIDAD = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+
+
+def piezas_visibles(
+    grupos: dict[str, trimesh.Trimesh],
+    azimut: float,
+    elevacion: float,
+    foco: tuple[float, float, float],
+    radio: float,
+) -> set[str]:
+    """Nombres (de dos piezas como mucho) que se ven en el encuadre dado. Se
+    renderiza un marcador de 128 px con un color puro por pieza y se cuenta
+    el color dominante de cada una. Lo usa la captura del choque para no
+    elegir una vista donde una pieza queda tapada por la otra."""
+    from PIL import Image
+
+    nombres = list(grupos)[:len(_MARCADORES_VISIBILIDAD)]
+    marcadores = {nombre: _MARCADORES_VISIBILIDAD[i] for i, nombre in enumerate(nombres)}
+    png, _caption = renderizar_png(
+        {nombre: grupos[nombre] for nombre in nombres}, marcadores,
+        azimut=azimut, elevacion=elevacion, ancho=128, alto=128,
+        leyenda_visible=False, foco=foco, radio=radio,
+    )
+    rgb = np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(int)
+    visibles: set[str] = set()
+    for nombre, marcador in marcadores.items():
+        canal = int(np.argmax(marcador))
+        otros = [c for c in range(3) if c != canal]
+        # Sombreado y contorno solo bajan la luminosidad; el fondo no tiene canal dominante.
+        dominante = (rgb[:, :, canal] > 60) & (rgb[:, :, otros[0]] < 30) & (rgb[:, :, otros[1]] < 30)
+        if int(dominante.sum()) >= 4:
+            visibles.add(nombre)
+    return visibles
+
+
+def radio_por_defecto(grupos: dict[str, trimesh.Trimesh]) -> float:
+    """Radio de encuadre cuando no se pide uno: medio diagonal de lo dibujado,
+    nunca menos que RADIO_MINIMO_MM. Lo usa la captura del primer choque."""
+    vertices = [np.asarray(m.vertices, dtype=np.float64) for m in grupos.values() if len(m.faces)]
+    if not vertices:
+        return RADIO_MINIMO_MM
+    todos = np.concatenate(vertices, axis=0)
+    diagonal = float(np.linalg.norm(todos.max(axis=0) - todos.min(axis=0)))
+    return max(RADIO_MINIMO_MM, 0.5 * diagonal)
+
+
 def renderizar_png(
     grupos: dict[str, trimesh.Trimesh],
     colores: dict[str, tuple[float, float, float]],
@@ -466,14 +619,31 @@ def renderizar_png(
     colores_por_solido: bool = True,
     leyenda_visible: bool = True,
     fondo: tuple[float, float, float] | None = None,
+    desplazamientos: dict[str, list[float]] | None = None,
+    foco: tuple[float, float, float] | None = None,
+    radio: float | None = None,
 ) -> tuple[bytes, str]:
     """Render ``grupos`` (``{nombre: Trimesh}``, already tessellated — see
     `grupos_desde_shape`/`grupo_desde_malla`) to a small PNG via a software
     z-buffer rasterizer (see the module docstring). Returns ``(png_bytes,
     texto_caption)``. Raises ``ValueError`` if every group is empty (no
-    faces at all)."""
+    faces at all).
+
+    ``desplazamientos`` (F19, vista explosionada): traslación ``[dx, dy, dz]``
+    por nombre, aplicada a COPIAS de las mallas; las cacheadas no se tocan.
+    Sin nombre en el mapa, la pieza se dibuja donde está.
+
+    ``foco`` y ``radio`` (F20, ADR-0028): encuadre cuadrado de lado ``2 * radio``
+    centrado en el punto ``foco`` proyectado con la misma cámara (un recorte de
+    la misma proyección, no otra vista). Van juntos. Si el foco no ve ninguna
+    pieza, se dibuja el encuadre general y la leyenda lo dice: nunca una imagen
+    vacía. Sin ``foco`` el resultado es el de siempre, byte a byte."""
     if not grupos:
         raise ValueError("no hay solidos para renderizar")
+    if (foco is None) != (radio is None):
+        raise ValueError("foco y radio van juntos: radio solo aplica con foco y foco pide radio")
+    if desplazamientos:
+        grupos = _trasladar_copias(grupos, desplazamientos)
 
     adelante, derecha, arriba = _base_camara(azimut, elevacion)
 
@@ -519,6 +689,10 @@ def renderizar_png(
     vertices_planos = pts.reshape(-1, 3)
     diagonal_escena = float(np.linalg.norm(vertices_planos.max(axis=0) - vertices_planos.min(axis=0)))
 
+    if foco is not None:
+        foco = validar_foco(foco)
+        radio = validar_radio(radio, diagonal_escena)
+
     min_x, max_x = float(proyeccion_x.min()), float(proyeccion_x.max())
     min_y, max_y = float(proyeccion_y.min()), float(proyeccion_y.max())
     margen_x = 0.03 * max(max_x - min_x, 1e-6)
@@ -527,26 +701,43 @@ def renderizar_png(
     max_x += margen_x
     min_y -= margen_y
     max_y += margen_y
-    extent_x = max(max_x - min_x, 1e-6)
-    extent_y = max(max_y - min_y, 1e-6)
+    ventana_general = (min_x, max_x, min_y, max_y)
 
     ancho_ss, alto_ss = ancho * _SS, alto * _SS
-    # Equal-aspect fit (both axes are the same orthographic projection, so
-    # a single shared scale is exact, not approximate) -- letterboxed and
-    # centred in the canvas, matching the old `ax.set_aspect("equal")`
-    # behaviour rather than stretching either axis independently.
-    escala = min(ancho_ss / extent_x, alto_ss / extent_y)
-    despl_x = (ancho_ss - extent_x * escala) / 2.0
-    despl_y = (alto_ss - extent_y * escala) / 2.0
+    fondo_usado = fondo if fondo is not None else _FONDO
 
-    pixel_x = despl_x + (proyeccion_x - min_x) * escala
-    # Row 0 is the TOP of the image; world "arriba" increases upward, so
-    # the largest projected y must map to the smallest row.
-    pixel_y = despl_y + (max_y - proyeccion_y) * escala
-    triangulos_px = np.stack([pixel_x, pixel_y], axis=-1)  # (N, 3, 2)
+    def _rasterizar_en(ventana: tuple[float, float, float, float]) -> tuple[np.ndarray, np.ndarray]:
+        v_min_x, v_max_x, v_min_y, v_max_y = ventana
+        extent_x = max(v_max_x - v_min_x, 1e-6)
+        extent_y = max(v_max_y - v_min_y, 1e-6)
+        # Equal-aspect fit (both axes are the same orthographic projection, so
+        # a single shared scale is exact, not approximate) -- letterboxed and
+        # centred in the canvas, matching the old `ax.set_aspect("equal")`
+        # behaviour rather than stretching either axis independently.
+        escala = min(ancho_ss / extent_x, alto_ss / extent_y)
+        despl_x = (ancho_ss - extent_x * escala) / 2.0
+        despl_y = (alto_ss - extent_y * escala) / 2.0
+        pixel_x = despl_x + (proyeccion_x - v_min_x) * escala
+        # Row 0 is the TOP of the image; world "arriba" increases upward, so
+        # the largest projected y must map to the smallest row.
+        pixel_y = despl_y + (v_max_y - proyeccion_y) * escala
+        triangulos_px = np.stack([pixel_x, pixel_y], axis=-1)  # (N, 3, 2)
+        return _rasterizar(triangulos_px, profundidad, color_sombreado, ancho_ss, alto_ss, fondo_usado)
 
-    color_buffer, zbuffer = _rasterizar(triangulos_px, profundidad, color_sombreado, ancho_ss, alto_ss,
-                                        fondo if fondo is not None else _FONDO)
+    nota_encuadre = ""
+    if foco is None:
+        color_buffer, zbuffer = _rasterizar_en(ventana_general)
+    else:
+        centro_x = float(np.dot(foco, derecha))
+        centro_y = float(np.dot(foco, arriba))
+        ventana_foco = (centro_x - radio, centro_x + radio, centro_y - radio, centro_y + radio)
+        color_buffer, zbuffer = _rasterizar_en(ventana_foco)
+        if not (zbuffer > _SENTINEL_Z / 2.0).any():
+            color_buffer, zbuffer = _rasterizar_en(ventana_general)
+            nota_encuadre = ", foco fuera de la geometria: encuadre general"
+        else:
+            nota_encuadre = (f", encuadre en foco ({foco[0]:g}, {foco[1]:g}, {foco[2]:g}) "
+                             f"radio {radio:g} mm")
     _dibujar_bordes(color_buffer, zbuffer, diagonal_escena)
 
     imagen_ss = np.clip(color_buffer, 0.0, 1.0).reshape(alto, _SS, ancho, _SS, 3).mean(axis=(1, 3))
@@ -564,6 +755,6 @@ def renderizar_png(
 
     caption = (
         f"{len(grupos)} solido(s), {total_triangulos} triangulos, "
-        f"vista azimut={azimut:g} elevacion={elevacion:g}"
+        f"vista azimut={azimut:g} elevacion={elevacion:g}{nota_encuadre}"
     )
     return png_bytes, caption

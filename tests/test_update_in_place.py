@@ -64,7 +64,9 @@ def test_actualizar_documento_por_script_reemplaza_en_el_mismo_id():
     assert actualizado["volumen"] < creado["volumen"]
 
     # se conserva un unico documento con ese id (no crea uno nuevo).
-    ids = [d["id"] for d in client.get("/documentos").json()]
+    # Fase 2: un documento creado por script sin permanente es un borrador, oculto
+    # salvo con borradores=true. Sigue siendo el mismo documento que se actualizo.
+    ids = [d["id"] for d in client.get("/documentos", params={"borradores": "true"}).json()]
     assert ids.count(doc_id) == 1
 
 
@@ -142,8 +144,11 @@ def test_actualizar_documento_por_script_kernel_invalido_no_corrompe_estado():
     assert notas_despues == notas_antes
 
     # El registro en memoria tampoco cambio (mismo bbox/volumen/solidos).
+    # La respuesta de creacion trae ademas los campos de borrador (fase 2); el
+    # registro publico no los lleva, asi que se comparan sin ellos.
     registro_despues = client.get(f"/documentos/{doc_id}").json()
-    assert registro_despues == creado
+    campos_de_borrador = {"borrador", "expira", "mensaje"}
+    assert registro_despues == {k: v for k, v in creado.items() if k not in campos_de_borrador}
 
     # El historial gana exactamente la instantanea "antes de intentar" que
     # ADR-0003 toma preventivamente -- nunca una entrada extra que sugiera

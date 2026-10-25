@@ -1,5 +1,5 @@
 // Forja — panel de historial (snapshots) de un documento (Fase 4).
-import { obtenerHistorial, restaurarDocumento } from "./api.js";
+import { obtenerHistorial, restaurarDocumento } from "./api.js?v=17";
 
 // Historial 2.0: la lista clásica de instantáneas G1 vive en el cajón
 // «Instantáneas» de la vista Historial.

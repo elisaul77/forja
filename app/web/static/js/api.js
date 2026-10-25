@@ -33,6 +33,32 @@ export async function eliminarDocumento(id) {
   return resp.json();
 }
 
+/** Papelera de la galería (fase 1): mover, listar, restaurar y purgar; todas piden el token. */
+async function pedirConToken(metodo, ruta) {
+  const token = obtenerTokenSesion().trim();
+  if (!token) throw new Error("Operación cancelada: no se proporcionó la clave de edición");
+  const resp = await fetch(`${BASE}${ruta}`, { method: metodo, headers: { "X-Forja-Token": token } });
+  if (resp.status === 401) sessionStorage.removeItem(CLAVE_TOKEN_SESION);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export function enviarDocumentoAPapelera(id) {
+  return pedirConToken("POST", `/documentos/${encodeURIComponent(id)}/papelera`);
+}
+
+export function listarPapelera() {
+  return pedirConToken("GET", "/papelera");
+}
+
+export function restaurarDePapelera(id) {
+  return pedirConToken("POST", `/papelera/${encodeURIComponent(id)}/restaurar`);
+}
+
+export function purgarDePapelera(id) {
+  return pedirConToken("DELETE", `/papelera/${encodeURIComponent(id)}`);
+}
+
 async function parseError(resp) {
   let detalle = resp.statusText;
   try {
@@ -41,14 +67,24 @@ async function parseError(resp) {
   } catch {
     // cuerpo no era JSON; se conserva statusText
   }
-  return new Error(`${resp.status} ${detalle}`);
+  const error = new Error(`${resp.status} ${detalle}`);
+  // La barra de herramientas distingue el 409 (historial cambiado) del resto.
+  error.status = resp.status;
+  error.detalle = detalle;
+  return error;
 }
 
 /** Lista compacta de documentos ya existentes en el servidor. */
-export async function listarDocumentos() {
-  const resp = await fetch(`${BASE}/documentos`);
+/** Sin opciones, la galería sin borradores (fase 2); `borradores: true` los incluye. */
+export async function listarDocumentos({ borradores = false } = {}) {
+  const resp = await fetch(`${BASE}/documentos${borradores ? "?borradores=true" : ""}`);
   if (!resp.ok) throw await parseError(resp);
   return resp.json();
+}
+
+/** Conserva un borrador (fase 2): deja de caducar y sale de la galería. Pide el token. */
+export function conservarDocumento(id) {
+  return pedirConToken("POST", `/documentos/${encodeURIComponent(id)}/conservar`);
 }
 
 /** Ficha completa de un documento (incluye bbox/volumen/solidos/valido). */
@@ -199,6 +235,70 @@ export async function restaurarDocumento(id, snapshot) {
     // token vacio/incorrecto: se olvida para volver a pedirlo la proxima vez.
     sessionStorage.removeItem(CLAVE_TOKEN_SESION);
   }
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+// ---------------- Fase 24a2: cursor de deshacer y rehacer (ADR-0022) ----------------
+
+/** `{puede_deshacer, puede_rehacer, cabeza, destino_deshacer, destino_rehacer}`. */
+export async function obtenerEstadoDeshacer(id) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/deshacer`);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+/** `esperado` es la `cabeza` que el cliente vio: si el historial cambió, el servidor responde 409. */
+export function deshacerDocumento(id, esperado) {
+  return moverHistoria(id, "deshacer", esperado);
+}
+
+export function rehacerDocumento(id, esperado) {
+  return moverHistoria(id, "rehacer", esperado);
+}
+
+async function moverHistoria(id, accion, esperado) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/${accion}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Forja-Token": obtenerTokenSesion(),
+    },
+    body: JSON.stringify({ esperado }),
+  });
+  if (resp.status === 401) sessionStorage.removeItem(CLAVE_TOKEN_SESION);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+// ---------------- Fase 24d: rasgos de modificación (ADR-0029) ----------------
+
+/** Diseño del documento: `revision`, `state_revision`, `pieces` y `design.parts`. */
+export async function obtenerDisenoDocumento(id) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/design`);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+/** `{pieza, tipo, total, truncado, elementos: [{id, huella}]}`: solo lectura. */
+export async function obtenerReferenciasDiseno(id, pieza, tipo) {
+  const query = new URLSearchParams({ pieza, tipo });
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/design/referencias?${query}`);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+/** Crea un candidato (nunca cambia la geometría): se aplica desde Indicaciones. */
+export async function prepararCandidatoDiseno(id, cuerpo) {
+  const resp = await fetch(`${BASE}/documentos/${encodeURIComponent(id)}/design/candidates`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Forja-Token": obtenerTokenSesion(),
+    },
+    body: JSON.stringify(cuerpo),
+  });
+  if (resp.status === 401) sessionStorage.removeItem(CLAVE_TOKEN_SESION);
   if (!resp.ok) throw await parseError(resp);
   return resp.json();
 }

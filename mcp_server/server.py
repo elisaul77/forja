@@ -35,9 +35,20 @@ def crear_servidor() -> MCPServer:
     can only `run()` once, so each lifespan needs its own instance)."""
     servidor = MCPServer(
         name="forja",
-        version="0.7.0",
+        version="0.1.0",
         instructions=(
             "Forja es un editor CAD 3D nativo para IA (build123d/OpenCascade). "
+            "Antes de editar, consulta capacidades_diseno y contexto_diseno para "
+            "respetar intencion, roles y requisitos. Indicaciones del usuario: "
+            "contexto_diseno -> responder_indicacion (interpretacion o pregunta) -> "
+            "preparar_candidato con indicacion y resumen -> espera al usuario; "
+            "solo el usuario marca una indicacion como resuelta. Usa consultar_diseno para "
+            "mediciones por revision y preparar_candidato para cambios verificables; "
+            "candidato_diseno aplica tras revisar resultados. exportar_diseno excluye "
+            "referencias y usa la postura de impresion sin mover el montaje. "
+            "referencia_visual muestra fotos adjuntas por el usuario. "
+            "Ejemplos de referencia (scripts con PARAMETROS y construir, listados en "
+            "GET /ejemplos; abrirlos es solo del visor web): ejemplos/ en el repo. "
             "Flujo tipico: abrir_archivo -> resumen_documento -> ejecutar_script "
             "(con PARAMETROS + construir(params) si la pieza se va a iterar) "
             "-> percibir (contactos) -> cortes solo si hace falta ver una forma "
@@ -57,6 +68,11 @@ def crear_servidor() -> MCPServer:
             "posicion; 'suspension' consulta el simulador del mostertruck por "
             "el puente de solo lectura y 'puentes' dice que servicios locales "
             "estan encendidos y respondiendo. "
+            "Galeria: ejecutar_script sin documento_id crea un BORRADOR (oculto, caduca "
+            "en 24 h); conservar_documento lo deja, listar_documentos(incluir_borradores=true) "
+            "los muestra. borrar_documento manda un documento a la papelera (reversible: "
+            "papelera con accion restaurar lo devuelve; no borra archivos); no hay "
+            "borrado definitivo por MCP. "
             "Todas las unidades son milimetros. Las respuestas "
             "son compactas (ids, numeros, mensajes cortos); pedir 'captura' "
             "solo cuando de verdad haga falta ver la geometria."
@@ -85,6 +101,14 @@ def crear_servidor() -> MCPServer:
     servidor.tool(name="ensamble")(tools.ensamble)
     servidor.tool(name="suspension")(tools.suspension)
     servidor.tool(name="puentes")(tools.puentes)
+    for name in ("capacidades_diseno", "contexto_diseno", "guardar_diseno", "consultar_diseno",
+                 "responder_indicacion", "preparar_candidato", "candidato_diseno", "trabajo_diseno",
+                 "exportar_diseno"):
+        servidor.tool(name=name)(getattr(tools, name))
+    servidor.tool(name="referencia_visual", structured_output=False)(tools.referencia_visual)
+    servidor.tool(name="borrar_documento")(tools.borrar_documento)
+    servidor.tool(name="papelera")(tools.papelera)
+    servidor.tool(name="conservar_documento")(tools.conservar_documento)
     return servidor
 
 

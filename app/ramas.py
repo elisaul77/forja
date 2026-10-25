@@ -43,8 +43,10 @@ from pydantic import BaseModel
 import assemblies
 import auth
 import documents
+import design_state
 import eventos
 import git_store
+import mallas
 import materiales
 import notes
 import parametros
@@ -98,7 +100,8 @@ def capturar(doc_id: str) -> tuple[dict[str, bytes], dict[str, bytes], str | Non
             meta = {}
     for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)),
                            ("solidos.json", solids.ruta_solidos(doc_id)),
-                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id))):
+                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id)),
+                           (design_state.KEY, design_state.path(doc_id))):
         if camino.exists():
             archivos[nombre] = camino.read_bytes()
     archivos.update(assemblies.snapshot_files(doc_id))
@@ -280,7 +283,8 @@ def _materializar(doc_id: str, ruta: Path, archivos: dict[str, bytes]) -> None:
                                                  (documents._ruta_meta(doc_id), meta)]
     for nombre, camino in (("notas.json", notes.ruta_notas(doc_id)),
                            ("solidos.json", solids.ruta_solidos(doc_id)),
-                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id))):
+                           (materiales.NOMBRE_SNAPSHOT, materiales.ruta(doc_id)),
+                           (design_state.KEY, design_state.path(doc_id))):
         destinos.append((camino, archivos.get(nombre)))
     preparados: list[tuple[Path, Path | None]] = []
     try:
@@ -309,6 +313,9 @@ def _materializar(doc_id: str, ruta: Path, archivos: dict[str, bytes]) -> None:
         temporal = estado.with_name("state.json.rama.tmp")
         temporal.write_bytes(ensamble[assemblies.STATE_KEY])
         os.replace(temporal, estado)
+    # Fase 3a: el almacen de mallas sigue al estado de la rama (sin almacen en
+    # el estado, el almacen de hoy se quita).
+    mallas.restaurar_snapshot(documents.DOCUMENTOS_DIR, doc_id, archivos)
 
 
 def _sha256(contenido: bytes) -> str:

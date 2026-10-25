@@ -44,11 +44,14 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import os
 import secrets
 import tempfile
+import urllib.parse
 from pathlib import Path
 
+import httpx
 import pytest
 
 import auth as _auth  # imported before FORJA_DATA_DIR is overridden
@@ -102,6 +105,54 @@ def diferencias(antes: dict[str, str], despues: dict[str, str]) -> list[str]:
     cambios += [f"- {k}" for k in antes.keys() - despues.keys()]
     cambios += [f"~ {k}" for k in antes.keys() & despues.keys() if antes[k] != despues[k]]
     return sorted(cambios)
+
+
+# Only these POST routes create a document; their successful response carries its id.
+RUTAS_CREACION = frozenset({"/documentos", "/documentos/desde_ruta", "/documentos/script"})
+HOST_BACKEND_PRUEBA = "127.0.0.1"
+
+
+def backend_de_prueba_motivo(env, datos_reales: Path, base_url: str) -> str | None:
+    """Why the live backend must NOT be used, or None when it is the hermetic one.
+
+    `FORJA_TEST_BACKEND=hermetico` and `FORJA_TEST_BACKEND_DATOS` are exported only
+    by `tests/hermetico.sh` (run through `scripts/test.sh`) for its own uvicorn.
+    Anything else (the default `docker exec forja pytest`) is refused."""
+    if env.get("FORJA_TEST_BACKEND") != "hermetico":
+        return (
+            "la suite no es hermetica: ejecuta los tests con scripts/test.sh "
+            "(FORJA_TEST_BACKEND=hermetico lo fija el runner, nunca a mano)"
+        )
+    datos = env.get("FORJA_TEST_BACKEND_DATOS", "")
+    if not datos:
+        return "falta FORJA_TEST_BACKEND_DATOS: el runner declara el directorio de su backend"
+    ruta = Path(datos)
+    if ruta_dentro_de(ruta, datos_reales) or ruta_dentro_de(datos_reales, ruta):
+        return f"el backend de prueba usa los documentos reales ({datos_reales})"
+    if urllib.parse.urlsplit(base_url).hostname != HOST_BACKEND_PRUEBA:
+        return f"FORJA_HTTP_BASE_URL ({base_url}) no es el backend local de prueba"
+    return None
+
+
+def id_creado(metodo: str, ruta: str, estado: int, cuerpo: object, pedido: object = None) -> str | None:
+    """Id of the document that a successful creation response just returned, else None.
+
+    Anything that is not one of `RUTAS_CREACION` is not counted as created by the test.
+    A request that names an existing document (`documento_id`, also set by the client
+    when it reuses one) updates that document: its id is not ours to delete."""
+    if metodo.upper() != "POST" or ruta not in RUTAS_CREACION or not 200 <= estado < 300:
+        return None
+    if isinstance(pedido, dict) and pedido.get("documento_id") is not None:
+        return None
+    if isinstance(cuerpo, dict) and isinstance(cuerpo.get("id"), str):
+        return cuerpo["id"]
+    return None
+
+
+def pytest_report_header(config):
+    if os.environ.get("FORJA_TEST_BACKEND") != "hermetico":
+        return "forja: suite NO hermetica; los tests en vivo se negaran. Usa scripts/test.sh"
+    return "forja: suite hermetica (backend de prueba propio, datos temporales)"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -168,14 +219,61 @@ def _leer_token_vivo() -> str:
     pytest.skip("sin token del backend en vivo")
 
 
+def exigir_backend_de_prueba() -> None:
+    """Refuse the live tests unless the backend under test is the hermetic one."""
+    from mcp_server import client  # lazy: only the live tests need the MCP client
+
+    motivo = backend_de_prueba_motivo(os.environ, CENTINELA_DIR, client.BASE_URL)
+    if motivo is not None:
+        pytest.fail(f"test en vivo bloqueado: {motivo}", pytrace=False)
+
+
 @pytest.fixture
 def token_vivo():
     """Real token for tests that hit the live backend; restored afterwards.
     Plain env swap (not `monkeypatch`) so requesting fixtures don't change
-    the teardown order of a test's own `monkeypatch` mocks."""
+    the teardown order of a test's own `monkeypatch` mocks. Every live test
+    goes through here, so the guard covers all of them."""
+    exigir_backend_de_prueba()
     token = _leer_token_vivo()
     os.environ["FORJA_TOKEN"] = token
     try:
         yield token
     finally:
         os.environ["FORJA_TOKEN"] = TOKEN_PRUEBA
+
+
+@pytest.fixture
+def docs_propios(token_vivo, monkeypatch):
+    """Ids of the documents THIS test creates, read from the creation responses
+    (`id_creado`). Never from a listing: a document that merely appears during
+    the test is not ours and is never returned here."""
+    ids: list[str] = []
+    original = httpx.Client
+
+    def _registrar(respuesta: httpx.Response) -> None:
+        peticion = respuesta.request
+        if peticion.method != "POST" or peticion.url.path not in RUTAS_CREACION:
+            return
+        respuesta.read()
+        try:
+            cuerpo = respuesta.json()
+        except ValueError:
+            return  # not JSON: cannot be a creation answer, so it is not ours
+        # Only JSON bodies are read: a multipart upload is a stream httpx has not read
+        # (reading it would raise inside the hook), and it never names a documento_id.
+        pedido = None
+        if peticion.headers.get("content-type", "").startswith("application/json"):
+            pedido = json.loads(peticion.content)  # a malformed request fails the test loudly
+        doc_id = id_creado(peticion.method, peticion.url.path, respuesta.status_code, cuerpo, pedido)
+        if doc_id is not None and doc_id not in ids:
+            ids.append(doc_id)
+
+    class _ClienteRegistrado(original):
+        def __init__(self, *args, **kwargs):
+            hooks = dict(kwargs.pop("event_hooks", None) or {})
+            hooks["response"] = [*hooks.get("response", []), _registrar]
+            super().__init__(*args, event_hooks=hooks, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _ClienteRegistrado)
+    yield ids

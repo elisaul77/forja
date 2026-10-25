@@ -398,3 +398,16 @@ def resumen(
     if len(entradas) > tope:
         salida["mas"] = len(entradas) - tope
     return salida
+
+
+def entradas_tras_edicion(previas: list[dict[str, Any]] | None, forma: Any) -> list[dict[str, Any]]:
+    """Sidecar of a geometric edit that keeps the solid count (F23b, ADR-0025): the
+    names of `previas` stay with their position (solid index order is the one the
+    STEP import gives back, the same assumption `solidos_por_indice` checks), and
+    bbox and volume are read again. Without a usable previous sidecar the names
+    are the automatic `solido_N`, as for any upload."""
+    solidos = list(forma.solids())
+    if not previas or len(previas) != len(solidos):
+        return construir_entradas(forma)
+    orden = sorted(previas, key=lambda e: e["indice"])
+    return [_entrada(previa["nombre"], indice, solido) for indice, (previa, solido) in enumerate(zip(orden, solidos))]

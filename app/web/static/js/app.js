@@ -1,10 +1,12 @@
 // Forja — orquestación de la página: barra superior, lista de documentos
 // del servidor, subida de archivos y apertura de pestañas.
-import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=11";
-import { createLibrary, latestStep } from "./library.js?v=11";
-import { TabManager } from "./tabs.js?v=25";
-import { startLive } from "./live.js?v=11";
-import { iniciarPanelPerfil } from "./perfil.js?v=1";
+import { listarDocumentos, obtenerDocumento, obtenerMallaConRevision, subirDocumento } from "./api.js?v=17";
+import { createLibrary, latestStep } from "./library.js?v=17";
+import { abrirEjemplo as pedirEjemplo, cargarEjemplos } from "./ejemplos.js?v=1";
+import { TabManager } from "./tabs.js?v=59";
+import { montarBarraHerramientas } from "./toolbar-ui.js?v=12";
+import { startLive } from "./live.js?v=16";
+import { iniciarPanelPerfil } from "./perfil.js?v=3";
 
 const tabs = new TabManager({
   tabsEl: document.getElementById("fj-tabs"),
@@ -18,6 +20,8 @@ const tabs = new TabManager({
     valido: document.getElementById("fj-status-valido"),
   },
 });
+
+montarBarraHerramientas({ tabs });
 
 const deletedDocuments = new Set();
 tabs.abrirDocumento = (id) => abrirDocumentoPorId(id);
@@ -79,14 +83,36 @@ const dropdownDocumentos = document.getElementById("fj-dropdown-documentos");
 const listaDocumentos = document.getElementById("fj-lista-documentos");
 const documentSearch = document.getElementById("fj-document-search");
 let documents = [];
+const dialogoEjemplos = document.getElementById("fj-dialogo-ejemplos");
+const listaEjemplosDialogo = document.getElementById("fj-ejemplos-dialogo-lista");
+// Galería de ejemplos: crea un documento nuevo «Ejemplo — …» y lo abre.
+function abrirEjemplo(ejemplo) {
+  if (dialogoEjemplos.open) dialogoEjemplos.close();
+  return withLoading(`Creando «${ejemplo.titulo}»…`, async () => {
+    const ficha = await pedirEjemplo(ejemplo.id);
+    await abrirDocumentoPorId(ficha.id);
+  });
+}
+function mostrarEjemplos() {
+  dialogoEjemplos.showModal();
+  void cargarEjemplos(listaEjemplosDialogo, abrirEjemplo);
+}
+document.getElementById("fj-ejemplos-cerrar").onclick = () => dialogoEjemplos.close();
+void cargarEjemplos(document.getElementById("fj-ejemplos-lista"), abrirEjemplo);
+
 const library = createLibrary({
   openDocument: doc => withLoading(`Abriendo ${doc.nombre}…`, () => abrirDocumentoPorId(doc.id)),
+  onEjemplos: mostrarEjemplos,
+  onRestored: id => {
+    deletedDocuments.delete(id);
+    void refrescarListaDocumentos();
+  },
   onDeleted: id => {
     deletedDocuments.add(id);
     tabs.cerrar(id);
     feedback.hidden = false;
     feedback.classList.remove('is-error');
-    feedback.textContent = 'Documento eliminado definitivamente de la biblioteca.';
+    feedback.textContent = 'Documento movido a la papelera. Puedes restaurarlo desde la biblioteca.';
     documents = documents.filter(doc => doc.id !== id);
     filterDocuments();
     const url = new URL(location.href);
@@ -178,9 +204,9 @@ function renderDocuments(documentos) {
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'fj-btn';
-    remove.textContent = 'Eliminar';
-    remove.setAttribute('aria-label', `Eliminar ${doc.nombre}`);
-    remove.onclick = () => library.remove(doc);
+    remove.textContent = 'Papelera';
+    remove.setAttribute('aria-label', `Mover ${doc.nombre} a la papelera`);
+    remove.onclick = () => library.trash(doc);
     row.append(item, remove);
     listaDocumentos.appendChild(row);
   }
@@ -233,7 +259,7 @@ async function abrirDesdeQueryParam() {
   // Fase 5C: `&panel=parametros|notas|historial` abre ese panel lateral
   // (mismo uso que `?abrir=`: pruebas/capturas sin clics).
   const panel = params.get("panel");
-  if (panel && ["notas", "historial", "ramas", "parametros", "ensamble", "piezas"].includes(panel)) tabs.abrirPanel(panel);
+  if (panel && ["notas", "historial", "ramas", "parametros", "ensamble", "piezas", "design", "medidas"].includes(panel)) tabs.abrirPanel(panel);
 }
 
 abrirDesdeQueryParam();
