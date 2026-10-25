@@ -7,6 +7,8 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-24
+
 ### Added (galería ordenada, fase 3a: cuerpos de malla dentro de un documento)
 
 - Un STL importado dentro de un documento STEP queda como cuerpo de malla en `{id}.mallas/` (`manifest.json` con `schema: "mallas-v1"` y un STL binario por cuerpo). No entra en `solidos.json` ni en el registro público, el STEP no cambia y no aparece documento nuevo. Módulo nuevo `app/mallas.py`.

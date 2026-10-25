@@ -35,7 +35,7 @@ def crear_servidor() -> MCPServer:
     can only `run()` once, so each lifespan needs its own instance)."""
     servidor = MCPServer(
         name="forja",
-        version="0.8.0",
+        version="0.1.0",
         instructions=(
             "Forja es un editor CAD 3D nativo para IA (build123d/OpenCascade). "
             "Antes de editar, consulta capacidades_diseno y contexto_diseno para "
