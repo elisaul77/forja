@@ -16,6 +16,67 @@ export function textoCaducidad(expira, ahora = Date.now()) {
   return `Borrador · expira en ${Math.round(horas)} h`;
 }
 
+const SALIDA_MS = 250;
+const REACOMODO_MS = 300;
+
+export function movimientoReducido() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
+/** Resuelve cuando termina la transición de `propiedad` en `el`, o al plazo de respaldo. */
+function esperarTransicion(el, propiedad, ms) {
+  return new Promise(resolve => {
+    const fin = () => {
+      clearTimeout(respaldo);
+      el.removeEventListener('transitionend', alTerminar);
+      resolve();
+    };
+    const alTerminar = evento => { if (evento.target === el && evento.propertyName === propiedad) fin(); };
+    const respaldo = setTimeout(fin, ms + 50);
+    el.addEventListener('transitionend', alTerminar);
+  });
+}
+
+/**
+ * Quita una tarjeta de la galería tras confirmar la petición: se desvanece y las demás
+ * se reacomodan con FLIP (First, Last, Invert, Play). Si `enviar` falla, el error se
+ * propaga antes de tocar la tarjeta, así que no se pierde nada en pantalla.
+ */
+export async function retirarTarjeta({ enviar, grid, card, reducirMovimiento = false, salidaMs = SALIDA_MS, reacomodoMs = REACOMODO_MS }) {
+  await enviar();
+  if (!card) return;
+  if (reducirMovimiento) { card.remove(); return; }
+  card.classList.add('fj-gallery-card--saliendo');
+  await esperarTransicion(card, 'opacity', salidaMs);
+  const hermanas = Array.from(grid.children).filter(el => el !== card);
+  const antes = new Map(hermanas.map(el => [el, el.getBoundingClientRect()])); // First
+  card.remove(); // Last: las hermanas ya están en su posición final
+  const movidas = [];
+  for (const el of hermanas) {
+    const previa = antes.get(el);
+    const ahora = el.getBoundingClientRect();
+    const dx = previa.left - ahora.left;
+    const dy = previa.top - ahora.top;
+    if (dx === 0 && dy === 0) continue;
+    el.style.transition = 'none';
+    el.style.transform = `translate(${dx}px, ${dy}px)`; // Invert
+    movidas.push(el);
+  }
+  if (!movidas.length) return;
+  movidas[0].getBoundingClientRect(); // fuerza el reflujo con el Invert aplicado
+  for (const el of movidas) {
+    el.style.transition = '';
+    el.classList.add('fj-gallery-card--reacomodando');
+    el.style.transform = ''; // Play
+  }
+  await Promise.all(movidas.map(el => esperarTransicion(el, 'transform', reacomodoMs)));
+  for (const el of movidas) {
+    el.classList.remove('fj-gallery-card--reacomodando');
+    el.style.transition = '';
+    el.style.transform = '';
+  }
+}
+
 export function createLibrary({ openDocument, onDeleted, onRestored }) {
   const dialog = document.createElement("dialog");
   dialog.className = "fj-gallery";
@@ -77,16 +138,22 @@ export function createLibrary({ openDocument, onDeleted, onRestored }) {
     });
   }
 
+  function tarjetaDe(id) {
+    return Array.from(grid.children).find(el => el.dataset.docId === id);
+  }
+
   // Reversible: a la papelera no pide confirmacion; nada se borra del disco.
   async function trash(doc) {
     if (deleting) return;
     deleting = true;
+    const card = tarjetaDe(doc.id);
     try {
-      await enviarDocumentoAPapelera(doc.id);
+      await retirarTarjeta({ enviar: () => enviarDocumentoAPapelera(doc.id), grid, card, reducirMovimiento: movimientoReducido() });
+      if (card) observer.unobserve(card);
       deleted.add(doc.id);
       onDeleted(doc.id);
       documents = documents.filter(item => item.id !== doc.id);
-      render();
+      if (!card) render();
       status.textContent = `Se movió «${doc.nombre}» a la papelera. Puedes restaurarla.`;
     } catch (error) {
       status.textContent = `No se movió el documento: ${error.message}`;
@@ -153,7 +220,8 @@ export function createLibrary({ openDocument, onDeleted, onRestored }) {
     for (const doc of matches) {
       const card = document.createElement('article');
       card.className = 'fj-gallery-card';
-      const preview = document.createElement('img');
+      card.dataset.docId = doc.id;
+      const preview =document.createElement('img');
       preview.alt = `Vista previa de ${doc.nombre}`;
       preview.loading = 'lazy';
       preview.onerror = () => { preview.hidden = true; fallback.hidden = false; fallback.textContent = 'Vista previa no disponible'; };

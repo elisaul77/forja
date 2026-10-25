@@ -725,6 +725,11 @@ a.fj-btn { text-decoration: none; }
 .fj-gallery-card h3 { overflow-wrap: anywhere; font-size: 14px; }
 .fj-gallery-card p { font-size: 12px; color: var(--fj-ink-3); }
 .fj-gallery-card > div { display: flex; gap: 8px; }
+.fj-gallery-card--saliendo { opacity: 0; transform: scale(0.96); transition: opacity 250ms ease, transform 250ms ease; }
+.fj-gallery-card--reacomodando { transition: transform 300ms ease; will-change: transform; }
+@media (prefers-reduced-motion: reduce) {
+  .fj-gallery-card--saliendo, .fj-gallery-card--reacomodando { transition: none; }
+}
 
 @media (max-width: 900px) {
   .fj-topbar__subtitle { display: none; }

@@ -71,3 +71,70 @@ test('borradores: el listado pide ?borradores=true solo cuando se pide; conserva
   assert.equal(llamadas[1].url, '/documentos?borradores=true');
   assert.deepEqual(llamadas[2], {url: '/documentos/abc/conservar', metodo: 'POST', token: 'test-only'});
 });
+
+// Tarjeta falsa: solo lo que usa retirarTarjeta (clases, estilos, posicion por indice en la rejilla).
+function fakeCard(id, grid) {
+  const transformes = [];
+  const clases = new Set();
+  const el = {
+    dataset: {docId: id},
+    transformes,
+    clases,
+    classList: {
+      add: c => clases.add(c),
+      remove: c => clases.delete(c),
+      contains: c => clases.has(c),
+    },
+    style: {
+      transition: '',
+      get transform() { return transformes.at(-1) ?? ''; },
+      set transform(v) { transformes.push(v); },
+    },
+    getBoundingClientRect() { return {left: grid.children.indexOf(el) * 100, top: 0}; },
+    addEventListener() {},
+    removeEventListener() {},
+    remove() { const i = grid.children.indexOf(el); if (i >= 0) grid.children.splice(i, 1); },
+  };
+  return el;
+}
+
+test('papelera con animación: si la petición falla, la tarjeta se queda sin tocar', async () => {
+  const { retirarTarjeta } = await import('../../app/web/static/js/library.js');
+  const grid = {children: []};
+  const card = fakeCard('a', grid);
+  grid.children.push(card);
+  await assert.rejects(retirarTarjeta({enviar: async () => { throw new Error('red caída'); }, grid, card, salidaMs: 1, reacomodoMs: 1}), /red caída/);
+  assert.equal(grid.children.includes(card), true);
+  assert.equal(card.clases.has('fj-gallery-card--saliendo'), false);
+});
+
+test('papelera con animación: la tarjeta sale, las demás hacen FLIP y los estilos se limpian', async () => {
+  const { retirarTarjeta } = await import('../../app/web/static/js/library.js');
+  const grid = {children: []};
+  const a = fakeCard('a', grid), b = fakeCard('b', grid), c = fakeCard('c', grid);
+  grid.children.push(a, b, c);
+  let enviados = 0;
+  await retirarTarjeta({enviar: async () => { enviados++; }, grid, card: a, salidaMs: 1, reacomodoMs: 1});
+  assert.equal(enviados, 1);
+  assert.deepEqual(grid.children.map(el => el.dataset.docId), ['b', 'c']);
+  // Invert: b estaba en x=100 y ahora en x=0, así que empieza desplazada 100 px.
+  assert.equal(b.transformes[0], 'translate(100px, 0px)');
+  assert.equal(c.transformes[0], 'translate(100px, 0px)');
+  // Play + cleanup: sin transform en línea ni clase de reacomodo al terminar.
+  for (const el of [b, c]) {
+    assert.equal(el.style.transform, '');
+    assert.equal(el.style.transition, '');
+    assert.equal(el.clases.has('fj-gallery-card--reacomodando'), false);
+  }
+});
+
+test('papelera con movimiento reducido: la tarjeta sale al instante, sin animación', async () => {
+  const { retirarTarjeta } = await import('../../app/web/static/js/library.js');
+  const grid = {children: []};
+  const a = fakeCard('a', grid), b = fakeCard('b', grid);
+  grid.children.push(a, b);
+  await retirarTarjeta({enviar: async () => {}, grid, card: a, reducirMovimiento: true});
+  assert.deepEqual(grid.children.map(el => el.dataset.docId), ['b']);
+  assert.equal(b.transformes.length, 0);
+  assert.equal(a.clases.has('fj-gallery-card--saliendo'), false);
+});
