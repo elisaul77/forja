@@ -149,6 +149,69 @@ def _ruta_meta(doc_id: str) -> Path:
     return DOCUMENTOS_DIR / f"{doc_id}.meta.json"
 
 
+_ESQUEMA_ANALISIS = 1
+_CLAVES_ANALISIS = ("bbox", "volumen", "solidos", "valido")
+
+
+def _ruta_analisis(doc_id: str) -> Path:
+    """Cache of `_analyze` for the arranque (derived data, never snapshotted:
+    snapshots are built from explicit file dicts, not from this directory).
+    Valid only while `_clave_analisis` of the geometry file still matches."""
+    return DOCUMENTOS_DIR / f"{doc_id}.analisis.json"
+
+
+def _clave_analisis(ruta: Path) -> dict[str, int]:
+    """Identity of the geometry file: any rewrite changes its mtime_ns (every
+    write path replaces the file, none preserves mtime), size catches the rest."""
+    st = ruta.stat()
+    return {"esquema": _ESQUEMA_ANALISIS, "tamano": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def _leer_analisis_guardado(doc_id: str, clave: dict[str, int]) -> dict[str, Any] | None:
+    """Saved analysis if it matches ``clave``; ``None`` when missing, corrupt or
+    stale (the caller recomputes)."""
+    ruta = _ruta_analisis(doc_id)
+    try:
+        datos = json.loads(ruta.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        logger.warning("analisis guardado ilegible para %s; se recalcula", doc_id)
+        return None
+    if not isinstance(datos, dict) or datos.get("clave") != clave:
+        return None
+    analisis = datos.get("analisis")
+    if not isinstance(analisis, dict) or any(k not in analisis for k in _CLAVES_ANALISIS):
+        logger.warning("analisis guardado con forma inesperada para %s; se recalcula", doc_id)
+        return None
+    return analisis
+
+
+def _guardar_analisis(doc_id: str, clave: dict[str, int], analisis: dict[str, Any]) -> None:
+    """Atomic write (temp file + os.replace). A failed write only costs the
+    saving on the next start, so it is logged and never stops the load."""
+    destino = _ruta_analisis(doc_id)
+    temporal = destino.with_name(f".{destino.name}.tmp")
+    try:
+        temporal.write_text(json.dumps({"clave": clave, "analisis": analisis}))
+        os.replace(temporal, destino)
+    except OSError:
+        logger.warning("no se pudo guardar el analisis de %s", doc_id, exc_info=True)
+        temporal.unlink(missing_ok=True)
+
+
+def _analisis_de_archivo(doc_id: str, ruta: Path, ext: str) -> dict[str, Any]:
+    """`_analyze` with the per-document cache: OCC runs only when the saved
+    analysis does not match the file as it is on disk now."""
+    clave = _clave_analisis(ruta)
+    guardado = _leer_analisis_guardado(doc_id, clave)
+    if guardado is not None:
+        return guardado
+    analisis = _analyze(ruta, ext)
+    _guardar_analisis(doc_id, clave, analisis)
+    return analisis
+
+
 def _guardar_meta(doc_id: str, nombre: str) -> None:
     _ruta_meta(doc_id).write_text(json.dumps({"nombre": nombre}))
 
@@ -216,7 +279,7 @@ def _cargar_documento(ruta: Path) -> None:
     caller decides to skip it, the restore caller turns it into a 422."""
     ext = ruta.suffix.lower()
     doc_id = ruta.stem
-    analisis = _analyze(ruta, ext)
+    analisis = _analisis_de_archivo(doc_id, ruta, ext)
     nombre = _leer_meta(doc_id, ruta.name)
     _registry[doc_id] = {"id": doc_id, "nombre": nombre, **analisis}
     _files[doc_id] = ruta
@@ -2652,6 +2715,7 @@ def _purgar_archivos(doc_id: str) -> dict[str, Any]:
     if ruta is not None:
         ruta.unlink(missing_ok=True)
     _ruta_meta(doc_id).unlink(missing_ok=True)
+    _ruta_analisis(doc_id).unlink(missing_ok=True)
     _borrar_cache_malla(doc_id)
     notes.ruta_notas(doc_id).unlink(missing_ok=True)
     papelera.borrar_estado(DOCUMENTOS_DIR, doc_id)
