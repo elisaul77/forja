@@ -7,6 +7,10 @@ and this project adheres to phase-based development (see `plans/forja-plan.md`).
 
 ## [Unreleased]
 
+### Fixed (arranque: reutiliza el análisis guardado)
+
+- El arranque ya no vuelve a analizar con OCC cada STEP/STL. Cada documento guarda su análisis (bbox, volumen, sólidos, validez) en `{id}.analisis.json`, válido mientras coincidan tamaño, `mtime_ns` y la versión del esquema del archivo de geometría; si no coincide, o el archivo está corrupto, se recalcula sin fallar. El análisis guardado no entra en snapshots ni en el historial, y la purga lo borra. Medido sobre una copia de los datos (45 documentos, incluidos STEP de 72 y 80 MB): arranque en frío 170 s, arranque con caché 0,7 s.
+
 ## [0.1.0] - 2026-10-24
 
 ### Added (galería ordenada, fase 3a: cuerpos de malla dentro de un documento)
