@@ -66,22 +66,22 @@ Recorridos registrados por la revisión de la sesión sobre las capturas listada
 
 Capturas (scratchpad de la sesión):
 
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/01_inicial.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/02_panel.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/03_dialogo.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/04_tarjeta.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/05_lista.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/06_entendida.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/07_propuesta.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/08_ver_propuesta.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/09_aplicado.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/10_ver_modelo.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/11_360.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/r01_orden.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/r02_token.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/r03_deshecho.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/r04_ver_modelo.png`
-- `/tmp/claude-1000/-home-elisaul77/a8936b9d-ace3-487b-b846-94a5b4e47cd6/scratchpad/r05_360.png`
+- `scratchpad/01_inicial.png`
+- `scratchpad/02_panel.png`
+- `scratchpad/03_dialogo.png`
+- `scratchpad/04_tarjeta.png`
+- `scratchpad/05_lista.png`
+- `scratchpad/06_entendida.png`
+- `scratchpad/07_propuesta.png`
+- `scratchpad/08_ver_propuesta.png`
+- `scratchpad/09_aplicado.png`
+- `scratchpad/10_ver_modelo.png`
+- `scratchpad/11_360.png`
+- `scratchpad/r01_orden.png`
+- `scratchpad/r02_token.png`
+- `scratchpad/r03_deshecho.png`
+- `scratchpad/r04_ver_modelo.png`
+- `scratchpad/r05_360.png`
 
 ## Pruebas automatizadas
 
